@@ -1,0 +1,36 @@
+{
+  "submit_seq": "r1",
+  "identity": "codebuddy",
+  "role": "peer",
+  "is_developer": false,
+  "phase": "planning",
+  "round": 1,
+  "submitted_at": "2026-06-22T00:47:00+08:00",
+  "commit_hash": "807dae2",
+  "bootstrap": true,
+  "bootstrap_note": "计划阶段首轮。codebuddy=评审者(is_developer=false)首轮持笔产出计划草案。commit_hash=final_diff commit。计划草案定义5个dev_phase循环对应§14 Phase 0-4。",
+  "content_file": "r1_codebuddy.md",
+  "converge_mark": {
+    "stance": null,
+    "need_next_round": null,
+    "new_issues": [],
+    "resolved_issue_ids": [],
+    "issue_stances": {}
+  },
+  "plan_summary": {
+    "role_assignment": {
+      "reviewer": "codebuddy (is_developer=false)",
+      "developer": "claude (is_developer=true)",
+      "supervisor": "claude (=developer, pending_supervisor_review applies)"
+    },
+    "dev_phase_count": 5,
+    "milestones": [
+      "Phase 0: 骨架 (ping/who_am_i/身份识别)",
+      "Phase 1: 状态机 (state.json/register/claim_turn/submit/get_state)",
+      "Phase 2: 收敛+Issue (收敛引擎/Issue CRUD/模板引擎/盲审/提出者不修改校验)",
+      "Phase 3: 异常+归档 (崩溃恢复/僵持/lease/归档/pairflow.log/进程管理)",
+      "Phase 4: 端到端+质量 (E2E/质量评估)"
+    ],
+    "quality_gates": "每个dev_phase: coding→review→收敛→盲审→checklist v2→final_diff→advance"
+  }
+}
