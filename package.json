@@ -1,0 +1,25 @@
+{
+  "name": "pair-flow-mcp",
+  "version": "0.1.0",
+  "description": "PairFlow: 双 AI 结对编程工作流引擎 — HTTP MCP Server",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "async-mutex": "^0.5.0",
+    "uuid": "^14.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.0",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.9"
+  }
+}
