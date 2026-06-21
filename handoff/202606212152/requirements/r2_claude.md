@@ -208,6 +208,35 @@
 
 ---
 
+### P1-13: bootstrap 阶段 submit 的完成定义缺失 —— "文件写入 ≠ 提交完毕"
+
+**定位**：§17 Bootstrap 阶段协作约定（本轮新增） + 本轮实践
+
+**问题**：r2 声称"提交完毕"，但实际上只完成了文件写入（`handoff/.../r2_claude.md` + `.meta.json`），未执行 `git commit`。用户提醒后才补 commit。§17 定义了 commit_hash 如何取值，但未定义 **submit 完成的动作边界**——文件写入磁盘就算完成，还是 git commit 才算完成？
+
+此外存在鸡生蛋蛋生鸡问题：meta.json 中的 `commit_hash` 在文件写入时填充，但此时 git commit 尚未执行——commit_hash 永远指向**上一次** commit（即对方 r1 的 commit），无法指向包含本轮 r2 产出本身的 commit。若下轮 r3 需要引用 r2 的 commit_hash，该值在 r2 commit 之前不存在。
+
+**方案建议**：
+1. §17 明确 submit 完成 = **文件写入 + git commit 均已执行**，缺少任一步骤不算完成
+2. meta.json 的 `commit_hash` 含义修正为"本轮 submit 所基于的仓库 HEAD"（即提交前的 HEAD），与 §10 commit_hash 定义一致。对方下轮基于的 commit_hash 是 submit 方 commit 后产生的新 HEAD——即下轮 submit 方在开始前执行 `git rev-parse HEAD` 获得的值
+3. commit 消息规范：`docs: {phase} r{round} — {一句话摘要}`
+
+**rationale**：本轮 r2 的实际失误证明，"写完文件 = 完成"的隐含假设不可靠。将 commit 纳入 submit 完成定义，消除模糊性。commit_hash 的鸡生蛋问题通过明确语义（基于的上一个 commit vs 产生的 commit）解决。
+
+---
+
+### P2-5: commit_hash 在 meta.json 中永远指向"上一轮"而非"本轮"
+
+**定位**：§17 第 4 条 + §10 commit_hash 说明 + 本轮 meta.json 实践
+
+**疑问**：r2 的 meta.json 中 `commit_hash: "160e58e"`（r1 的 commit），但 r2 本身被提交为 `0e5b2e9`。meta.json 中记录的 commit_hash 永远滞后一轮——它指向的是"我看过的基础版本"，而非"我产出的版本"。这是设计意图还是缺陷？
+
+如果意图是追溯"基于哪个版本做的评审"，当前设计正确。但如果意图是追溯"此轮产出在哪个 commit 中"，则 meta.json 的 commit_hash 填错了一直没被发现。
+
+**提议**：采纳前一种语义——commit_hash = "本轮 work 基于的仓库状态"。此语义下当前实践正确，只需在 §10 和 §17 中显式说明，避免实现者和使用者混淆。
+
+---
+
 ## 三、spec 修改（落地内容）
 
 以下为根据 r1 同意的问题对 spec 的修改摘要。修改以 diff 形式描述，原逻辑与新逻辑对比。
@@ -280,6 +309,11 @@
 
 - **新增**：上限依据标注 + 超限提示文案
 
+### 修改 12b: §17 — submit 完成定义 + commit_hash 语义澄清（P1-13, P2-5）
+
+- **P1-13**：§17 规约第 4 条拆分为 4a（commit_hash 取值）和 4b（submit 完成 = 文件写入 + git commit）。commit 消息规范：`docs: {phase} r{round} — {摘要}`
+- **P2-5**：§17 第 4a 条明确 commit_hash = "本轮 submit 所基于的仓库 HEAD"，即 git commit 前的 HEAD。§10 同步补充此语义说明
+
 ### 修改 13: §5.1 — phase_config 移除 idle_registration（P0-1）
 
 - **方案 B**：phase_config 只保留 4 个 phase 超时。claim_turn 入参同步移除 `idle_registration?`
@@ -302,7 +336,7 @@
 
 ## 收敛状态
 
-- 本轮新增 issue：P0：1，P1：3，P2：1
+- 本轮新增 issue：P0：1，P1：4，P2：2
 - 本轮关闭 issue：P1-1, P1-2, P1-3, P1-4, P1-5, P1-6, P1-7, P1-8, P1-9（已落地关闭）
 - 对对方上一轮产出的立场：agree（全部 P1 均同意，无 disagree）
 - 是否需要下一轮：（null，需求阶段产出模式）
