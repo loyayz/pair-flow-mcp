@@ -10,12 +10,12 @@
 | 指标 | 值 |
 |---|---|
 | 轮次 | 7 轮交替评审（r1~r7），r8 收敛 |
-| 发现总数 | 24 个 issue（3 P0 + 16 P1 + 5 P2） |
-| 监督者 | claude（兼任，REQUIREMENTS 阶段不涉及 IMPLEMENTATION 的 is_developer 角色） |
+| 发现总数 | **26 个 issue（2 P0 + 18 P1 + 6 P2）** |
+| 监督者 | claude |
 | 非监督者 | codebuddy |
-| 收敛轮 | r8 |
+| 收敛轮 | r11（预计） |
 | 阶段起始 commit | afe5cfa（基础文档 commit） |
-| 阶段终了 commit | 377869e（r7 commit） |
+| 阶段终了 commit | （待收敛后确定） |
 
 ---
 
