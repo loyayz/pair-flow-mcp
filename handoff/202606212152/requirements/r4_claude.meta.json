@@ -1,0 +1,28 @@
+{
+  "stance": null,
+  "need_next_round": null,
+  "new_issues": [
+    {
+      "type": "P1",
+      "topic": "bootstrap 阶段 advance_checklist 无 rules_catalog 可依赖",
+      "description": "r40-N1 规定 advance_checklist 验证重点从 rules_catalog 聚合派生，但 bootstrap 阶段 catalog 尚未编码。§17 未覆盖此 gap。",
+      "my_position": "§17 增加第 10 条——bootstrap 阶段手动按 16 节格式创建，验证重点从 spec 正文直接派生",
+      "proposal": "监督者按 §5.3 r40-N1 的 16 节格式手动创建 advance_checklist，验证重点从 spec 正文直接派生（非 rules_catalog）",
+      "rationale": "与 §17 '手动替代机制'精神一致——没有 Bridge 就没有自动派生，改用手动"
+    }
+  ],
+  "resolved_issue_ids": [10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22],
+  "issue_stances": {
+    "10": { "stance": "agree", "argument": "P0-2 正确。r2 混淆了描述修改与执行修改。r4 已实际编辑 spec 文件，commit a98ae58" },
+    "11": { "stance": "agree", "argument": "codebuddy 在 r3 已实际落地，补充了 §4 数据流图的遗漏行" },
+    "12": { "stance": "agree", "argument": "codebuddy 在 r3 已实际落地，补充了已完成工作流过滤的边界场景" },
+    "13": { "stance": "agree", "argument": "codebuddy 在 r3 已实际落地" },
+    "14": { "stance": "agree", "argument": "codebuddy 在 r3 已实际落地，补充了 last_submit_per_turn 重置" },
+    "15": { "stance": "agree", "argument": "codebuddy 在 r3 已在 §10 落地 commit_hash 语义" },
+    "16": { "stance": "agree", "argument": "§17 第 4 条已覆盖 commit_hash 语义，§10 部分 codebuddy r3 已落地" },
+    "17": { "stance": "agree", "argument": "§17 第 5 条已覆盖 submit 完成定义 + commit 消息规范" },
+    "18": { "stance": "agree", "argument": "采纳 idea，标注为 Phase 4 优化项，v1 不实现" }
+  },
+  "commit_hash": "82391bd",
+  "submitted_at": "2026-06-21T15:30:00.000Z"
+}
