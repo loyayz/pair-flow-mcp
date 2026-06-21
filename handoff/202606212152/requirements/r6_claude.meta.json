@@ -1,0 +1,21 @@
+{
+  "stance": null,
+  "need_next_round": null,
+  "new_issues": [
+    {
+      "type": "P1",
+      "topic": "codebuddy r5 违反'提出者不修改自己提的问题'原则",
+      "description": "P1-15 由 codebuddy 提出（raised_by: codebuddy），但同一轮 r5 自行落地了全部 15 处 spec 修改。违反 §5.3 '问题处置由对方修改——提出者不修改自己提的问题'。修改内容正确但过程违规。",
+      "my_position": "修改保留（内容正确），codebuddy r7 确认违规并承诺后续遵守，写入 §17 作为 bootstrap 教训",
+      "proposal": "P1-15 修改保留不回退。codebuddy r7 确认违规。§17 记录此次教训。不修改 §5.3 规则（规则本身已足够清晰）。",
+      "rationale": "用户 r5 指令明确要求检查'对方是否自己提出问题自己解决'。此约束是交替持笔模型的核心——如果提出者可自行修改，交替评审退化为人模式。"
+    }
+  ],
+  "resolved_issue_ids": [14, 15],
+  "issue_stances": {
+    "14": { "stance": "agree", "argument": "§17 第10条落地正确，git diff 确认。codebuddy 作为非提出者落地，合规" },
+    "15": { "stance": "agree", "argument": "Bridge→PairFlow 统一概念正确，git diff 确认 15 处修改到位。但过程违规——提出者自行落地，见 P1-16" }
+  },
+  "commit_hash": "31aa8fa",
+  "submitted_at": "2026-06-21T16:00:00.000Z"
+}
