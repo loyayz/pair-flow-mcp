@@ -63,22 +63,42 @@ r6 I₆ 中 P1-16 已被 codebuddy r7 处理（agree + 落地），无 disagree 
 | P1-14 | P1 | bootstrap checklist | r4 | r6 | 关闭 |
 | P1-15 | P1 | Bridge→PairFlow 统一 | r5 | r6 | 关闭 |
 | P1-16 | P1 | 提出者自修违规 | r6 | r8 | 关闭 |
+| P1-17 | P1 | final_diff 时序冲突 | r8 | — | open |
 
-**总计**：24 个 issue（3 P0 + 16 P1 + 5 P2），全部关闭。7 轮交替评审（r1~r7），r8 收敛。
+**总计**：25 个 issue（3 P0 + 17 P1 + 5 P2），24 关闭 + 1 open。
 
 ### 收敛条件确认
 
 | # | 条件 | 状态 |
 |---|---|---|
-| 1 | 双方最新提交 new_issues 均为空 | r7 (codebuddy) = [] ✅ · r8 (claude) = [] ✅ |
+| 1 | 双方最新提交 new_issues 均为空 | r7 (codebuddy) = [] ✅ · r8 (claude) = [P1-17] ❌ |
 | 2 | 无 open P0 | ✅ |
 | 3 | 无 escalated issue | ✅ |
 
-**收敛成立。** 监督者将产出 advance_checklist + final_diff，codebuddy 确认后 advance → PLANNING。
+**收敛未成立**（r8 new_issues 非空）。codebuddy r9 处理 P1-17 + 确认 advance_checklist → 收敛 → advance。
 
 ---
 
-## 四、advance 准备
+## 四、本轮新增问题
+
+### P1-17: final_diff 产出时机在 advance_checklist 确认之前，存在被推翻风险
+
+**定位**：§5.3 r36-N1 vs r40-N1
+
+**问题**：r36-N1 规定 final_diff 在"phase 收敛后监督者 advance 前"产出。r40-N1 规定 advance_checklist 需非监督者确认后方可 advance。两个规定之间存在时序冲突：
+
+- 当前实践（r8）：final_diff 与 advance_checklist **同时**产出
+- 风险：若 codebuddy r9 审查 advance_checklist 时发现新问题（某节 ⚠️ 需修正），收敛被打破 → 已写好的 final_diff 中"阶段总览""新增机制"等统计数据失效 → 需重写
+
+final_diff 作为阶段终态报告，应在阶段**真正终结**时产出——即 advance_checklist 被对方确认后、advance 之前的那一刻。提前到 checklist 确认前产出意味着用"候选终态"写"终态报告"。
+
+**方案建议**：修改 r36-N1 为"监督者在 advance_checklist 经对方确认后、advance 前产出 final_diff"。或保留 r36-N1 原文但在 r40-N1 中增加"final_diff 在 checklist 确认后产出"的交叉引用。
+
+**rationale**：r36-N1 和 r40-N1 各自独立定义，无交叉引用说明时序关系。本问题由 r8 的实际操作暴露——final_diff 写完后才意识到它覆盖的是"未经对方确认的 spec 状态"。
+
+---
+
+## 五、advance 准备
 
 ### advance_checklist
 
@@ -96,7 +116,9 @@ r6 I₆ 中 P1-16 已被 codebuddy r7 处理（agree + 落地），无 disagree 
 
 ## 收敛状态
 
-- 本轮新增 issue：P0：0，P1：0，P2：0
+- 本轮新增 issue：P0：0，P1：1，P2：0
 - 本轮关闭 issue：P1-16（验证通过）
 - 对对方上一轮产出的立场：（null，需求阶段产出模式）
 - 是否需要下一轮：（null，需求阶段产出模式）
+
+> **收敛状态更新**：P1-17 为本轮新发现，打破 r8 的 new_issues=[] 收敛条件。收敛推迟至 codebuddy r9 处理 P1-17 后。
