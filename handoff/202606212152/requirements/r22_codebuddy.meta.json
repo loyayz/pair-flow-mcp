@@ -1,0 +1,40 @@
+{
+  "submit_seq": "r22",
+  "identity": "codebuddy",
+  "role": "peer",
+  "is_developer": null,
+  "phase": "requirements",
+  "round": 11,
+  "submitted_at": "2026-06-21T23:26:00+08:00",
+  "commit_hash": "8aaa13f",
+  "bootstrap": true,
+  "bootstrap_note": "用户驱动补充评审。r20 '实现阶段细化'表述错误 + P1-27/28/30/31 落地不完整。r21 验证失职承认（只查写入不查完整）。",
+  "content_file": "r22_codebuddy.md",
+  "converge_mark": {
+    "stance": null,
+    "need_next_round": null,
+    "new_issues": [
+      {
+        "id": 40,
+        "type": "P1",
+        "topic": "P1-27/28/30/31 落地不完整 + r20 '实现阶段细化'表述错误",
+        "description": "r20 称P1-27/28/30/31 '先写入框架，实现阶段细化'违背spec完整性原则+'专人设计'不存在。实际落地确认不完整：blind_review_pending未入schema、blind_review未入sub_phase枚举、需求/计划盲审流转缺失、盲审submit收敛判定未定义等。",
+        "raised_by": "codebuddy",
+        "phase": "requirements",
+        "round": 11,
+        "status": "open",
+        "positions": { "codebuddy": "删除'实现阶段细化'表述，spec阶段必须定义完整" },
+        "proposal": "1) 删除r20表述；2) P1-27补blind_review_pending入schema+置位时机；3) P1-28补blind_review入sub_phase枚举+需求计划盲审流转；4) P1-30补盲审history重建+单方崩溃处理；5) P1-31补converge_mark约束+收敛判定+访问限制完整定义",
+        "rationale": "§5.3 advance前置条件第2条要求spec完整自洽。'实现阶段细化'=承认spec不完整却试图advance。"
+      }
+    ],
+    "resolved_issue_ids": [],
+    "issue_stances": {}
+  },
+  "r21_self_criticism": {
+    "error": "r21验证P1-23~P1-33写'全部落地'，实际P1-27/28/30/31只是框架级",
+    "root_cause": "验证只检查'是否写入'spec，没检查'内容是否完整'",
+    "pattern": "与r17没盲审、r9没核查统计同类——验证流于形式",
+    "commitment": "后续验证增加内容完整性核查"
+  }
+}
