@@ -1,0 +1,60 @@
+{
+  "stance": null,
+  "need_next_round": null,
+  "new_issues": [
+    {
+      "type": "P0",
+      "topic": "phase_config schema 与 claim_turn timeouts 不一致",
+      "description": "§10 claim_turn 接受 idle_registration，但 §5.1 phase_config 无此字段。方案 B：移除 idle_registration，IDLE 不设 timer。",
+      "my_position": "方案 B — 从 phase_config 和 claim_turn 入参中移除 idle_registration",
+      "proposal": "IDLE 是人工等待阶段，超时自动推进无意义。phase_config 只保留 4 个 phase 超时值。",
+      "rationale": "§5.1 与 §10 必须一致，否则实现者困惑"
+    },
+    {
+      "type": "P1",
+      "topic": "崩溃恢复 step 0 与 step 7 的 IDLE 冲突",
+      "description": "IDLE 崩溃后 step 0 无条件扫描 handoff/ 恢复 workflow_id，可能错误恢复已完成的工作流。",
+      "my_position": "step 0 增加前置检查：phase=idle 时跳过扫描",
+      "proposal": "state.json 可读且 phase=idle → 跳过 workflow_id 扫描",
+      "rationale": "IDLE 是终结态，不应恢复任何工作流"
+    },
+    {
+      "type": "P1",
+      "topic": "handoff/ 各阶段子目录创建时机未定义",
+      "description": "§3 定义目录结构、§12 定义 state 初始化，但子目录创建时机未说明。",
+      "my_position": "首次 submit 时按需创建",
+      "proposal": "目录存在代表该阶段至少有一轮产出，非该阶段曾被进入过",
+      "rationale": "advance 后崩溃导致空目录会被误认为有产出"
+    },
+    {
+      "type": "P1",
+      "topic": "IMPLEMENTATION dev_phase 循环间 round 语义未定义",
+      "description": "dev_phase 循环收敛后 round 是重置还是继续递增，spec 未定义。",
+      "my_position": "round 重置为 1，每循环独立计数",
+      "proposal": "跨循环追溯通过 dev_phase + round 组合定位",
+      "rationale": "与文件命名 {dev_phase}_{timestamp}_{identity}_coding.md 一致"
+    },
+    {
+      "type": "P2",
+      "topic": "submit commit_hash 指向哪个仓库",
+      "description": "commit_hash 指向 spec 仓库还是 PairFlow 代码仓库？bootstrap 阶段 submit 方未执行实际 git commit 时填什么？",
+      "my_position": "commit_hash = 仓库 HEAD 最新 commit，代表此轮 submit 基于的仓库状态",
+      "proposal": "明确 commit_hash = git rev-parse HEAD，保证可追溯链",
+      "rationale": null
+    }
+  ],
+  "resolved_issue_ids": [1, 2, 3, 4, 5, 6, 7, 8, 9],
+  "issue_stances": {
+    "1": { "stance": "agree", "argument": "目录存在即足够，meta.json 存在性不应作为 workflow_id 恢复的前置条件" },
+    "2": { "stance": "agree", "argument": "需增加机器可解析的固定声明段落，正则提取失败拒绝 advance" },
+    "3": { "stance": "agree", "argument": "force_converge 应最小化影响范围——只收敛当前循环" },
+    "4": { "stance": "agree", "argument": "方案 A：SUMMARY 豁免一致性约束，收敛仅看 new_issues" },
+    "5": { "stance": "agree", "argument": "meta.json 先写（意图标记），md 后写（完成标记），符合权威来源声明" },
+    "6": { "stance": "agree", "argument": "覆盖率校验是 r40-N1 '避免选择性验证'的自然延伸" },
+    "7": { "stance": "agree", "argument": "register 写 peers 是状态变更，必须由 mutex 保护" },
+    "8": { "stance": "agree", "argument": "holder = lease holder 而非 turn holder，与 grace 机制一致" },
+    "9": { "stance": "agree", "argument": "bootstrap 阶段是本项目的首个应用场景，规约缺失已两次暴露问题" }
+  },
+  "commit_hash": "160e58e08435936936a74a4ce6091be9c419677a",
+  "submitted_at": "2026-06-21T14:00:00.000Z"
+}
