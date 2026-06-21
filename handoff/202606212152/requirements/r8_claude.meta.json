@@ -1,0 +1,22 @@
+{
+  "stance": null,
+  "need_next_round": null,
+  "new_issues": [],
+  "resolved_issue_ids": [16],
+  "issue_stances": {
+    "16": { "stance": "agree", "argument": "§17 效力与教训记录落地正确，r2+r5 教训条目完整。P1-16 由 claude 提出 codebuddy 落地——合规" }
+  },
+  "convergence": {
+    "declared": true,
+    "conditions": {
+      "both_latest_new_issues_empty": true,
+      "no_open_p0": true,
+      "no_escalated": true
+    },
+    "total_issues": 24,
+    "total_rounds": 7,
+    "open_issues": []
+  },
+  "commit_hash": "377869e",
+  "submitted_at": "2026-06-21T17:00:00.000Z"
+}
