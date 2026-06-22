@@ -6,8 +6,10 @@ import { parseIdentity } from "../identity.js";
 import { loadState, saveState, isCurrentHolder, isSupervisor, getOtherIdentity, initRequirementsPhase, initPlanningPhase, initImplementationPhase, initSummaryPhase, initIdleState, type PairFlowState } from "../state.js";
 import { logEvent } from "../logger.js";
 import { stateMutex } from "../mutex.js";
+import { err } from "../response.js";
 import { getTemplate, getRulesSummary } from "../template.js";
 import { startLeaseTimer, stopLeaseTimer } from "../lease.js";
+import { extractCycleCount } from "../planning.js";
 
 export async function claimTurn(
   args: Record<string, unknown>,
@@ -143,7 +145,6 @@ async function handleAdvance(state: PairFlowState, identity: string, args: Recor
 
   if (currentPhase === "implementation") {
     // Multi-cycle: check planning draft for total cycles
-    const { extractCycleCount } = await import("../planning.js");
     const totalCycles = state.workflow_id ? await extractCycleCount(state.workflow_id) : null;
     const currentCycle = state.dev_phase ?? 0;
 
@@ -173,10 +174,6 @@ async function handleAdvance(state: PairFlowState, identity: string, args: Recor
   }
 
   return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: `unknown phase: ${currentPhase}` }) }], isError: true };
-}
-
-function err(message: string): CallToolResult {
-  return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: message }) }], isError: true };
 }
 
 function getPhaseTimeoutMinutes(state: PairFlowState): number {

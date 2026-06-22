@@ -268,11 +268,9 @@ export async function submit(
       await writeFile(join(phaseDir, `r${seq}_${identity}.meta.json`), JSON.stringify({ stance: convergeMark.stance, need_next_round: convergeMark.need_next_round, new_issues: (convergeMark.new_issues ?? []).map((ni, i) => ({ id: newIssueIds[i], type: ni.type, topic: ni.topic, description: ni.description })), resolved_issue_ids: convergeMark.resolved_issue_ids ?? [] }, null, 2), "utf-8");
     }
 
-    // IMPLEMENTATION: fix → review instead of converge
-    if (state.phase === "implementation" && !converged) {
-      if (state.sub_phase === "coding") {
-        state.sub_phase = "review";
-      }
+    // Safety net: coding→review when other peer is null (crash recovery edge case)
+    if (state.phase === "implementation" && !converged && state.sub_phase === "coding") {
+      state.sub_phase = "review";
     }
 
     // Reset lease after submit

@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, readdir, realpath } from "node:fs/promises";
 import { join } from "node:path";
 
 const HANDOFF_DIR = process.env.HANDOFF_DIR || "handoff";
@@ -13,9 +13,8 @@ export async function extractCycleCount(workflowId: string): Promise<number | nu
   try {
     if (workflowId.includes("..") || /[\\/:]/.test(workflowId)) return null;
     const planningDir = join(HANDOFF_DIR, workflowId, "planning");
-    const { realpath } = await import("node:fs/promises");
     if (!(await realpath(planningDir)).startsWith(await realpath(HANDOFF_DIR))) return null;
-    const entries = await import("node:fs/promises").then(fs => fs.readdir(planningDir));
+    const entries = await readdir(planningDir);
     // Find r1 document (first planning round)
     const r1File = entries.find((e) => e.startsWith("r1_") && e.endsWith(".md") && !e.includes(".meta"));
     if (!r1File) return null;

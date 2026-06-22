@@ -1,4 +1,4 @@
-import { readdir, readFile, mkdir } from "node:fs/promises";
+import { readdir, readFile, mkdir, access } from "node:fs/promises";
 import { join } from "node:path";
 import { loadState, saveState, defaultState, type PairFlowState } from "./state.js";
 import { logEvent } from "./logger.js";
@@ -79,7 +79,7 @@ export async function recoverState(): Promise<PairFlowState> {
         const baseName = mf.replace(".meta.json", "");
         const mdName = baseName + ".md";
         try {
-          const mdExists = await import("node:fs/promises").then(fs => fs.access(join(phasePath, mdName)).then(() => true).catch(() => false));
+          const mdExists = await access(join(phasePath, mdName)).then(() => true).catch(() => false);
           if (!mdExists) continue; // Step 4: md missing, skip
           const metaRaw = await readFile(join(phasePath, mf), "utf-8");
           const meta = JSON.parse(metaRaw);

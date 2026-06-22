@@ -1,5 +1,5 @@
 import { readdir, readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
@@ -28,7 +28,6 @@ export async function getArchivedFiles(
   if (phase) dir = join(dir, validatePathSegment(phase));
 
   // Verify resolved path stays within HANDOFF_DIR
-  const { resolve } = await import("node:path");
   if (!resolve(dir).startsWith(resolve(HANDOFF_DIR))) {
     return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "invalid path" }) }], isError: true };
   }
@@ -77,7 +76,6 @@ export async function getArchivedFileContent(
   const safeWfId = validatePathSegment(wfId);
   const filePath = join(HANDOFF_DIR, safeWfId, filename);
   // Prevent path traversal
-  const { resolve } = await import("node:path");
   if (!resolve(filePath).startsWith(resolve(join(HANDOFF_DIR, safeWfId)))) {
     return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "invalid filename" }) }], isError: true };
   }
