@@ -725,7 +725,7 @@ coding ──→ review ──→ fix ──→ review ──→ ... ──→ c
 | `list_issues` | `{ status?, scope? }` | `{ issues[] }` | 列出 issue。scope="current_phase"/"all" |
 | `force_converge` | 无 | `{ ok }` | 监督者仅可用、phase≠idle。强制收敛**当前 dev_phase 循环**（非整个 phase），该循环内所有 open issue→resolved_by="force_converge"。收敛后 `dev_phase` 自增进入下一循环（若还有剩余循环），或 phase 级收敛进入 SUMMARY（若已是最后一循环）。IMPLEMENTATION 中若在 coding sub_phase 调用，跳过当前循环的 review/fix 直接进入下一循环——后果由监督者承担。立即清除 current_lease 为 null、current_timeout.active=false |
 | `get_archived_files` | `{ phase?, workflow_id? }` | `{ files[] }` | 列出归档文件。`phase` 可选过滤（requirements/planning/implementation/summary）；`workflow_id` 可选过滤，不传默认当前工作流。均不传返回当前工作流全量 |
-| `get_archived_file_content` | `{ filename }` | `{ content }` | 读取归档文件内容 |
+| `get_archived_file_content` | `{ filename, phase? }` | `{ content }` | 读取归档文件内容。`phase` 可选过滤（requirements/planning/implementation/summary），不传默认当前 phase。文件存储在 `handoff/{workflow_id}/{phase}/` 子目录下，PairFlow 在指定或当前 phase 子目录中查找 |
 
 ---
 
