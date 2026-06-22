@@ -6,6 +6,7 @@ export async function ping(
   extra: RequestHandlerExtra<ServerRequest, ServerNotification>
 ): Promise<CallToolResult> {
   return {
+    // uptime 单位：秒（浮点数，process.uptime() 返回秒）
     content: [{ type: "text", text: JSON.stringify({ ok: true, uptime: process.uptime() }) }],
   };
 }

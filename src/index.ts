@@ -21,7 +21,8 @@ server.registerTool(
 
 // Create HTTP transport and connect
 const transport = new StreamableHTTPServerTransport({
-  sessionIdGenerator: undefined, // stateless — no session tracking needed for Phase 0
+  sessionIdGenerator: () => crypto.randomUUID(),
+  // Phase 1 register 实现使用 session ID 标识连接（§4 身份唯一性）
 });
 
 server.connect(transport).then(() => {
@@ -45,7 +46,8 @@ const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse
     const body = Buffer.concat(chunks).toString();
     try {
       await transport.handleRequest(req, res, body ? JSON.parse(body) : undefined);
-    } catch {
+    } catch (err) {
+      console.error("[pair-flow] request error:", err);
       if (!res.headersSent) {
         res.writeHead(500).end("Internal Server Error");
       }
