@@ -159,11 +159,87 @@ advance(IDLE→REQUIREMENTS) 无 task → 拒绝 → 返回 "advance from IDLE r
 
 ---
 
-## 优先级
+## P0-22: submit 数据流三层设计缺陷——入参重复、存储丢弃、归档空洞
 
-三个问题均为 **P0 阻塞级**。修复顺序：
+### 场景
+
+2026-06-22 双 AI 接入验证中，deepseek r2 提交时发现 `converge_mark` 中携带的 `proposal`/`rationale`/`my_position` 全部未写入 `state.json`。追溯代码确认：submit 的数据流在三个层面存在设计缺陷。
+
+### 三层缺陷
 
 ```
+  submit 数据流设计缺陷
+      │
+      ├── 入参层：content 和 converge_mark.new_issues 重复 issue 信息
+      │         → body 过长，shell 调用失败
+      │
+      ├── 存储层：converge_mark 中的 proposal/rationale/my_position
+      │         在 submit→state.json 路径被丢弃
+      │         （但 create_issue→state.json 路径正常）
+      │
+      └── 归档层：meta.json 只存 issue ID 数组，不存完整对象
+                → 崩溃恢复时 issue 内容全部丢失
+                → §8 "meta.json 是权威来源"声明失效
+```
+
+#### 入参层：信息重复
+
+`submit` 同时接受 `content`（markdown）和 `converge_mark.new_issues`（JSON 数组）。两者都描述同一批 issue 的 `type/topic/description`。AI 必须在 markdown 和 JSON 中各写一遍相同信息。实际后果：双 AI 接入时 deepseek 的一次 submit 因 JSON body 过大导致 shell 调用失败。
+
+#### 存储层：字段丢弃
+
+```ts
+// submit.ts: issue 创建代码
+state.issues.push({
+  // ... 其他字段
+  proposal: ni.proposal ?? null,
+  rationale: ni.rationale ?? null,
+});
+```
+
+`my_position` 在 `issue_stances` 分支中有单独处理，但 **提案中的 my_position 没有写入 `issue.positions[identity]`**。`proposal` 和 `rationale` 有赋值代码，但在 deepseek 的实际提交中全部为 null——根因是 `converge_mark` 到 `new_issues` 的字段映射不完整。
+
+作为对比：`create_issue` 工具直接接收 `proposal`/`rationale` 并正确写入 `state.json`，路径清晰。`submit` 的 `converge_mark.new_issues` → `state.issues` 路径使用了相同的字段名但未经过相同的存储逻辑。
+
+#### 归档层：空洞的 meta.json
+
+```json
+// 当前 meta.json 的 new_issues
+{ "new_issues": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] }
+
+// 应该是
+{ "new_issues": [
+  { "id": 1, "type": "P0", "topic": "advance 不携带 task...", ... },
+  ...
+]}
+```
+
+§8 崩溃恢复的步骤 2（journal replay）可以重建 issue，但前提是 journal 中有完整信息。当前 journal 记录 issue 创建事件但不持久化 `proposal` 和 `rationale`。meta.json 作为"每轮 submit 的权威产出快照"，只存 ID 数组等于放弃了自己作为恢复来源的能力。
+
+### 根因
+
+submit 的设计以「AI 只需告诉 PairFlow 发生了什么」为前提，而非「PairFlow 需要精确记录 AI 说了什么」。三个层面共享同一个错误：**将 submit 视为事件通知而非数据持久化入口。**
+
+### 方案
+
+> **分层修复**：
+> 1. **入参层**：`converge_mark.new_issues` 退化为摘要 `[{type, topic}]`，markdown content 中的 issue 详情为权威来源。PairFlow 不解析 content，仅存储
+> 2. **存储层**：`converge_mark.new_issues` 中的 `proposal`/`rationale` 必须写入 `state.issues[]`；`my_position` 写入 `issue.positions[identity]`
+> 3. **归档层**：`meta.json` 的 `new_issues` 存储完整 issue 对象（含 type/topic/description/proposal/rationale），而非仅 ID 数组。使 §8 声明成立
+>
+> 替代方案：保持 `converge_mark.new_issues` 为完整结构，markdown content 不重复 issue 详情。但需解决 body 过大问题（分页或外部引用）。
+
+此问题为 **P0 阻塞级**——submit 是 PairFlow 的核心数据入口，入口设计有缺陷则下游所有数据链路受损。
+
+---
+
+## 优先级
+
+四个问题均为 **P0 阻塞级**。修复顺序：
+
+```
+P0-22 (submit 数据流——入参去重、存储补全、归档完整)
+    ↓ 修了这个，submit 的数据入口才可靠，下游链路才有保障
 P0-21 (目标锚定——advance 缺 task 拒绝)
     ↓ 修了这个，没有 task 根本进不了 REQUIREMENTS
 P0-20 (task 上下文——advance 携带并存储 task)
