@@ -1,0 +1,14 @@
+{
+  "stance": null, "need_next_round": null, "new_issues": [],
+  "dev_phase": 3, "sub_phase": "coding",
+  "deliverables": {
+    "crash-recovery.ts": "§8 full flow (step 0+1+2+5+7)",
+    "submit.ts stalemate": "fix_review_cycles increment on review",
+    "index.ts": "initializeRecovery on startup",
+    "tests": "17/17 (3 new crash recovery tests)"
+  },
+  "deferred": ["P1-58", "P1-72"],
+  "verification": { "tsc": "pass", "vitest": "17/17" },
+  "commit_hash": "e1d95ea",
+  "submitted_at": "2026-06-22T11:55:00.000Z"
+}
