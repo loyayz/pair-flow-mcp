@@ -109,15 +109,67 @@ const timeouts = args.timeouts as Record<string, number> | undefined;
 
 ---
 
+## P0-21: 状态机缺少目标锚定——无 task 时 advance 应拒绝而非空转
+
+### 场景
+
+2026-06-22 双 AI 接入验证。claude advance IDLE→REQUIREMENTS 时未传 `task`。状态机正常推进，deepseek 拿到空模板后自行从 git log 中猜测审阅对象（`auto-flow-blockers.md`），之后的 4 轮交替评审、12 个 issue、收敛达成、盲审进行中——**全部在零目标输入下完成。**
+
+状态机验证了 stance 一致性、审阅范围段落、提出者不修改、converge_mark 交叉校验、lease 超时……但从头到尾没有一刻问过：「我们的目标是什么？」
+
+### 根因
+
+P0-20 关注的是「缺少 task 传递通道」，P0-21 关注的是「通道缺了之后系统做了什么」。
+
+当前行为：
+```
+advance(IDLE→REQUIREMENTS) 无 task → 静默通过 → 发空模板 → AI 自救
+```
+
+正确行为：
+```
+advance(IDLE→REQUIREMENTS) 无 task → 拒绝 → 返回 "advance from IDLE requires task"
+```
+
+这是一个**防御性设计缺失**——状态机假设调用方正确，不校验前置条件。类比：一辆车做了完美的车道保持和碰撞检测，但没有 GPS，它会完美地绕圈直到没油。而且它不会告诉你没有输入目的地。
+
+4 轮空转的实际代价：
+- 双方 AI 消耗了大量 token 审阅了一个 AI 猜测出来的文件
+- 产出 12 个 issue 全部建立在一个未经确认的前提上
+- 状态机正常运转的表象掩盖了「无目标」这个根本问题
+
+### 方案
+
+> **advance 前置校验——task 必填**：
+> 1. `claim_turn(mode="advance")` 的 IDLE→REQUIREMENTS 分支：`task` 参数必填，缺少则返回错误，拒绝 advance
+> 2. `task.description` 至少 10 字符，`task.spec_file` 必须是有效路径
+> 3. 其他 phase 的 advance 不强制 task（已从 state 继承）
+> 4. get_context/get_state 始终返回当前 task——即使为 null，让 AI 有意识「当前无任务」
+
+**P0-21 与 P0-20 的关系**：
+
+| | P0-20 | P0-21 |
+|---|------|------|
+| 问题 | advance 没有传 task 的通道 | 通道空的时候系统不拒绝 |
+| 症状 | AI 拿到空模板不知道做什么 | AI 在零目标下完成了 4 轮空转 |
+| 修法 | 新增 task 参数和存储 | advance 校验 task 必填，缺则拒绝 |
+| 性质 | 功能缺失 | 防御缺失 |
+
+两者必须一起修——P0-20 不修则 P0-21 的校验没有东西可验，P0-21 不修则 P0-20 修了也可能被绕过。
+
+---
+
 ## 优先级
 
-两个问题均为 **P0 阻塞级**。关系：
+三个问题均为 **P0 阻塞级**。修复顺序：
 
 ```
-P0-20 (task 上下文)
-    ↓ 先修 —— AI 至少知道要做什么，能开始工作
-P0-19 (事件通知)  
-    ↓ 后修 —— AI 能自动感知对方动作，无需人工协调
+P0-21 (目标锚定——advance 缺 task 拒绝)
+    ↓ 修了这个，没有 task 根本进不了 REQUIREMENTS
+P0-20 (task 上下文——advance 携带并存储 task)
+    ↓ 修了这个，task 能传进来、存下来、模板渲染出来
+P0-19 (事件通知——SSE 推送状态变更)
+    ↓ 修了这个，AI 自动感知对方动作
 全自动流转
 ```
 
