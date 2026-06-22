@@ -29,12 +29,7 @@ export async function acquireLock(): Promise<LockData> {
     if (existing.pid !== currentPid) {
       const pidAlive = isPidAlive(existing.pid);
       if (pidAlive) {
-        const startedAt = new Date(existing.started_at).getTime();
-        const elapsed = Date.now() - startedAt;
-        if (elapsed < 5 * 60 * 1000) {
-          throw new Error(`Lock held by PID ${existing.pid} (started ${existing.started_at}). Refusing to start.`);
-        }
-        // > 5min — zombie, overwrite
+        throw new Error(`Lock held by PID ${existing.pid} (started ${existing.started_at}). Refusing to start.`);
       }
     }
 

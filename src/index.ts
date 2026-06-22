@@ -13,6 +13,7 @@ import { getContext } from "./tools/get-context.js";
 import { submit } from "./tools/submit.js";
 import { createIssue, resolveIssue, escalate, listIssues } from "./tools/issue-tools.js";
 import { getArchivedFiles, getArchivedFileContent, forceConverge } from "./tools/archive-tools.js";
+import { waitForTurn } from "./tools/wait-for-turn.js";
 
 const PORT = parseInt(process.env.PORT || "3100", 10);
 
@@ -38,6 +39,7 @@ function createServerWithTools() {
   mcp.registerTool("get_archived_files", { description: "列出归档文件。phase/workflow_id 可选过滤。", inputSchema: { phase: z.string().optional(), workflow_id: z.string().optional() } }, getArchivedFiles);
   mcp.registerTool("get_archived_file_content", { description: "读取归档文件内容。盲审模式下拒绝对方盲审文件。", inputSchema: { filename: z.string() } }, getArchivedFileContent);
   mcp.registerTool("force_converge", { description: "强制收敛当前 dev_phase 循环（仅监督者，phase≠idle）。", inputSchema: {} }, forceConverge);
+  mcp.registerTool("wait_for_turn", { description: "长轮询等待 turn 切换到调用方。2s 间隔，60s 超时返回当前状态。phase 变更或 converged 时提前返回。" }, waitForTurn);
   mcp.registerTool(
     "submit",
     {
@@ -77,29 +79,20 @@ const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse
       chunks.push(chunk);
     }
     const body = Buffer.concat(chunks).toString();
-    const parsed = body ? JSON.parse(body) : undefined;
-
-    // Extract session ID from request — stateless: use request correlation
-    const sessionId = parsed?.params?._meta?.sessionId
-      ?? req.headers["mcp-session-id"] as string | undefined
-      ?? undefined;
-
-    // Create a fresh transport per request in stateless mode
-    const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: undefined, // stateless
-    });
-
-    // Create a fresh MCP server for this transport
-    const mcp = createServerWithTools();
 
     try {
+      const parsed = body ? JSON.parse(body) : undefined;
+      const transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: undefined, // stateless
+      });
+      const mcp = createServerWithTools();
       await mcp.connect(transport);
       await transport.handleRequest(req, res, parsed);
       await transport.close();
     } catch (err) {
       console.error("[pair-flow] request error:", err);
       if (!res.headersSent) {
-        res.writeHead(500).end("Internal Server Error");
+        res.writeHead(500).end(JSON.stringify({ ok: false, error: "Invalid request" }));
       }
     }
     return;
@@ -139,6 +132,8 @@ process.on("uncaughtException", async (err) => {
   }
   console.log("[pair-flow] Restarting in 1s...");
   setTimeout(() => {
-    httpServer.listen(PORT, () => console.log(`[pair-flow] Re-listening on ${PORT}`));
+    httpServer.close(() => {
+      httpServer.listen(PORT, () => console.log(`[pair-flow] Re-listening on ${PORT}`));
+    });
   }, 1000);
 });

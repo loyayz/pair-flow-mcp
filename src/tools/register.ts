@@ -31,6 +31,13 @@ export async function register(
     const existing = state.peers.find((p) => p.identity === identity);
     const overwritten = existing !== undefined;
     if (overwritten) {
+      // Validate supervisor uniqueness on re-registration
+      if (supervisor) {
+        const existingSupervisor = state.peers.find((p) => p.role === "supervisor" && p.identity !== identity);
+        if (existingSupervisor) {
+          return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: `supervisor already registered: ${existingSupervisor.identity}` }) }], isError: true };
+        }
+      }
       const warning = `previous connection had in-flight operation, completed before override`;
       // Remove old, add new
       state.peers = state.peers.filter((p) => p.identity !== identity);

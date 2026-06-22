@@ -15,12 +15,12 @@ export function startLeaseTimer(state: PairFlowState): void {
 
   const delay = new Date(expires).getTime() - Date.now();
   if (delay <= 0) {
-    handleTimeout().catch(() => {});
+    handleTimeout().catch((e) => console.error("[pair-flow] lease timeout handler error:", e));
     return;
   }
 
   timerHandle = setTimeout(() => {
-    handleTimeout().catch(() => {});
+    handleTimeout().catch((e) => console.error("[pair-flow] lease timeout handler error:", e));
   }, delay);
 }
 

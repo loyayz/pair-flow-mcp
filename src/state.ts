@@ -1,4 +1,4 @@
-import { writeFile, mkdir, readFile } from "node:fs/promises";
+import { writeFile, mkdir, readFile, rename } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -151,7 +151,6 @@ export async function saveState(state: PairFlowState): Promise<void> {
   await mkdir(dirname(STATE_FILE), { recursive: true });
   const tmp = join(tmpdir(), `pairflow-state-${randomUUID()}.json`);
   await writeFile(tmp, JSON.stringify(state, null, 2), "utf-8");
-  const { rename } = await import("node:fs/promises");
   await rename(tmp, STATE_FILE);
 }
 

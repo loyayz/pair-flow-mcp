@@ -47,9 +47,6 @@ async function handleTurn(state: PairFlowState, identity: string): Promise<CallT
   } else if (!isCurrentHolder(state, identity)) {
     return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: `not your turn — current turn: ${state.turn}` }) }], isError: true };
   }
-  if (!isCurrentHolder(state, identity)) {
-    return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: `not your turn — current turn: ${state.turn}` }) }], isError: true };
-  }
 
   const token = randomUUID();
   const expires = new Date(Date.now() + getPhaseTimeoutMinutes(state) * 60 * 1000).toISOString();
