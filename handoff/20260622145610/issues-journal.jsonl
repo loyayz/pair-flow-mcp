@@ -9,3 +9,4 @@
 {"action":"create","timestamp":"2026-06-22T15:10:50.408Z","id":9,"type":"P2","topic":"task 是否应在 workflow 中途可更新？","raised_by":"deepseek"}
 {"action":"create","timestamp":"2026-06-22T15:10:50.408Z","id":10,"type":"P2","topic":"SSE 通知失败是否需要重试/确认机制？","raised_by":"deepseek"}
 {"action":"create","timestamp":"2026-06-22T15:19:37.939Z","id":11,"type":"P0","topic":"submit ��������meta.json �� issue ���� + state.json �� proposal/rationale + ��� content/converge_mark ����","raised_by":"deepseek"}
+{"action":"create","timestamp":"2026-06-22T15:25:52.261Z","id":12,"type":"P1","topic":"get_archived_file_content 缺少 phase 参数","raised_by":"claude"}
