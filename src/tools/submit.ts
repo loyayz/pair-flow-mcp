@@ -146,6 +146,15 @@ export async function submit(
     };
     state.history.push({ type: "submit", timestamp: now, details: { identity, round: state.round, new_issues: newIssueIds, resolved: convergeMark.resolved_issue_ids ?? [] } });
 
+    // Stalemate detection: increment fix_review_cycles for open P0s on review submits (§5.5)
+    if (state.phase === "implementation" && state.sub_phase === "review") {
+      for (const issue of state.issues) {
+        if (issue.type === "P0" && issue.status === "open") {
+          issue.fix_review_cycles += 1;
+        }
+      }
+    }
+
     // Determine if convergence is achieved
     let converged = false;
     const other = getOtherIdentity(state, identity);

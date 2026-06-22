@@ -3,6 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 import { acquireLock, releaseLock } from "./lock.js";
+import { initializeRecovery } from "./crash-recovery.js";
 import { ping } from "./tools/ping.js";
 import { whoAmI } from "./tools/who-am-i.js";
 import { register } from "./tools/register.js";
@@ -111,8 +112,12 @@ httpServer.listen(PORT, async () => {
   try {
     await acquireLock();
     console.log(`[pair-flow] Lock acquired`);
+    const recovered = await initializeRecovery();
+    if (recovered.phase !== "idle") {
+      console.log(`[pair-flow] Recovered state: phase=${recovered.phase}, workflow_id=${recovered.workflow_id}`);
+    }
   } catch (err) {
-    console.error(`[pair-flow] Lock failed:`, err);
+    console.error(`[pair-flow] Startup failed:`, err);
     process.exit(1);
   }
   console.log(`[pair-flow] HTTP MCP Server listening on http://localhost:${PORT}/mcp`);
