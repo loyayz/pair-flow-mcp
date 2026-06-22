@@ -126,7 +126,8 @@ export function defaultState(phaseConfig?: PhaseConfig): PairFlowState {
 
 // ── Atomic write ──
 
-const STATE_FILE = ".pairflow/state.json";
+const STATE_DIR = process.env.STATE_DIR || ".pairflow";
+const STATE_FILE = `${STATE_DIR}/state.json`;
 
 export async function loadState(): Promise<PairFlowState> {
   try {

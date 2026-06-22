@@ -1,7 +1,8 @@
 import { appendFile, mkdir, rename, stat } from "node:fs/promises";
 import { dirname } from "node:path";
 
-const LOG_FILE = ".pairflow/pairflow.log";
+const LOG_DIR = process.env.STATE_DIR || ".pairflow";
+const LOG_FILE = `${LOG_DIR}/pairflow.log`;
 const MAX_SIZE = 10 * 1024 * 1024; // 10MB
 const MAX_FILES = 5;
 

@@ -14,7 +14,7 @@ import { submit } from "./tools/submit.js";
 import { createIssue, resolveIssue, escalate, listIssues } from "./tools/issue-tools.js";
 import { getArchivedFiles, getArchivedFileContent, forceConverge } from "./tools/archive-tools.js";
 
-const PORT = 3100;
+const PORT = parseInt(process.env.PORT || "3100", 10);
 
 function createServerWithTools() {
   const mcp = new McpServer(

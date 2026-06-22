@@ -2,7 +2,8 @@ import { mkdir, writeFile, readFile, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 
-const LOCK_FILE = ".pairflow/lock";
+const LOCK_DIR = process.env.STATE_DIR || ".pairflow";
+const LOCK_FILE = `${LOCK_DIR}/lock`;
 
 interface LockData {
   pid: number;
