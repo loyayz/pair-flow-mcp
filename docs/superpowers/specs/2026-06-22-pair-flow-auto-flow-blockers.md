@@ -42,7 +42,7 @@ PairFlow server 在关键状态变更时通过 SSE 向所有已连接的 MCP cli
 | `blind_review_complete` | 双方盲审完成，可 advance | `{ phase }` |
 | `lease_timeout` | lease 即将到期（1 分钟前） | `{ expires_at }` |
 
-MCP Streamable HTTP 的 SSE 通道天然支持 server→client 推送。Server 需维护已连接 client 列表并在状态变更时广播。应纳入功能 spec §4 架构部分。
+MCP Streamable HTTP 的 SSE 通道天然支持 server→client 推送，但当前 stateless 传输架构（`sessionIdGenerator: undefined`）不持有连接。**选定方案 C（wait_for_turn 长轮询）**：新增 `wait_for_turn` 工具，AI 调用后服务端轮询（间隔 2s）直到 turn 切换到调用方或 phase 变更，返回 `{ turn, phase, round }`。超时 60s 后返回当前状态（方案 A：不报错，AI 自行判断是否重试）。若调用时已是调用方的 turn，立即返回。
 
 ---
 
@@ -82,7 +82,7 @@ const timeouts = args.timeouts as Record<string, number> | undefined;
    ```ts
    task: {
      description: string;      // 任务描述
-     spec_file?: string;       // 目标 spec/文档路径
+     spec_file?: string;       // 目标 spec/文档路径（不校验存在，AI 自行确认）
      goals?: string[];         // 阶段目标
      context?: string;         // 额外上下文（自由文本）
    } | null;
@@ -223,11 +223,9 @@ submit 的设计以「AI 只需告诉 PairFlow 发生了什么」为前提，而
 ### 方案
 
 > **分层修复**：
-> 1. **入参层**：`converge_mark.new_issues` 退化为摘要 `[{type, topic}]`，markdown content 中的 issue 详情为权威来源。PairFlow 不解析 content，仅存储
-> 2. **存储层**：`converge_mark.new_issues` 中的 `proposal`/`rationale` 必须写入 `state.issues[]`；`my_position` 写入 `issue.positions[identity]`
-> 3. **归档层**：`meta.json` 的 `new_issues` 存储完整 issue 对象（含 type/topic/description/proposal/rationale），而非仅 ID 数组。使 §8 声明成立
->
-> 替代方案：保持 `converge_mark.new_issues` 为完整结构，markdown content 不重复 issue 详情。但需解决 body 过大问题（分页或外部引用）。
+> 1. **入参层**：`converge_mark.new_issues` 压缩为 `[{type, topic, description}]`。`proposal`/`rationale` 从 JSON 移除，以 markdown content 为权威来源。`create_issue` 工具保持完整字段不变（逐个创建，无 body 过大问题）
+> 2. **存储层**：`description` 写入 `state.issues[]`；`my_position` 写入 `issue.positions[identity]`
+> 3. **归档层**：`meta.json` 的 `new_issues` 存储完整对象（含 id/type/topic/description），已修复
 
 此问题为 **P0 阻塞级**——submit 是 PairFlow 的核心数据入口，入口设计有缺陷则下游所有数据链路受损。
 
@@ -235,18 +233,16 @@ submit 的设计以「AI 只需告诉 PairFlow 发生了什么」为前提，而
 
 ## 优先级
 
-四个问题均为 **P0 阻塞级**。修复顺序：
+四个问题均为 **P0 阻塞级**。P0-20/P0-21 合并实现。修复顺序：
 
 ```
 P0-22 (submit 数据流——入参去重、存储补全、归档完整)
-    ↓ 修了这个，submit 的数据入口才可靠，下游链路才有保障
-P0-21 (目标锚定——advance 缺 task 拒绝)
-    ↓ 修了这个，没有 task 根本进不了 REQUIREMENTS
-P0-20 (task 上下文——advance 携带并存储 task)
-    ↓ 修了这个，task 能传进来、存下来、模板渲染出来
-P0-19 (事件通知——SSE 推送状态变更)
-    ↓ 修了这个，AI 自动感知对方动作
-全自动流转
+    ↓ 修了这个，submit 的数据入口才可靠
+P0-20+P0-21 (task 上下文 + 目标锚定——合并实现)
+    ↓ 修了这个，task 能进来、能存下、能渲染、缺了会拒绝
+P0-19 (轮询——AI 定时 get_state 感知变更)
+    ↓ 加了这个，AI 不再完全依赖人口头协调
+最小可用流转
 ```
 
 当前 workaround（bootstrap 模式）：人工在两个 AI 窗口之间传递状态信息。
