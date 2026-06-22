@@ -1,0 +1,8 @@
+{
+  "stance": null, "need_next_round": null, "new_issues": [],
+  "dev_phase": 3, "sub_phase": "fix",
+  "fixes": { "P0-12": "10 integration tests (register/claim/submit/issue/force/concurrent)" },
+  "verification": { "vitest": "20/20 (10 unit + 10 integration)", "tsc": "pass" },
+  "commit_hash": "008227f",
+  "submitted_at": "2026-06-22T13:05:00.000Z"
+}
