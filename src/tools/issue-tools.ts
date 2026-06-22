@@ -47,7 +47,7 @@ export async function createIssue(
     await saveState(state);
     // Journal (§6 authorial storage)
     const journalPath = `${HANDOFF_DIR}/${state.workflow_id}/issues-journal.jsonl`;
-    await mkdir(`${HANDOFF_DIR}/${state.workflow_id}`, { recursive: true }).then(() => appendFile(journalPath,JSON.stringify({ action: "create", timestamp: new Date().toISOString(), id: issueId, type, topic, raised_by: identity }) + "\n")));
+    await mkdir(`${HANDOFF_DIR}/${state.workflow_id}`, { recursive: true }).then(() => appendFile(journalPath,JSON.stringify({ action: "create", timestamp: new Date().toISOString(), id: issueId, type, topic, raised_by: identity }) + "\n"));
     await logEvent("create_issue", { issue_id: issueId, type, topic, identity });
     return { content: [{ type: "text", text: JSON.stringify({ ok: true, issue_id: issueId }) }] };
   });
@@ -79,7 +79,7 @@ export async function resolveIssue(
     await saveState(state);
     // Journal (§6 authorial storage)
     const journalPath = `${HANDOFF_DIR}/${state.workflow_id}/issues-journal.jsonl`;
-    await mkdir(`${HANDOFF_DIR}/${state.workflow_id}`, { recursive: true }).then(() => appendFile(journalPath,JSON.stringify({ action: "resolve", timestamp: new Date().toISOString(), id: issueId, identity, resolution }) + "\n")));
+    await mkdir(`${HANDOFF_DIR}/${state.workflow_id}`, { recursive: true }).then(() => appendFile(journalPath,JSON.stringify({ action: "resolve", timestamp: new Date().toISOString(), id: issueId, identity, resolution }) + "\n"));
     await logEvent("resolve_issue", { issue_id: issueId, identity });
     return { content: [{ type: "text", text: JSON.stringify({ ok: true }) }] };
   });
@@ -112,7 +112,7 @@ export async function escalate(
     issue.fix_review_cycles = 0; // Reset stalemate counter (§5.5)
     await saveState(state);
     const journalPath = `${HANDOFF_DIR}/${state.workflow_id}/issues-journal.jsonl`;
-    await mkdir(`${HANDOFF_DIR}/${state.workflow_id}`, { recursive: true }).then(() => appendFile(journalPath,JSON.stringify({ action: "escalate", timestamp: new Date().toISOString(), id: issueId, identity, reason }) + "\n")));
+    await mkdir(`${HANDOFF_DIR}/${state.workflow_id}`, { recursive: true }).then(() => appendFile(journalPath,JSON.stringify({ action: "escalate", timestamp: new Date().toISOString(), id: issueId, identity, reason }) + "\n"));
     await logEvent("escalate", { issue_id: issueId, identity, reason });
     return { content: [{ type: "text", text: JSON.stringify({ ok: true }) }] };
   });
