@@ -48,7 +48,7 @@ async function setup() {
   const r1 = await mcpRequest("register", { supervisor: true, developer: false }, { "x-ai-identity": "claude" });
   const r2 = await mcpRequest("register", { supervisor: false, developer: true }, { "x-ai-identity": "codebuddy" });
   if (!r1.ok || !r2.ok) throw new Error(`Setup failed: ${JSON.stringify(r1)} ${JSON.stringify(r2)}`);
-  const adv = await mcpRequest("claim_turn", { mode: "advance", timeouts: { requirements: 10, planning: 10, implementation: 60, summary: 30 } }, { "x-ai-identity": "claude" });
+  const adv = await mcpRequest("claim_turn", { mode: "advance", timeouts: { requirements: 10, planning: 10, implementation: 60, summary: 30 }, task: { description: "测试任务——验证 PairFlow 状态机流程" } }, { "x-ai-identity": "claude" });
   if (!adv.ok) throw new Error(`Advance failed: ${JSON.stringify(adv)}`);
 }
 

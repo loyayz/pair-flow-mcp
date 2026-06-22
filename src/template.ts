@@ -37,6 +37,15 @@ export interface PhaseTemplate {
   structural_rules: string[];
 }
 
+function taskSection(state: PairFlowState): string {
+  if (!state.task) return "";
+  let s = `## 任务\n- 描述：${state.task.description}`;
+  if (state.task.spec_file) s += `\n- 目标文档：${state.task.spec_file}`;
+  if (state.task.goals?.length) s += `\n- 阶段目标：${state.task.goals.join("；")}`;
+  if (state.task.context) s += `\n- 附加上下文：${state.task.context}`;
+  return s + "\n\n---\n\n";
+}
+
 export function getTemplate(state: PairFlowState): string {
   const phase = state.phase;
   const sub = state.sub_phase;
@@ -54,7 +63,7 @@ export function getTemplate(state: PairFlowState): string {
   }
 
   if (phase === "requirements" || phase === "planning") {
-    let tmpl = `## 本轮审阅范围\n- 重新通读了以下章节：<列出>\n- 本次修改涉及的章节：<列出>\n- 未重新审阅的章节：<列出 + 原因>\n\n---\n\n`;
+    let tmpl = taskSection(state) + `## 本轮审阅范围\n- 重新通读了以下章节：<列出>\n- 本次修改涉及的章节：<列出>\n- 未重新审阅的章节：<列出 + 原因>\n\n---\n\n`;
     if (isPlanningR1) {
       tmpl += `## 实施里程碑\n- 循环总数: <N>\n- 里程碑 0: <描述>\n- 里程碑 1: <描述>\n...\n\n`;
     }

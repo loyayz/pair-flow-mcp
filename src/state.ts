@@ -75,6 +75,13 @@ export interface CurrentTimeout {
   phase_config: PhaseConfig;
 }
 
+export interface Task {
+  description: string;
+  spec_file?: string;
+  goals?: string[];
+  context?: string;
+}
+
 export interface PairFlowState {
   schema_version: number;
   workflow_id: string | null;
@@ -85,6 +92,7 @@ export interface PairFlowState {
   round: number;
   turn: string;
   converged: boolean;
+  task: Task | null;
   peers: Peer[];
   last_submit_per_turn: Record<string, LastSubmit>;
   issues: Issue[];
@@ -108,6 +116,7 @@ export function defaultState(phaseConfig?: PhaseConfig): PairFlowState {
     round: 1,
     turn: "idle",
     converged: false,
+    task: null,
     peers: [],
     last_submit_per_turn: {},
     issues: [],
@@ -148,7 +157,7 @@ export async function saveState(state: PairFlowState): Promise<void> {
 
 // ── Phase initialization (§12) ──
 
-export function initRequirementsPhase(state: PairFlowState, nonSupervisorId: string): PairFlowState {
+export function initRequirementsPhase(state: PairFlowState, nonSupervisorId: string, task: Task): PairFlowState {
   const now = new Date().toISOString();
   const workflowId = formatWorkflowId(now);
   const emptyLastSubmit: LastSubmit = { round: null, sub_phase: null, commit_hash: null, submitted_at: null, stance: null, need_next_round: null, new_issues: [] };
@@ -159,6 +168,7 @@ export function initRequirementsPhase(state: PairFlowState, nonSupervisorId: str
   return {
     ...state,
     workflow_id: workflowId,
+    task,
     phase: "requirements",
     sub_phase: null,
     round: 1,

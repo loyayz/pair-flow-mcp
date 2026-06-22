@@ -91,6 +91,17 @@ async function handleAdvance(state: PairFlowState, identity: string, args: Recor
     if (!timeouts || !timeouts.requirements || !timeouts.planning || !timeouts.implementation || !timeouts.summary) {
       return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "first advance requires timeouts: { requirements, planning, implementation, summary }" }) }], isError: true };
     }
+    // P0-21: require task on IDLE→REQUIREMENTS
+    const task = args.task as { description?: string; spec_file?: string; goals?: string[]; context?: string } | undefined;
+    if (!task || !task.description || task.description.trim().length < 10) {
+      return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "advance from IDLE requires task: { description (≥10 chars), spec_file?, goals?, context? }" }) }], isError: true };
+    }
+    const taskObj: import("../state.js").Task = {
+      description: task.description.trim(),
+      spec_file: task.spec_file,
+      goals: task.goals,
+      context: task.context,
+    };
     state.current_timeout.phase_config = {
       requirements: timeouts.requirements,
       planning: timeouts.planning,
@@ -98,10 +109,10 @@ async function handleAdvance(state: PairFlowState, identity: string, args: Recor
       summary: timeouts.summary,
     };
     const nonSupervisor = getOtherIdentity(state, identity)!;
-    const next = initRequirementsPhase(state, nonSupervisor);
+    const next = initRequirementsPhase(state, nonSupervisor, taskObj);
     await saveState(next);
-    await logEvent("advance", { identity, from: "idle", to: "requirements" });
-    return { content: [{ type: "text", text: JSON.stringify({ ok: true, new_phase: "requirements", turn: nonSupervisor, template: getTemplate(next), rules_summary: getRulesSummary(next, "advance") }) }] };
+    await logEvent("advance", { identity, from: "idle", to: "requirements", task: taskObj.description });
+    return { content: [{ type: "text", text: JSON.stringify({ ok: true, new_phase: "requirements", turn: nonSupervisor, task: taskObj, template: getTemplate(next), rules_summary: getRulesSummary(next, "advance") }) }] };
   }
 
   // Non-IDLE phases: must be converged + blind review done

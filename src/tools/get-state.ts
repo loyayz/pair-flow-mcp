@@ -12,6 +12,7 @@ export async function getState(): Promise<CallToolResult> {
     content: [{ type: "text", text: JSON.stringify({
       phase: state.phase, sub_phase: state.sub_phase, dev_phase: state.dev_phase,
       round: state.round, turn: state.turn, converged: state.converged,
+      task: state.task,
       pending_supervisor_review: state.pending_supervisor_review,
       blind_review_pending: state.blind_review_pending,
       peers: state.peers, issues: state.issues,

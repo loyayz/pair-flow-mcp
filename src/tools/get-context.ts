@@ -16,6 +16,7 @@ export async function getContext(): Promise<CallToolResult> {
           dev_phase: state.dev_phase,
           round: state.round,
           turn: state.turn,
+          task: state.task,
           issues: state.issues,
           last_submit: lastSubmit,
         }),
