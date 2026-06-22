@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseIdentity } from "../identity.js";
+import { parseIdentity, sanitizeIdentity } from "../identity.js";
 
 describe("parseIdentity", () => {
   it("returns 'unknown' for undefined headers", () => {
@@ -28,5 +28,19 @@ describe("parseIdentity", () => {
 
   it("returns 'unknown' when x-ai-identity is whitespace only", () => {
     expect(parseIdentity({ "x-ai-identity": "   " })).toBe("unknown");
+  });
+});
+
+describe("sanitizeIdentity", () => {
+  it("passes valid identities", () => {
+    expect(sanitizeIdentity("claude-fable")).toBe("claude-fable");
+    expect(sanitizeIdentity("codebuddy_123")).toBe("codebuddy_123");
+  });
+
+  it("rejects path separators", () => {
+    expect(() => sanitizeIdentity("../etc")).toThrow("Invalid identity");
+    expect(() => sanitizeIdentity("a/b")).toThrow("Invalid identity");
+    expect(() => sanitizeIdentity("a\\b")).toThrow("Invalid identity");
+    expect(() => sanitizeIdentity("a:b")).toThrow("Invalid identity");
   });
 });
