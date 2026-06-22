@@ -284,9 +284,6 @@ export interface ConvergeMark {
     type: IssueType;
     topic: string;
     description: string;
-    my_position?: string;
-    proposal?: string;
-    rationale?: string;
   }[];
   resolved_issue_ids?: number[];
   issue_stances?: Record<string, { stance: string; argument?: string }>;

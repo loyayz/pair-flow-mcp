@@ -107,13 +107,13 @@ export async function submit(
           phase: state.phase,
           round: state.round,
           status: "open",
-          positions: { [identity]: ni.my_position ?? "" },
+          positions: {},
           resolution: null,
           resolved_by: null,
           escalated_at: null,
           fix_review_cycles: 0,
-          proposal: ni.proposal ?? null,
-          rationale: ni.rationale ?? null,
+          proposal: null,
+          rationale: null,
         });
         newIssueIds.push(issueId);
       }
@@ -258,14 +258,14 @@ export async function submit(
       await mkdir(blindDir, { recursive: true });
       const filename = `${identity}_blind_review.md`;
       await writeFile(join(blindDir, filename), content, "utf-8");
-      await writeFile(join(blindDir, `${filename}.meta.json`), JSON.stringify({ stance: null, need_next_round: null, new_issues: (convergeMark.new_issues ?? []).map((ni, i) => ({ id: newIssueIds[i], type: ni.type, topic: ni.topic, description: ni.description, proposal: ni.proposal ?? null, rationale: ni.rationale ?? null, my_position: ni.my_position ?? null })), resolved_issue_ids: convergeMark.resolved_issue_ids ?? [] }, null, 2), "utf-8");
+      await writeFile(join(blindDir, `${filename}.meta.json`), JSON.stringify({ stance: null, need_next_round: null, new_issues: (convergeMark.new_issues ?? []).map((ni, i) => ({ id: newIssueIds[i], type: ni.type, topic: ni.topic, description: ni.description })), resolved_issue_ids: convergeMark.resolved_issue_ids ?? [] }, null, 2), "utf-8");
     } else {
       const phaseDir = join(HANDOFF_DIR, wfId, state.phase);
       await mkdir(phaseDir, { recursive: true });
       const seq = state.round;
       const filename = `r${seq}_${identity}.md`;
       await writeFile(join(phaseDir, filename), content, "utf-8");
-      await writeFile(join(phaseDir, `r${seq}_${identity}.meta.json`), JSON.stringify({ stance: convergeMark.stance, need_next_round: convergeMark.need_next_round, new_issues: (convergeMark.new_issues ?? []).map((ni, i) => ({ id: newIssueIds[i], type: ni.type, topic: ni.topic, description: ni.description, proposal: ni.proposal ?? null, rationale: ni.rationale ?? null, my_position: ni.my_position ?? null })), resolved_issue_ids: convergeMark.resolved_issue_ids ?? [] }, null, 2), "utf-8");
+      await writeFile(join(phaseDir, `r${seq}_${identity}.meta.json`), JSON.stringify({ stance: convergeMark.stance, need_next_round: convergeMark.need_next_round, new_issues: (convergeMark.new_issues ?? []).map((ni, i) => ({ id: newIssueIds[i], type: ni.type, topic: ni.topic, description: ni.description })), resolved_issue_ids: convergeMark.resolved_issue_ids ?? [] }, null, 2), "utf-8");
     }
 
     // IMPLEMENTATION: fix → review instead of converge
