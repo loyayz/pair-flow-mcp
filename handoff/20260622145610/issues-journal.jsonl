@@ -1,0 +1,11 @@
+{"action":"create","timestamp":"2026-06-22T15:10:50.408Z","id":1,"type":"P0","topic":"advance 不携带 task，AI 不知道要做什么","raised_by":"deepseek"}
+{"action":"create","timestamp":"2026-06-22T15:10:50.408Z","id":2,"type":"P0","topic":"无事件推送，监督者无法感知对方动作","raised_by":"deepseek"}
+{"action":"create","timestamp":"2026-06-22T15:10:50.408Z","id":3,"type":"P1","topic":"state.json schema 缺少 task 字段定义","raised_by":"deepseek"}
+{"action":"create","timestamp":"2026-06-22T15:10:50.408Z","id":4,"type":"P1","topic":"模板引擎不注入 task 上下文","raised_by":"deepseek"}
+{"action":"create","timestamp":"2026-06-22T15:10:50.408Z","id":5,"type":"P1","topic":"get_context / get_state 不返回 task","raised_by":"deepseek"}
+{"action":"create","timestamp":"2026-06-22T15:10:50.408Z","id":6,"type":"P1","topic":"通知事件类型和 payload schema 未定义","raised_by":"deepseek"}
+{"action":"create","timestamp":"2026-06-22T15:10:50.408Z","id":7,"type":"P1","topic":"§2 架构总览图缺少 SSE 通知通道","raised_by":"deepseek"}
+{"action":"create","timestamp":"2026-06-22T15:10:50.408Z","id":8,"type":"P1","topic":"rules_catalog 缺少 task 和通知相关规则","raised_by":"deepseek"}
+{"action":"create","timestamp":"2026-06-22T15:10:50.408Z","id":9,"type":"P2","topic":"task 是否应在 workflow 中途可更新？","raised_by":"deepseek"}
+{"action":"create","timestamp":"2026-06-22T15:10:50.408Z","id":10,"type":"P2","topic":"SSE 通知失败是否需要重试/确认机制？","raised_by":"deepseek"}
+{"action":"create","timestamp":"2026-06-22T15:19:37.939Z","id":11,"type":"P0","topic":"submit ��������meta.json �� issue ���� + state.json �� proposal/rationale + ��� content/converge_mark ����","raised_by":"deepseek"}
