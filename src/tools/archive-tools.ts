@@ -15,15 +15,22 @@ const HANDOFF_DIR = "handoff";
 export async function getArchivedFiles(
   args: Record<string, unknown>,
 ): Promise<CallToolResult> {
-  const phase = args.phase as string | undefined;
-  const workflowId = args.workflow_id as string | undefined;
-
   const state = await loadState();
-  const wfId = workflowId ?? state.workflow_id;
+  // Use state.workflow_id exclusively unless explicitly allowed; validate user-supplied values
+  const wfId = state.workflow_id;
   if (!wfId) return { content: [{ type: "text", text: JSON.stringify({ files: [] }) }] };
 
-  let dir = join(HANDOFF_DIR, wfId);
-  if (phase) dir = join(dir, phase);
+  const safeId = validatePathSegment(wfId);
+  let dir = join(HANDOFF_DIR, safeId);
+
+  const phase = args.phase as string | undefined;
+  if (phase) dir = join(dir, validatePathSegment(phase));
+
+  // Verify resolved path stays within HANDOFF_DIR
+  const { resolve } = await import("node:path");
+  if (!resolve(dir).startsWith(resolve(HANDOFF_DIR))) {
+    return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "invalid path" }) }], isError: true };
+  }
 
   try {
     const entries = await readdir(dir, { recursive: true });
@@ -32,6 +39,13 @@ export async function getArchivedFiles(
   } catch {
     return { content: [{ type: "text", text: JSON.stringify({ files: [] }) }] };
   }
+}
+
+function validatePathSegment(segment: string): string {
+  if (/[\\/:]/.test(segment) || segment.includes("..") || !/^[a-zA-Z0-9_-]+$/.test(segment)) {
+    throw new Error("Invalid path segment");
+  }
+  return segment;
 }
 
 // ── get_archived_file_content ──
@@ -59,9 +73,11 @@ export async function getArchivedFileContent(
   const wfId = state.workflow_id;
   if (!wfId) return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "no active workflow" }) }], isError: true };
 
-  const filePath = join(HANDOFF_DIR, wfId, filename);
+  const safeWfId = validatePathSegment(wfId);
+  const filePath = join(HANDOFF_DIR, safeWfId, filename);
   // Prevent path traversal
-  if (!filePath.startsWith(join(HANDOFF_DIR, wfId))) {
+  const { resolve } = await import("node:path");
+  if (!resolve(filePath).startsWith(resolve(join(HANDOFF_DIR, safeWfId)))) {
     return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "invalid filename" }) }], isError: true };
   }
 
