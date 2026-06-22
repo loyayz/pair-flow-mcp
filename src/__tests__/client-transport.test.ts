@@ -4,14 +4,14 @@ import { rm } from "node:fs/promises";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { createClientTransport } from "../client-transport.js";
 
-const PORT = 3198;
+const PORT = 3197;
 let server: ChildProcess;
 
 async function startServer() {
-  await rm(".pairflow-test", { recursive: true }).catch(() => {});
+  await rm(".pairflow-test-transport", { recursive: true }).catch(() => {});
   const npxCmd = process.platform === "win32" ? "npx.cmd" : "npx";
   server = spawn(npxCmd, ["tsx", "src/index.ts"], {
-    env: { ...process.env, PORT: String(PORT), STATE_DIR: ".pairflow-test" },
+    env: { ...process.env, PORT: String(PORT), STATE_DIR: ".pairflow-test-transport" },
     stdio: "pipe", shell: true,
   });
   await new Promise((r) => setTimeout(r, 2000));
