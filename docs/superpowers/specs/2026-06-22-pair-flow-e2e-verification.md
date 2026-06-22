@@ -73,4 +73,6 @@ IDLE → register(alice, supervisor) + register(bob, developer)
 |------|------|
 | 完整四阶段 E2E 脚本 | 待实现 |
 | 质量数据收集（收敛率/平均 round/P0 升级频率） | 待实际使用后收集 |
-| catalog trigger 映射优化 | P1-73 defer |
+| catalog trigger 映射优化 | ✅ 已修复（turn→包含 submit 规则） |
+| MCP SDK 自定义 header | ⚠️ 外部依赖——raw HTTP 可用（curl 验证），SDK 需升级 |
+| P0-14 已知问题未修即结束 | ✅ 已修复（本次修复）+ P0-14 记录入过程改进 spec |

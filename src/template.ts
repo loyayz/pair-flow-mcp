@@ -16,6 +16,8 @@ export const rulesCatalog: RuleEntry[] = [
   { id: "R001", description: "强制审阅范围声明——每轮 submit 必须包含'## 本轮审阅范围'段落", applicable_phases: ["requirements","planning"], trigger: "submit", spec_ref: "§5.3", type: "structural" },
   { id: "R002", description: "disagree 必须配替代方案+理由，不能单纯否定", applicable_phases: ["requirements","planning","implementation"], trigger: "submit", spec_ref: "§5.3", type: "behavioral" },
   { id: "R003", description: "提出者不修改自己提的问题——问题须由对方执行修改", applicable_phases: ["requirements","planning","implementation"], trigger: "submit", spec_ref: "§5.3", type: "behavioral" },
+  { id: "R013", description: "提交前确认已获取 turn 并持有有效 lease_token", applicable_phases: ["requirements","planning","implementation","summary"], trigger: "turn", spec_ref: "§9", type: "behavioral" },
+  { id: "R014", description: "每轮提交需带 git commit_hash（基于版本，非产出版本）", applicable_phases: ["requirements","planning","implementation","summary"], trigger: "submit", spec_ref: "§10", type: "behavioral" },
   { id: "R004", description: "P0/P1 issue 必须包含方案建议+理由（proposal+rationale）", applicable_phases: ["requirements","planning","implementation","summary"], trigger: "create_issue", spec_ref: "§6", type: "behavioral" },
   { id: "R005", description: "fix sub_phase 禁止创建 P0 issue", applicable_phases: ["implementation"], applicable_sub_phases: ["fix"], trigger: "create_issue", spec_ref: "§5.5", type: "structural" },
   { id: "R006", description: "advance 前置：所有 spec 修改须经对方确认", applicable_phases: ["requirements","planning","implementation","summary"], trigger: "advance", spec_ref: "§5.3", type: "behavioral" },
@@ -82,10 +84,12 @@ export function getTemplate(state: PairFlowState): string {
 export function getRulesSummary(state: PairFlowState, operation: "turn" | "advance"): string[] {
   const phase = state.phase;
   const sub = state.sub_phase ?? undefined;
-  const trigger = operation; // "turn" or "advance" — filter rules by operation
+  // "turn" → include submit rules (preparing to submit needs to know submit constraints)
+  // "advance" → include advance rules
+  const triggers = operation === "turn" ? ["turn", "submit"] : [operation];
 
   return rulesCatalog
-    .filter((r) => r.type === "behavioral" && r.applicable_phases.includes(phase) && (!r.applicable_sub_phases || (sub && r.applicable_sub_phases.includes(sub))) && r.trigger === trigger)
+    .filter((r) => r.type === "behavioral" && r.applicable_phases.includes(phase) && (!r.applicable_sub_phases || (sub && r.applicable_sub_phases.includes(sub))) && triggers.includes(r.trigger))
     .map((r) => `[${r.id}] ${r.description} (${r.spec_ref})`);
 }
 

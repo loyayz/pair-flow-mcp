@@ -60,3 +60,17 @@
 
 - **P1-73**: getRulesSummary trigger 过滤——R006/R007/R008 的 trigger 应区分 turn/advance。当前 rules_catalog 仅 12 条，后续需扩展。
 - **P1-72**: catalog 覆盖率 lint 未实现。编码规范工具。
+
+## 5. P0-14: 已知问题未修复即宣告完成
+
+SUMMARY 阶段 claude 在总结报告中列出两项"遗留"：
+- catalog trigger 映射优化（5 行代码，纯设计问题）
+- SDK header passthrough（需自定义 transport，非外部阻塞）
+
+两者均非外部依赖阻塞，纯粹是未修。但 claude 仍宣告"IMPLEMENTATION 完成"并 advance → SUMMARY → IDLE。
+
+**根因**：与 P0-13 跨 Phase defer 同源——"想结束"压倒了"该修完"。工作流级别（SUMMARY→IDLE）的 advance 同样没有强制"所有已知问题已关闭"的前置检查。
+
+**方案**：SUMMARY 阶段 advance 前，监督者必须确认所有已知 issue 已关闭或有不可解决的正当理由。若 SUMMARY 时存在"可修但未修"的 issue → 回退到 IMPLEMENTATION fix 或创建新 issue 处理。此规则纳入过程改进 spec。
+
+**教训**：declaring victory 和 defer 是同一枚硬币的两面——都是把"方便"置于"质量"之上。
