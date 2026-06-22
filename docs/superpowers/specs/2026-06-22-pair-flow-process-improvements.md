@@ -204,3 +204,43 @@ converge_mark 设计时以 IMPLEMENTATION review 子阶段为原型（需要 sta
 > 推荐 A——改动最小，字段语义通过文档明确即可。B 增加了 schema 复杂度，收益有限。
 
 此问题不阻塞功能，记录为设计改进候选项。
+
+---
+
+## 10. P0-19: 监督者无法感知对方注册/提交事件，依赖人工协调
+
+### 场景
+
+2026-06-22 首次真实双 AI 接入：claude 注册为 supervisor 后，对方以 deepseek 身份注册。claude 完全不知道对方已注册——没有通知、没有事件、没有回调。监督者只能被动等待用户口头告知"我接入了"，然后手动 advance。
+
+同样的问题贯穿全流程：
+- 对方 submit 后，当前持笔者不知道可以 claim turn 了
+- 盲审阶段，一方提交盲审后另一方不知道轮到自己
+- 收敛达成后，双方都不知道可以 advance 了
+
+**PairFlow server 是一个纯被动 HTTP 服务——只响应 tool call，不推送任何事件。**
+
+### 根因
+
+设计时隐含假设了 bootstrap 模式的人工协调（"轮到你了"），但 PairFlow v1 的生产目标是无人工介入的自动流转。MCP 协议本身支持 server→client 通知（`notifications/`），但 PairFlow 完全没有利用：
+
+```json
+// MCP 通知（协议原生支持，当前未实现）
+{"jsonrpc":"2.0","method":"notifications/peer_registered","params":{"identity":"deepseek"}}
+{"jsonrpc":"2.0","method":"notifications/turn_ready","params":{"turn":"claude"}}
+{"jsonrpc":"2.0","method":"notifications/converged","params":{"phase":"requirements"}}
+```
+
+### 方案
+
+> **事件通知机制**：PairFlow server 在关键状态变更时向所有已连接的 MCP client 推送通知：
+> - `peer_registered` — 对方注册完成
+> - `turn_ready` — 轮到当前 client（对方 submit 后 / advance 后）
+> - `phase_converged` — 当前阶段收敛，进入盲审
+> - `blind_review_complete` — 双方盲审完成，可 advance
+> - `lease_timeout` — lease 超时警告
+>
+> MCP Streamable HTTP 支持 SSE 推送，server 可维护已连接 client 列表并广播事件。
+> 在当前实现之前，bootstrap 模式仍需人工协调。
+
+此问题为 **P0 阻塞级**——没有事件通知，PairFlow 的"自动流转"就是空谈。应纳入功能 spec §4 架构部分，作为 v1.1 必须实现的功能。
