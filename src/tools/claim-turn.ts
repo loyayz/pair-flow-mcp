@@ -34,8 +34,18 @@ export async function claimTurn(
 }
 
 async function handleTurn(state: PairFlowState, identity: string): Promise<CallToolResult> {
-  if (state.converged) {
+  if (state.converged && !state.blind_review_pending) {
     return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "phase already converged — claim_turn(turn) not allowed" }) }], isError: true };
+  }
+  // Blind review: allow any registered peer to claim turn
+  if (state.converged && state.blind_review_pending) {
+    const isPeer = state.peers.some((p) => p.identity === identity);
+    if (!isPeer) {
+      return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "identity not registered" }) }], isError: true };
+    }
+    // Allow — bypass isCurrentHolder check below
+  } else if (!isCurrentHolder(state, identity)) {
+    return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: `not your turn — current turn: ${state.turn}` }) }], isError: true };
   }
   if (!isCurrentHolder(state, identity)) {
     return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: `not your turn — current turn: ${state.turn}` }) }], isError: true };

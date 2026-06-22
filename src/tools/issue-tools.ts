@@ -6,7 +6,7 @@ import { loadState, saveState, isSupervisor } from "../state.js";
 import { logEvent } from "../logger.js";
 import { stateMutex } from "../mutex.js";
 
-const HANDOFF_DIR = "handoff";
+const HANDOFF_DIR = process.env.HANDOFF_DIR || "handoff";
 
 // ── create_issue ──
 

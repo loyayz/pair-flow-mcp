@@ -29,9 +29,10 @@ function mcpRequest(name: string, args: Record<string, unknown> = {}, headers: R
 
 async function startServer() {
   await rm(".pairflow-test", { recursive: true }).catch(() => {});
+  await rm(".pairflow-test-handoff", { recursive: true }).catch(() => {});
   const npxCmd = process.platform === "win32" ? "npx.cmd" : "npx";
   server = spawn(npxCmd, ["tsx", "src/index.ts"], {
-    env: { ...process.env, PORT: String(PORT), STATE_DIR: ".pairflow-test" },
+    env: { ...process.env, PORT: String(PORT), STATE_DIR: ".pairflow-test", HANDOFF_DIR: ".pairflow-test-handoff" },
     stdio: "pipe", shell: true,
   });
   await new Promise((r) => setTimeout(r, 2000));
@@ -40,6 +41,7 @@ async function startServer() {
 async function stopServer() {
   server?.kill();
   await new Promise((r) => setTimeout(r, 500));
+  await rm(".pairflow-test-handoff", { recursive: true }).catch(() => {});
 }
 
 async function setup() {

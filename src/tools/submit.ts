@@ -11,7 +11,7 @@ import { crossValidateConvergeMark } from "../template.js";
 import { checkGraceSubmit, applyGraceSubmit, stopLeaseTimer } from "../lease.js";
 
 const MAX_CONTENT_BYTES = 500 * 1024; // 500KB
-const HANDOFF_DIR = "handoff";
+const HANDOFF_DIR = process.env.HANDOFF_DIR || "handoff";
 
 export async function submit(
   args: Record<string, unknown>,
@@ -54,8 +54,8 @@ export async function submit(
   return stateMutex.runExclusive(async () => {
     const state = await loadState();
 
-    // Validate mandatory review scope (only required for requirements/planning per §11)
-    if ((state.phase === "requirements" || state.phase === "planning") && !content.includes("## 本轮审阅范围")) {
+    // Validate mandatory review scope (only required for requirements/planning per §11; exempt blind_review)
+    if (!blindReview && (state.phase === "requirements" || state.phase === "planning") && !content.includes("## 本轮审阅范围")) {
       return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "missing required '## 本轮审阅范围' section" }) }], isError: true };
     }
 
@@ -146,7 +146,7 @@ export async function submit(
     const now = new Date().toISOString();
     state.last_submit_per_turn[identity] = {
       round: state.round,
-      sub_phase: state.sub_phase,
+      sub_phase: blindReview ? "blind_review" : state.sub_phase,
       commit_hash: commitHash,
       submitted_at: now,
       stance: convergeMark.stance ?? null,
@@ -171,8 +171,8 @@ export async function submit(
       const mySubmit = state.last_submit_per_turn[identity];
       const otherSubmit = state.last_submit_per_turn[other];
       if (blindReview) {
-        // Blind review: both submitted, check new_issues
-        if (otherSubmit.submitted_at) {
+        // Blind review: check if other party also submitted blind review (not regular submit)
+        if (otherSubmit.sub_phase === "blind_review") {
           const bothEmpty = mySubmit.new_issues.length === 0 && otherSubmit.new_issues.length === 0;
           state.blind_review_pending = false;
           if (bothEmpty) {
@@ -181,6 +181,9 @@ export async function submit(
             state.turn = other;
             state.round += 1;
           }
+        } else {
+          // Other hasn't submitted blind review yet — switch turn so they can
+          state.turn = other;
         }
       } else if (state.phase === "implementation" && state.sub_phase !== "coding" && state.sub_phase !== "fix") {
         // IMPLEMENTATION convergence check
@@ -228,6 +231,9 @@ export async function submit(
             // Set blind_review_pending for blind review
             state.blind_review_pending = true;
           }
+        } else {
+          // Other hasn't submitted — switch turn so they can claim and review
+          state.turn = other;
         }
       } else {
         // Coding → review (unconditional)

@@ -9,9 +9,10 @@ let server: ChildProcess;
 
 async function startServer() {
   await rm(".pairflow-test-transport", { recursive: true }).catch(() => {});
+  await rm(".pairflow-test-transport-handoff", { recursive: true }).catch(() => {});
   const npxCmd = process.platform === "win32" ? "npx.cmd" : "npx";
   server = spawn(npxCmd, ["tsx", "src/index.ts"], {
-    env: { ...process.env, PORT: String(PORT), STATE_DIR: ".pairflow-test-transport" },
+    env: { ...process.env, PORT: String(PORT), STATE_DIR: ".pairflow-test-transport", HANDOFF_DIR: ".pairflow-test-transport-handoff" },
     stdio: "pipe", shell: true,
   });
   await new Promise((r) => setTimeout(r, 2000));
@@ -20,6 +21,7 @@ async function startServer() {
 async function stopServer() {
   server?.kill();
   await new Promise((r) => setTimeout(r, 500));
+  await rm(".pairflow-test-transport-handoff", { recursive: true }).catch(() => {});
 }
 
 async function call(client: Client, name: string, args: Record<string, unknown> = {}) {

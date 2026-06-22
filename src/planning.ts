@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
-const HANDOFF_DIR = "handoff";
+const HANDOFF_DIR = process.env.HANDOFF_DIR || "handoff";
 
 /**
  * Extract cycle count from planning draft.

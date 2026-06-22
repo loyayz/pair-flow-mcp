@@ -9,7 +9,7 @@ import { logEvent } from "../logger.js";
 import { stateMutex } from "../mutex.js";
 import { stopLeaseTimer } from "../lease.js";
 
-const HANDOFF_DIR = "handoff";
+const HANDOFF_DIR = process.env.HANDOFF_DIR || "handoff";
 
 // ── get_archived_files ──
 

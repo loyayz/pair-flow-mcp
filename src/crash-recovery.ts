@@ -4,7 +4,7 @@ import { loadState, saveState, defaultState, type PairFlowState } from "./state.
 import { logEvent } from "./logger.js";
 import { startLeaseTimer } from "./lease.js";
 
-const HANDOFF_DIR = "handoff";
+const HANDOFF_DIR = process.env.HANDOFF_DIR || "handoff";
 
 /**
  * Recover state after crash. Returns the recovered state or default if no recovery possible.

@@ -124,7 +124,7 @@ export function crossValidateConvergeMark(content: string, convergeMark: { new_i
   // Parse resolved IDs
   const resolvedMatch = section.match(/本轮关闭\s*issue\s*[：:]\s*([\d,\s]*)/i);
   if (resolvedMatch) {
-    const resolved = resolvedMatch[1].trim() ? resolvedMatch[1].split(/[,\s]+/).map(Number) : [];
+    const resolved = resolvedMatch[1].trim() ? resolvedMatch[1].split(/[,\s]+/).filter(Boolean).map(Number) : [];
     const jsonResolved = convergeMark.resolved_issue_ids ?? [];
     if (resolved.length !== jsonResolved.length) {
       warnings.push(`Cross-validation: template resolved (${resolved}) ≠ JSON resolved_issue_ids (${jsonResolved})`);
