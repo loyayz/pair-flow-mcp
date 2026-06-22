@@ -18,9 +18,9 @@ export const rulesCatalog: RuleEntry[] = [
   { id: "R003", description: "提出者不修改自己提的问题——问题须由对方执行修改", applicable_phases: ["requirements","planning","implementation"], trigger: "submit", spec_ref: "§5.3", type: "behavioral" },
   { id: "R004", description: "P0/P1 issue 必须包含方案建议+理由（proposal+rationale）", applicable_phases: ["requirements","planning","implementation","summary"], trigger: "create_issue", spec_ref: "§6", type: "behavioral" },
   { id: "R005", description: "fix sub_phase 禁止创建 P0 issue", applicable_phases: ["implementation"], applicable_sub_phases: ["fix"], trigger: "create_issue", spec_ref: "§5.5", type: "structural" },
-  { id: "R006", description: "advance 前置：所有 spec 修改须经对方确认", applicable_phases: ["requirements","planning","implementation","summary"], trigger: "claim_turn", spec_ref: "§5.3", type: "behavioral" },
-  { id: "R007", description: "监督者全面通读义务——advance 前提交全面通读清单", applicable_phases: ["requirements","planning","implementation","summary"], trigger: "claim_turn", spec_ref: "§5.3", type: "behavioral" },
-  { id: "R008", description: "独立盲审——收敛后双方各自独立通读 spec 全文", applicable_phases: ["requirements","planning","implementation","summary"], trigger: "claim_turn", spec_ref: "§5.3", type: "behavioral" },
+  { id: "R006", description: "advance 前置：所有 spec 修改须经对方确认", applicable_phases: ["requirements","planning","implementation","summary"], trigger: "advance", spec_ref: "§5.3", type: "behavioral" },
+  { id: "R007", description: "监督者全面通读义务——advance 前提交全面通读清单", applicable_phases: ["requirements","planning","implementation","summary"], trigger: "advance", spec_ref: "§5.3", type: "behavioral" },
+  { id: "R008", description: "独立盲审——收敛后双方各自独立通读 spec 全文", applicable_phases: ["requirements","planning","implementation","summary"], trigger: "advance", spec_ref: "§5.3", type: "behavioral" },
   { id: "R009", description: "计划阶段 r1 必须包含'## 实施里程碑'段落含循环总数声明", applicable_phases: ["planning"], trigger: "submit", spec_ref: "§11", type: "structural" },
   { id: "R010", description: "IMPLEMENTATION 收敛需双方同 round stance=agree + need_next_round=false", applicable_phases: ["implementation"], trigger: "submit", spec_ref: "§7", type: "behavioral" },
   { id: "R011", description: "SUMMARY 收敛仅依赖 new_issues 为空，不依赖 stance/need_next", applicable_phases: ["summary"], trigger: "submit", spec_ref: "§7", type: "behavioral" },
@@ -82,7 +82,7 @@ export function getTemplate(state: PairFlowState): string {
 export function getRulesSummary(state: PairFlowState, operation: "turn" | "advance"): string[] {
   const phase = state.phase;
   const sub = state.sub_phase ?? undefined;
-  const trigger = operation === "advance" ? "claim_turn" : "claim_turn";
+  const trigger = operation; // "turn" or "advance" — filter rules by operation
 
   return rulesCatalog
     .filter((r) => r.type === "behavioral" && r.applicable_phases.includes(phase) && (!r.applicable_sub_phases || (sub && r.applicable_sub_phases.includes(sub))) && r.trigger === trigger)

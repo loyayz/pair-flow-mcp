@@ -107,6 +107,8 @@ export async function escalate(
     issue.status = "escalated";
     issue.escalated_at = new Date().toISOString();
     await saveState(state);
+    const journalPath = `${HANDOFF_DIR}/${state.workflow_id}/issues-journal.jsonl`;
+    await import("node:fs/promises").then(fs => fs.mkdir(`${HANDOFF_DIR}/${state.workflow_id}`, { recursive: true }).then(() => fs.appendFile(journalPath, JSON.stringify({ action: "escalate", timestamp: new Date().toISOString(), id: issueId, identity, reason }) + "\n")));
     await logEvent("escalate", { issue_id: issueId, identity, reason });
     return { content: [{ type: "text", text: JSON.stringify({ ok: true }) }] };
   });

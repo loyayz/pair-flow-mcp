@@ -62,11 +62,8 @@ export async function submit(
       return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: `not your turn — current turn: ${state.turn}` }) }], isError: true };
     }
 
-    // Blind review: cross-validate and set up
-    if (blindReview) {
-      const cv = crossValidateConvergeMark(content, convergeMark);
-      if (cv.warnings.length > 0) return { content: [{ type: "text", text: JSON.stringify({ ok: true, warnings: cv.warnings }) }] };
-    }
+    // Cross-validate convergeMark vs template (§11 — all submits, warnings non-blocking)
+    const cv = crossValidateConvergeMark(content, convergeMark);
 
     // Fix sub_phase: prohibit new P0
     const subPhase = state.sub_phase as string; // TypeScript narrowing workaround
@@ -261,7 +258,7 @@ export async function submit(
     await logEvent("submit", { identity, round: state.round, new_issues: newIssueIds, converged, blind_review: blindReview });
 
     return {
-      content: [{ type: "text", text: JSON.stringify({ ok: true, converged, next_turn: state.turn }) }],
+      content: [{ type: "text", text: JSON.stringify({ ok: true, converged, next_turn: state.turn, warnings: cv.warnings.length > 0 ? cv.warnings : undefined }) }],
     };
   });
 }
