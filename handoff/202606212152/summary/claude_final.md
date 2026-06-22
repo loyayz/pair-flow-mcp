@@ -76,9 +76,15 @@ scripts/
 | item | 状态 |
 |------|------|
 | 完整四阶段 E2E 自动脚本 | 待实现 |
-| 质量数据收集 (收敛率/平均 round/P0 升级频率) | 待实际使用 |
-| catalog trigger 映射优化 | defer |
-| SDK header passthrough | 依赖 SDK 更新 |
+| 质量数据收集 (收敛率/平均 round/P0 升级频率) | 待实际使用后收集 |
+| MCP SDK 自定义 header | ⚠️ 外部依赖——raw HTTP 可用（curl 验证通过），SDK 需升级 |
+
+## 六、过程改进
+
+4 个 spec 文件记录本次实现全过程：
+- `2026-06-21-pair-flow-design.md` — 功能 spec (988 行)
+- `2026-06-22-pair-flow-process-improvements.md` — 过程改进 spec (P0-13 defer 约束 + P0-14 未修即结束 + 提出者自修记录 + 模板改进)
+- `2026-06-22-pair-flow-e2e-verification.md` — E2E 验证结果
 
 ---
 
