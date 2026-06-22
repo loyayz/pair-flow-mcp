@@ -1,0 +1,127 @@
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
+import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
+import { parseIdentity } from "../identity.js";
+import { loadState, saveState, isSupervisor } from "../state.js";
+import { logEvent } from "../logger.js";
+import { stateMutex } from "../mutex.js";
+
+// ── create_issue ──
+
+export async function createIssue(
+  args: Record<string, unknown>,
+  extra: RequestHandlerExtra<ServerRequest, ServerNotification>
+): Promise<CallToolResult> {
+  const identity = parseIdentity(extra.requestInfo?.headers);
+  if (identity === "unknown") return err("identity required");
+
+  const type = args.type as string;
+  const topic = (args.topic as string)?.slice(0, 200) ?? "";
+  const description = (args.description as string) ?? "";
+  const myPosition = args.my_position as string | undefined;
+  const proposal = args.proposal as string | undefined;
+  const rationale = args.rationale as string | undefined;
+
+  if (!["P0", "P1", "P2"].includes(type)) return err("type must be P0, P1, or P2");
+  if (!topic) return err("topic required");
+  if ((type === "P0" || type === "P1") && !proposal) return err("P0/P1 require proposal + rationale — §6 proposal obligation");
+  if ((type === "P0" || type === "P1") && !rationale) return err("P0/P1 require rationale — §6 proposal obligation");
+
+  return stateMutex.runExclusive(async () => {
+    const state = await loadState();
+    if (state.phase === "idle") return err("cannot create issue in IDLE phase");
+    if (state.sub_phase === "fix" && type === "P0") return err("new P0 issues are not allowed during fix sub_phase");
+
+    const issueId = state.next_issue_id++;
+    state.issues.push({
+      id: issueId, type: type as "P0" | "P1" | "P2", topic, description,
+      raised_by: identity, phase: state.phase, round: state.round,
+      status: "open", positions: { [identity]: myPosition ?? "" },
+      resolution: null, resolved_by: null, escalated_at: null,
+      fix_review_cycles: 0, proposal: proposal ?? null, rationale: rationale ?? null,
+    });
+    await saveState(state);
+    await logEvent("create_issue", { issue_id: issueId, type, topic, identity });
+    return { content: [{ type: "text", text: JSON.stringify({ ok: true, issue_id: issueId }) }] };
+  });
+}
+
+// ── resolve_issue ──
+
+export async function resolveIssue(
+  args: Record<string, unknown>,
+  extra: RequestHandlerExtra<ServerRequest, ServerNotification>
+): Promise<CallToolResult> {
+  const identity = parseIdentity(extra.requestInfo?.headers);
+  if (identity === "unknown") return err("identity required");
+
+  const issueId = args.issue_id as number;
+  const resolution = (args.resolution as string) ?? "";
+
+  return stateMutex.runExclusive(async () => {
+    const state = await loadState();
+    const issue = state.issues.find((i) => i.id === issueId);
+    if (!issue) return err(`issue #${issueId} not found`);
+    if (issue.type === "P0" && !isSupervisor(state, identity)) return err("only supervisor can resolve P0 issues");
+
+    issue.status = "resolved";
+    issue.resolution = resolution;
+    issue.resolved_by = "supervisor_override";
+    await saveState(state);
+    await logEvent("resolve_issue", { issue_id: issueId, identity });
+    return { content: [{ type: "text", text: JSON.stringify({ ok: true }) }] };
+  });
+}
+
+// ── escalate ──
+
+export async function escalate(
+  args: Record<string, unknown>,
+  extra: RequestHandlerExtra<ServerRequest, ServerNotification>
+): Promise<CallToolResult> {
+  const identity = parseIdentity(extra.requestInfo?.headers);
+  if (identity === "unknown") return err("identity required");
+
+  const issueId = args.issue_id as number;
+  const reason = (args.reason as string) ?? "";
+
+  return stateMutex.runExclusive(async () => {
+    const state = await loadState();
+    if (!isSupervisor(state, identity)) return err("only supervisor can escalate");
+    if (state.phase === "idle") return err("cannot escalate in IDLE phase");
+
+    const issue = state.issues.find((i) => i.id === issueId);
+    if (!issue) return err(`issue #${issueId} not found`);
+    if (issue.type !== "P0") return err("only P0 issues can be escalated");
+    if (issue.status !== "open") return err(`issue #${issueId} is not open (status: ${issue.status})`);
+
+    issue.status = "escalated";
+    issue.escalated_at = new Date().toISOString();
+    await saveState(state);
+    await logEvent("escalate", { issue_id: issueId, identity, reason });
+    return { content: [{ type: "text", text: JSON.stringify({ ok: true }) }] };
+  });
+}
+
+// ── list_issues ──
+
+export async function listIssues(
+  args: Record<string, unknown>,
+): Promise<CallToolResult> {
+  const status = args.status as string | undefined;
+  const scope = (args.scope as string) ?? "current_phase";
+
+  const state = await loadState();
+  let issues = state.issues;
+  if (scope === "current_phase") {
+    issues = issues.filter((i) => i.phase === state.phase);
+  }
+  if (status) {
+    issues = issues.filter((i) => i.status === status);
+  }
+  return { content: [{ type: "text", text: JSON.stringify({ issues }) }] };
+}
+
+function err(message: string): CallToolResult {
+  return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: message }) }], isError: true };
+}

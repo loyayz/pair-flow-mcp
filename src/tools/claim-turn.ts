@@ -85,13 +85,14 @@ async function handleAdvance(state: PairFlowState, identity: string, args: Recor
     return { content: [{ type: "text", text: JSON.stringify({ ok: true, new_phase: "requirements", turn: nonSupervisor }) }] };
   }
 
+  // Non-IDLE phases: must be converged + blind review done
+  const phase = currentPhase as string; // avoid TS narrowing
+  if (phase !== "idle") {
+    if (!state.converged) return err("phase not converged");
+    if (state.blind_review_pending) return err("blind review pending — complete blind review before advance");
+  }
+
   if (currentPhase === "requirements") {
-    if (!state.converged) {
-      return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "phase not converged" }) }], isError: true };
-    }
-    if (state.blind_review_pending) {
-      return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "blind review pending — complete blind review before advance" }) }], isError: true };
-    }
     const reviewer = state.peers.find((p) => !p.is_developer);
     if (!reviewer) {
       return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "no reviewer (is_developer=false) registered" }) }], isError: true };
@@ -103,9 +104,6 @@ async function handleAdvance(state: PairFlowState, identity: string, args: Recor
   }
 
   if (currentPhase === "planning") {
-    if (!state.converged) {
-      return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "phase not converged" }) }], isError: true };
-    }
     const developer = state.peers.find((p) => p.is_developer);
     if (!developer) {
       return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "no developer (is_developer=true) registered" }) }], isError: true };
@@ -117,9 +115,6 @@ async function handleAdvance(state: PairFlowState, identity: string, args: Recor
   }
 
   if (currentPhase === "implementation") {
-    if (!state.converged) {
-      return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "phase not converged" }) }], isError: true };
-    }
     // Check if there are more dev_phases (from planning draft — stored in state or hardcoded)
     // For now: advance to summary directly (multi-cycle support in Phase 2)
     const nonSupervisor = getOtherIdentity(state, identity)!;
@@ -130,9 +125,6 @@ async function handleAdvance(state: PairFlowState, identity: string, args: Recor
   }
 
   if (currentPhase === "summary") {
-    if (!state.converged) {
-      return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "phase not converged" }) }], isError: true };
-    }
     const next = initIdleState(state);
     await saveState(next);
     await logEvent("advance", { identity, from: "summary", to: "idle" });
@@ -140,6 +132,10 @@ async function handleAdvance(state: PairFlowState, identity: string, args: Recor
   }
 
   return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: `unknown phase: ${currentPhase}` }) }], isError: true };
+}
+
+function err(message: string): CallToolResult {
+  return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: message }) }], isError: true };
 }
 
 function getPhaseTimeoutMinutes(state: PairFlowState): number {

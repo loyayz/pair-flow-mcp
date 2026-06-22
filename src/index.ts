@@ -10,6 +10,8 @@ import { claimTurn } from "./tools/claim-turn.js";
 import { getState } from "./tools/get-state.js";
 import { getContext } from "./tools/get-context.js";
 import { submit } from "./tools/submit.js";
+import { createIssue, resolveIssue, escalate, listIssues } from "./tools/issue-tools.js";
+import { getArchivedFiles, getArchivedFileContent, forceConverge } from "./tools/archive-tools.js";
 
 const PORT = 3100;
 
@@ -28,6 +30,13 @@ function createServerWithTools() {
   }, claimTurn);
   mcp.registerTool("get_state", { description: "完整状态快照。匿名可用。" }, getState);
   mcp.registerTool("get_context", { description: "当前阶段上下文。" }, getContext);
+  mcp.registerTool("create_issue", { description: "创建 issue。P0/P1 必填 proposal+rationale，P2 可选。fix sub_phase 禁 P0。", inputSchema: { type: z.enum(["P0","P1","P2"]), topic: z.string().max(200), description: z.string(), my_position: z.string().optional(), proposal: z.string().optional(), rationale: z.string().optional() } }, createIssue);
+  mcp.registerTool("resolve_issue", { description: "关闭 issue。P0 仅监督者。", inputSchema: { issue_id: z.number(), resolution: z.string() } }, resolveIssue);
+  mcp.registerTool("escalate", { description: "升级 P0 → escalated（仅监督者）。", inputSchema: { issue_id: z.number(), reason: z.string() } }, escalate);
+  mcp.registerTool("list_issues", { description: "列出 issue。scope=current_phase/all。", inputSchema: { status: z.string().optional(), scope: z.string().optional() } }, listIssues);
+  mcp.registerTool("get_archived_files", { description: "列出归档文件。phase/workflow_id 可选过滤。", inputSchema: { phase: z.string().optional(), workflow_id: z.string().optional() } }, getArchivedFiles);
+  mcp.registerTool("get_archived_file_content", { description: "读取归档文件内容。盲审模式下拒绝对方盲审文件。", inputSchema: { filename: z.string() } }, getArchivedFileContent);
+  mcp.registerTool("force_converge", { description: "强制收敛当前 dev_phase 循环（仅监督者，phase≠idle）。", inputSchema: {} }, forceConverge);
   mcp.registerTool(
     "submit",
     {

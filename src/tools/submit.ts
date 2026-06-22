@@ -36,11 +36,6 @@ export async function submit(
     return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "invalid commit_hash format" }) }], isError: true };
   }
 
-  // Validate mandatory review scope for non-IMPLEMENTATION phases
-  if (!content.includes("## 本轮审阅范围")) {
-    return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "missing required '## 本轮审阅范围' section" }) }], isError: true };
-  }
-
   // Blind review: stance and need_next_round must be null
   if (blindReview && (convergeMark.stance !== null || convergeMark.need_next_round !== null)) {
     return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "blind_review submit requires stance=null and need_next_round=null" }) }], isError: true };
@@ -56,6 +51,11 @@ export async function submit(
 
   return stateMutex.runExclusive(async () => {
     const state = await loadState();
+
+    // Validate mandatory review scope (only required for requirements/planning per §11)
+    if ((state.phase === "requirements" || state.phase === "planning") && !content.includes("## 本轮审阅范围")) {
+      return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "missing required '## 本轮审阅范围' section" }) }], isError: true };
+    }
 
     if (!isCurrentHolder(state, identity)) {
       return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: `not your turn — current turn: ${state.turn}` }) }], isError: true };
@@ -177,6 +177,7 @@ export async function submit(
             if (!hasOpenP0 && !hasEscalated) {
               converged = true;
               state.converged = true;
+              state.blind_review_pending = true;
               state.pending_supervisor_review = state.peers.some((p) => p.identity === identity && p.role === "supervisor" && p.is_developer);
               if (!state.pending_supervisor_review) {
                 // Auto-close P1/P2 on converge
@@ -224,7 +225,7 @@ export async function submit(
     // Write handoff files
     const wfId = state.workflow_id ?? "unknown";
     if (blindReview) {
-      const blindDir = join(HANDOFF_DIR, wfId, "requirements");
+      const blindDir = join(HANDOFF_DIR, wfId, state.phase);
       await mkdir(blindDir, { recursive: true });
       const filename = `${identity}_blind_review.md`;
       await writeFile(join(blindDir, filename), content, "utf-8");
