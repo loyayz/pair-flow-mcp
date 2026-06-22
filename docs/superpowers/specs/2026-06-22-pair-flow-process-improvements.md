@@ -222,6 +222,35 @@ converge_mark 设计时以 IMPLEMENTATION review 子阶段为原型（需要 sta
 
 ---
 
+## 11. P1-23: AI 不知道何时开始 wait_for_turn——缺少启动编排
+
+### 场景
+
+2026-06-23 再次双 AI 接入。claude 注册为 supervisor，deepseek 注册为 developer。双方注册完成后，claude 手动调用 `get_state` 确认对方已注册，然后 advance。整个过程依赖监督者主动查询。
+
+`wait_for_turn` 工具已实现——但它只解决了"怎么等"，没解决"什么时候开始等"。AI 注册后不会自动调用 `wait_for_turn`，因为没有任何触发器告诉它"现在可以开始等了"。
+
+### 根因
+
+PairFlow 的工作流有 5 个阶段，但缺少一个**启动编排步骤**。注册完成后，双方 AI 处于"不知道下一步该做什么"的状态：
+- 监督者不知道对方注册完成
+- 开发者不知道监督者何时 advance
+
+这不同于 P0-19（事件通知缺失）——即使有事件通知，AI 客户端也需要一个明确的"启动流程"约定。当前 AI 把 PairFlow tools 当作被动工具集，而非主动工作流——它需要一个"入口点"来触发整个流程。
+
+### 方案
+
+> **启动编排约定**：定义双方注册后的标准行为：
+> 1. 监督者注册后立即调用 `wait_for_turn` ——等待对方注册（phase 从 idle 变更时返回）
+> 2. 监督者确认双方注册后，调用 `claim_turn(advance, task)` 推进到 REQUIREMENTS
+> 3. 开发者注册后立即调用 `wait_for_turn` ——等待 turn 切换到自己的时刻
+>
+> 本质上是给 AI 一个 **bootstrap 脚本**：注册 → wait_for_turn → claim_turn → submit → wait_for_turn → ... 循环。AI 不需要知道"什么时候该等"，它只需要在每个动作之后立即开始等下一个 turn。
+
+此问题可在不修改服务端的情况下解决——通过约定 AI 客户端行为即可。应纳入 CLAUDE.md 或 PairFlow 使用文档。
+
+---
+
 ## 11. P1-22: bootstrap 模式下 AI 身份混淆——用错 `X-AI-Identity` header
 
 ### 场景
