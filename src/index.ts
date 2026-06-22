@@ -126,3 +126,19 @@ httpServer.listen(PORT, async () => {
 
 process.on("SIGTERM", async () => { await releaseLock(); process.exit(0); });
 process.on("SIGINT", async () => { await releaseLock(); process.exit(0); });
+
+// §15 crash auto-restart
+let crashCount = 0;
+process.on("uncaughtException", async (err) => {
+  console.error("[pair-flow] Uncaught exception:", err);
+  crashCount++;
+  if (crashCount >= 3) {
+    console.error("[pair-flow] Crash loop detected (3 crashes), refusing to restart");
+    await releaseLock();
+    process.exit(1);
+  }
+  console.log("[pair-flow] Restarting in 1s...");
+  setTimeout(() => {
+    httpServer.listen(PORT, () => console.log(`[pair-flow] Re-listening on ${PORT}`));
+  }, 1000);
+});

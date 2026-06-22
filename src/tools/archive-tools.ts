@@ -7,6 +7,7 @@ import { parseIdentity } from "../identity.js";
 import { loadState, saveState } from "../state.js";
 import { logEvent } from "../logger.js";
 import { stateMutex } from "../mutex.js";
+import { stopLeaseTimer } from "../lease.js";
 
 const HANDOFF_DIR = "handoff";
 
@@ -131,6 +132,7 @@ export async function forceConverge(
     }
     state.current_lease = { token: null, holder: null, expires_at: null, grace_used: false };
     state.current_timeout.active = false;
+    stopLeaseTimer();
     await saveState(state);
     await logEvent("force_converge", { identity, phase: state.phase });
     return { content: [{ type: "text", text: JSON.stringify({ ok: true }) }] };

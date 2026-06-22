@@ -44,6 +44,8 @@ async function handleTurn(state: PairFlowState, identity: string): Promise<CallT
   const token = randomUUID();
   const expires = new Date(Date.now() + getPhaseTimeoutMinutes(state) * 60 * 1000).toISOString();
   state.current_lease = { token, holder: identity, expires_at: expires, grace_used: false };
+  state.current_timeout.expires = expires; // §9 sync
+  state.current_timeout.started = new Date().toISOString();
   await saveState(state);
   await logEvent("claim_turn", { identity, mode: "turn", lease_token: token });
   startLeaseTimer(state);
@@ -122,8 +124,22 @@ async function handleAdvance(state: PairFlowState, identity: string, args: Recor
   }
 
   if (currentPhase === "implementation") {
-    // Check if there are more dev_phases (from planning draft — stored in state or hardcoded)
-    // For now: advance to summary directly (multi-cycle support in Phase 2)
+    // Multi-cycle: check planning draft for total cycles
+    const { extractCycleCount } = await import("../planning.js");
+    const totalCycles = state.workflow_id ? await extractCycleCount(state.workflow_id) : null;
+    const currentCycle = state.dev_phase ?? 0;
+
+    if (totalCycles !== null && currentCycle + 1 < totalCycles) {
+      // More cycles remain — advance to next dev_phase within IMPLEMENTATION
+      const dev = state.peers.find((p) => p.is_developer);
+      const nextDev = dev?.identity ?? identity;
+      const next = initImplementationPhase(state, nextDev);
+      await saveState(next);
+      await logEvent("advance", { identity, from: "implementation", to: "implementation", dev_phase: next.dev_phase });
+      return { content: [{ type: "text", text: JSON.stringify({ ok: true, new_phase: "implementation", dev_phase: next.dev_phase, sub_phase: "coding", turn: nextDev, template: getTemplate(next), rules_summary: getRulesSummary(next, "advance") }) }] };
+    }
+
+    // Last cycle or no cycle count — advance to SUMMARY
     const nonSupervisor = getOtherIdentity(state, identity)!;
     const next = initSummaryPhase(state, nonSupervisor);
     await saveState(next);
