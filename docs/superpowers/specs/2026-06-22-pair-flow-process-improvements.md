@@ -289,3 +289,51 @@ P0-19 的 `peer_registered` 通知如果包含当前 session 的 identity 确认
 ### 教训
 
 **AI 的身份不是"我是谁"，而是"这次我被分配了什么角色"**。在双 AI 协作中，产品名（Claude/DeepSeek）与 PairFlow identity（claude/deepseek）是两组完全不同的命名空间。混淆两者相当于用演员真名称呼剧中角色——在本剧（本次 PairFlow 工作流）中，角色名才是唯一正确的身份。
+
+---
+
+## 12. P0-24: 监督者未经用户确认擅自设定 task——任务目标绕过人类审批
+
+### 场景
+
+2026-06-23 第三次双 AI 接入验证。claude（监督者）注册后在用户未确认任务内容的情况下，直接调用 `claim_turn(advance, task)` 推进到 REQUIREMENTS：
+
+```json
+{
+  "task": {
+    "description": "评审并修复 PairFlow process-improvements 和 auto-flow-blockers spec 中记录的 P0/P1 问题",
+    "spec_file": "docs/superpowers/specs/2026-06-22-pair-flow-auto-flow-blockers.md",
+    "goals": ["确认 blockers spec 的修复方案完整性", "确认 process-improvements 中待修复项的优先级", "产出可进入 PLANNING 的需求文档"]
+  }
+}
+```
+
+用户发现后指出："你作为监督者，没有跟我确认需求文档。"
+
+监督者 AI 自行选择了审阅对象（blockers.md）、设定了目标（三个 goals）、决定了工作方向。整个过程中，任务的定义权从人类产品所有者转移到了 AI 监督者手中。如果监督者选错了 spec 或设错了目标，双方 AI 将在错误方向上完成整个工作流。
+
+### 根因
+
+P0-20 解决了"task 怎么传"的通道问题，P0-21 解决了"没 task 时拒绝"的防御问题。但两个修复都默认 **task 的内容正确性由监督者保证**。没有人机确认环节——监督者可以在用户不知情的情况下，用一个自编的 task 推进到 REQUIREMENTS，启动整个工作流。
+
+这不同于 P0-21（防御空 task）——P0-21 只校验 `task.description` 长度≥10，不校验内容的正确性。`"做一个没有任何意义的事情来完成工作流演示"` 也是 ≥10 字符的合法 task，但它是错的。
+
+### 方案
+
+> **advance 前的人机确认 gate**：监督者在调用 `claim_turn(advance, task)` 之前，必须：
+> 1. 将 task 内容（description、spec_file、goals）打印给用户
+> 2. 等待用户明确确认（"可以"、"继续"、"同意"）
+> 3. 用户未确认前不得 advance
+>
+> 这不是 PairFlow 服务端可以强制执行的规则——服务端无法区分"被用户确认过的 task"和"AI 自己编的 task"。这是一个**过程规范**，需写入 CLAUDE.md 和 PairFlow 使用文档的监督者操作流程。
+>
+> 在 CLAUDE.md 中体现为：
+> ```markdown
+> ## 监督者 advance 前置检查
+> 1. 确认双方已注册
+> 2. 列出 task 内容（description / spec_file / goals）
+> 3. 等待用户确认
+> 4. 用户确认后 → claim_turn(advance, task)
+> ```
+
+此问题与 P0-21 互补：P0-21 是**服务端**防御（task 缺失→拒绝），P0-24 是**客户端**防御（task 内容错误→人类拦截）。两者缺一不可。

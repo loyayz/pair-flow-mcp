@@ -27,8 +27,8 @@ function createServerWithTools() {
   mcp.registerTool("who_am_i", { description: "身份确认 + 注册信息。解析 X-AI-Identity header。" }, whoAmI);
   mcp.registerTool("register", { description: "IDLE 阶段注册身份和角色。仅通过 X-AI-Identity header 识别身份（不可通过 args 传递）。", inputSchema: { supervisor: z.boolean(), developer: z.boolean() } }, register);
   mcp.registerTool("claim_turn", {
-    description: "获取 turn 或推进 phase。仅通过 X-AI-Identity header 识别身份。",
-    inputSchema: { mode: z.enum(["turn", "advance"]), timeouts: z.object({ requirements: z.number(), planning: z.number(), implementation: z.number(), summary: z.number() }).optional() },
+    description: "获取 turn 或推进 phase。仅通过 X-AI-Identity header 识别身份。advance 模式 IDLE→REQUIREMENTS 时 task 必填。",
+    inputSchema: { mode: z.enum(["turn", "advance"]), timeouts: z.object({ requirements: z.number(), planning: z.number(), implementation: z.number(), summary: z.number() }).optional(), task: z.object({ description: z.string(), spec_file: z.string().optional(), goals: z.array(z.string()).optional(), context: z.string().optional() }).optional() },
   }, claimTurn);
   mcp.registerTool("get_state", { description: "完整状态快照。匿名可用。" }, getState);
   mcp.registerTool("get_context", { description: "当前阶段上下文。" }, getContext);
