@@ -12,11 +12,7 @@ export async function register(
   args: Record<string, unknown>,
   extra: RequestHandlerExtra<ServerRequest, ServerNotification>
 ): Promise<CallToolResult> {
-  // Prefer header, fallback to args (SDK header passthrough limitation)
-  let identity = parseIdentity(extra.requestInfo?.headers);
-  if (identity === "unknown" && typeof args.identity === "string") {
-    identity = args.identity;
-  }
+  const identity = parseIdentity(extra.requestInfo?.headers);
   if (identity === "unknown") {
     return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "identity required — set X-AI-Identity header" }) }], isError: true };
   }
