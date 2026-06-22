@@ -5,7 +5,8 @@ export async function getState(): Promise<CallToolResult> {
   const state = await loadState();
   const escalatedIds = state.issues.filter((i) => i.status === "escalated").map((i) => i.id);
   const fixLoopIds = state.issues.filter((i) => i.fix_review_cycles >= 2 && i.status === "open").map((i) => i.id);
-  const escalationRecommended = escalatedIds.length > 0 || fixLoopIds.length > 0 ? { issue_ids: [...escalatedIds, ...fixLoopIds] } : undefined;
+  const staleIds = state.issues.filter((i) => i.fix_review_cycles >= 5 && i.status === "open").map((i) => i.id);
+  const escalationRecommended = escalatedIds.length > 0 || fixLoopIds.length > 0 ? { issue_ids: [...escalatedIds, ...fixLoopIds], stale_warning: staleIds.length > 0 ? `issues ${staleIds.join(",")} have been open for 5+ review rounds` : undefined } : undefined;
 
   return {
     content: [{ type: "text", text: JSON.stringify({

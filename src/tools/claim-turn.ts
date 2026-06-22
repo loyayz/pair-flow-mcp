@@ -7,6 +7,7 @@ import { loadState, saveState, isCurrentHolder, isSupervisor, getOtherIdentity, 
 import { logEvent } from "../logger.js";
 import { stateMutex } from "../mutex.js";
 import { getTemplate, getRulesSummary } from "../template.js";
+import { startLeaseTimer, stopLeaseTimer } from "../lease.js";
 
 export async function claimTurn(
   args: Record<string, unknown>,
@@ -45,6 +46,7 @@ async function handleTurn(state: PairFlowState, identity: string): Promise<CallT
   state.current_lease = { token, holder: identity, expires_at: expires, grace_used: false };
   await saveState(state);
   await logEvent("claim_turn", { identity, mode: "turn", lease_token: token });
+  startLeaseTimer(state);
 
   return {
     content: [{ type: "text", text: JSON.stringify({

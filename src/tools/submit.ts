@@ -8,6 +8,7 @@ import { loadState, saveState, isCurrentHolder, getOtherIdentity, type ConvergeM
 import { logEvent } from "../logger.js";
 import { stateMutex } from "../mutex.js";
 import { crossValidateConvergeMark } from "../template.js";
+import { checkGraceSubmit, applyGraceSubmit, stopLeaseTimer } from "../lease.js";
 
 const MAX_CONTENT_BYTES = 500 * 1024; // 500KB
 const HANDOFF_DIR = "handoff";
@@ -58,8 +59,16 @@ export async function submit(
       return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "missing required '## 本轮审阅范围' section" }) }], isError: true };
     }
 
+    // Grace: allow submit even if turn changed (lease timeout + grace period)
+    let usedGrace = false;
     if (!isCurrentHolder(state, identity)) {
-      return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: `not your turn — current turn: ${state.turn}` }) }], isError: true };
+      const lt = args.lease_token as string | undefined;
+      if (lt && checkGraceSubmit(state, lt, identity)) {
+        await applyGraceSubmit(state, identity);
+        usedGrace = true;
+      } else {
+        return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: `not your turn — current turn: ${state.turn}` }) }], isError: true };
+      }
     }
 
     // Cross-validate convergeMark vs template (§11 — all submits, warnings non-blocking)
@@ -262,9 +271,10 @@ export async function submit(
 
     // Reset lease after submit
     state.current_lease = { token: null, holder: null, expires_at: null, grace_used: false };
+    stopLeaseTimer();
 
     await saveState(state);
-    await logEvent("submit", { identity, round: state.round, new_issues: newIssueIds, converged, blind_review: blindReview });
+    await logEvent("submit", { identity, round: state.round, new_issues: newIssueIds, converged, blind_review: blindReview, usedGrace });
 
     return {
       content: [{ type: "text", text: JSON.stringify({ ok: true, converged, next_turn: state.turn, warnings: cv.warnings.length > 0 ? cv.warnings : undefined }) }],

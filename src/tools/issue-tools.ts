@@ -73,6 +73,7 @@ export async function resolveIssue(
     issue.status = "resolved";
     issue.resolution = resolution;
     issue.resolved_by = issue.type === "P0" ? "supervisor_override" : "converged";
+    issue.fix_review_cycles = 0; // Reset stalemate counter (§5.5)
     await saveState(state);
     // Journal (§6 authorial storage)
     const journalPath = `${HANDOFF_DIR}/${state.workflow_id}/issues-journal.jsonl`;
@@ -106,6 +107,7 @@ export async function escalate(
 
     issue.status = "escalated";
     issue.escalated_at = new Date().toISOString();
+    issue.fix_review_cycles = 0; // Reset stalemate counter (§5.5)
     await saveState(state);
     const journalPath = `${HANDOFF_DIR}/${state.workflow_id}/issues-journal.jsonl`;
     await import("node:fs/promises").then(fs => fs.mkdir(`${HANDOFF_DIR}/${state.workflow_id}`, { recursive: true }).then(() => fs.appendFile(journalPath, JSON.stringify({ action: "escalate", timestamp: new Date().toISOString(), id: issueId, identity, reason }) + "\n")));

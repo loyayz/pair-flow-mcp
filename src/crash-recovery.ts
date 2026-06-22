@@ -1,7 +1,8 @@
 import { readdir, readFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { loadState, saveState, defaultState, type PairFlowState, type HistoryEntry, type Issue, type LastSubmit } from "./state.js";
+import { loadState, saveState, defaultState, type PairFlowState } from "./state.js";
 import { logEvent } from "./logger.js";
+import { startLeaseTimer } from "./lease.js";
 
 const HANDOFF_DIR = "handoff";
 
@@ -68,8 +69,45 @@ export async function recoverState(): Promise<PairFlowState> {
     }
   } catch { /* no journal */ }
 
+  // Step 3/4: Orphan file handling — scan for md+meta files after last history entry
+  const lastTs = state.history.length > 0 ? new Date(state.history[state.history.length - 1].timestamp).getTime() : 0;
+  for (const phaseDir of ["requirements", "planning", "implementation", "summary"]) {
+    try {
+      const phasePath = join(wfDir, phaseDir);
+      const metaFiles = await findFiles(phasePath, ".meta.json");
+      for (const mf of metaFiles) {
+        const baseName = mf.replace(".meta.json", "");
+        const mdName = baseName + ".md";
+        try {
+          const mdExists = await import("node:fs/promises").then(fs => fs.access(join(phasePath, mdName)).then(() => true).catch(() => false));
+          if (!mdExists) continue; // Step 4: md missing, skip
+          const metaRaw = await readFile(join(phasePath, mf), "utf-8");
+          const meta = JSON.parse(metaRaw);
+          if (meta.submitted_at && new Date(meta.submitted_at).getTime() > lastTs) {
+            // Orphan: submitted after last history entry, restore it
+            state.history.push({ type: "submit", timestamp: meta.submitted_at ?? new Date().toISOString(), details: { identity: baseName.split("_").pop() ?? "unknown", recovered: true } });
+          }
+        } catch { /* skip corrupt */ }
+      }
+    } catch { /* phase dir missing */ }
+  }
+
   // Step 5: Clear lease
   state.current_lease = { token: null, holder: null, expires_at: null, grace_used: false };
+
+  // Step 6: Restart timer if active and not expired
+  if (state.current_timeout.active && state.current_timeout.expires) {
+    const expiresAt = new Date(state.current_timeout.expires).getTime();
+    if (expiresAt > Date.now()) {
+      // Timer not yet expired — restart
+      startLeaseTimer(state);
+    } else {
+      // Already expired — release turn immediately
+      const other = state.peers.find((p) => p.identity !== state.turn);
+      if (other) state.turn = other.identity;
+      state.current_timeout.active = false;
+    }
+  }
 
   // Step 7: IDLE crash — peers already cleared above
   await saveState(state);
