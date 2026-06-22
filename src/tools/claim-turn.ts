@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { parseIdentity } from "../identity.js";
 import { loadState, saveState, isCurrentHolder, isSupervisor, getOtherIdentity, initRequirementsPhase, initPlanningPhase, initImplementationPhase, initSummaryPhase, initIdleState, type PairFlowState } from "../state.js";
 import { logEvent } from "../logger.js";
+import { stateMutex } from "../mutex.js";
 
 export async function claimTurn(
   args: Record<string, unknown>,
@@ -20,15 +21,20 @@ export async function claimTurn(
     return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "mode must be 'turn' or 'advance'" }) }], isError: true };
   }
 
-  const state = await loadState();
+  return stateMutex.runExclusive(async () => {
+    const state = await loadState();
 
-  if (mode === "advance") {
-    return handleAdvance(state, identity, args);
-  }
-  return handleTurn(state, identity);
+    if (mode === "advance") {
+      return handleAdvance(state, identity, args);
+    }
+    return handleTurn(state, identity);
+  });
 }
 
 async function handleTurn(state: PairFlowState, identity: string): Promise<CallToolResult> {
+  if (state.converged) {
+    return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "phase already converged — claim_turn(turn) not allowed" }) }], isError: true };
+  }
   if (!isCurrentHolder(state, identity)) {
     return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: `not your turn — current turn: ${state.turn}` }) }], isError: true };
   }
@@ -82,6 +88,9 @@ async function handleAdvance(state: PairFlowState, identity: string, args: Recor
   if (currentPhase === "requirements") {
     if (!state.converged) {
       return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "phase not converged" }) }], isError: true };
+    }
+    if (state.blind_review_pending) {
+      return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "blind review pending — complete blind review before advance" }) }], isError: true };
     }
     const reviewer = state.peers.find((p) => !p.is_developer);
     if (!reviewer) {

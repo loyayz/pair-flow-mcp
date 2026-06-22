@@ -2,12 +2,14 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
+import { acquireLock, releaseLock } from "./lock.js";
 import { ping } from "./tools/ping.js";
 import { whoAmI } from "./tools/who-am-i.js";
 import { register } from "./tools/register.js";
 import { claimTurn } from "./tools/claim-turn.js";
 import { getState } from "./tools/get-state.js";
 import { getContext } from "./tools/get-context.js";
+import { submit } from "./tools/submit.js";
 
 const PORT = 3100;
 
@@ -24,14 +26,33 @@ function createServerWithTools() {
     description: "获取 turn 或推进 phase。仅通过 X-AI-Identity header 识别身份。",
     inputSchema: { mode: z.enum(["turn", "advance"]), timeouts: z.object({ requirements: z.number(), planning: z.number(), implementation: z.number(), summary: z.number() }).optional() },
   }, claimTurn);
-  mcp.registerTool("get_state", { description: "完整状态快照。" }, getState);
+  mcp.registerTool("get_state", { description: "完整状态快照。匿名可用。" }, getState);
   mcp.registerTool("get_context", { description: "当前阶段上下文。" }, getContext);
+  mcp.registerTool(
+    "submit",
+    {
+      description: "提交产出。converge_mark + commit_hash + handoff 落盘。500KB 上限。",
+      inputSchema: {
+        content: z.string(),
+        converge_mark: z.object({
+          stance: z.string().nullable(),
+          need_next_round: z.boolean().nullable(),
+          new_issues: z.array(z.object({
+            type: z.string(),
+            topic: z.string().max(200),
+            description: z.string(),
+          })).optional(),
+          resolved_issue_ids: z.array(z.number()).optional(),
+        }),
+        commit_hash: z.string(),
+        blind_review: z.boolean().optional(),
+      },
+    },
+    submit
+  );
 
   return mcp;
 }
-
-// Create the MCP server definition (tools only, transport created per-request)
-const { McpServer: _McpServer, ...rest } = { McpServer };
 
 const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse) => {
   if (req.url === "/health") {
@@ -77,7 +98,17 @@ const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse
   res.writeHead(404).end("Not Found");
 });
 
-httpServer.listen(PORT, () => {
+httpServer.listen(PORT, async () => {
+  try {
+    await acquireLock();
+    console.log(`[pair-flow] Lock acquired`);
+  } catch (err) {
+    console.error(`[pair-flow] Lock failed:`, err);
+    process.exit(1);
+  }
   console.log(`[pair-flow] HTTP MCP Server listening on http://localhost:${PORT}/mcp`);
   console.log(`[pair-flow] Health check: http://localhost:${PORT}/health`);
 });
+
+process.on("SIGTERM", async () => { await releaseLock(); process.exit(0); });
+process.on("SIGINT", async () => { await releaseLock(); process.exit(0); });

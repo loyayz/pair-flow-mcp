@@ -1,12 +1,10 @@
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
-import { Mutex } from "async-mutex";
 import { parseIdentity } from "../identity.js";
-import { loadState, saveState, type PairFlowState } from "../state.js";
+import { loadState, saveState } from "../state.js";
 import { logEvent } from "../logger.js";
-
-const registerMutex = new Mutex();
+import { stateMutex } from "../mutex.js";
 
 export async function register(
   args: Record<string, unknown>,
@@ -20,7 +18,7 @@ export async function register(
   const supervisor = args.supervisor === true;
   const developer = args.developer === true;
 
-  return registerMutex.runExclusive(async () => {
+  return stateMutex.runExclusive(async () => {
     const state = await loadState();
     const now = new Date().toISOString();
 

@@ -141,12 +141,8 @@ export async function saveState(state: PairFlowState): Promise<void> {
   await mkdir(dirname(STATE_FILE), { recursive: true });
   const tmp = join(tmpdir(), `pairflow-state-${randomUUID()}.json`);
   await writeFile(tmp, JSON.stringify(state, null, 2), "utf-8");
-  await writeFile(STATE_FILE, JSON.stringify(state, null, 2), "utf-8");
-  // Best-effort temp cleanup
-  try {
-    const { unlink } = await import("node:fs/promises");
-    await unlink(tmp);
-  } catch { /* ignore */ }
+  const { rename } = await import("node:fs/promises");
+  await rename(tmp, STATE_FILE);
 }
 
 // ── Phase initialization (§12) ──
@@ -278,4 +274,19 @@ export function getOtherIdentity(state: PairFlowState, identity: string): string
 
 export function getPeerByIdentity(state: PairFlowState, identity: string): Peer | undefined {
   return state.peers.find((p) => p.identity === identity);
+}
+
+export interface ConvergeMark {
+  stance: Stance;
+  need_next_round: boolean | null;
+  new_issues?: {
+    type: IssueType;
+    topic: string;
+    description: string;
+    my_position?: string;
+    proposal?: string;
+    rationale?: string;
+  }[];
+  resolved_issue_ids?: number[];
+  issue_stances?: Record<string, { stance: string; argument?: string }>;
 }
