@@ -207,95 +207,15 @@ converge_mark 设计时以 IMPLEMENTATION review 子阶段为原型（需要 sta
 
 ---
 
-## 10. P0-19: 监督者无法感知对方注册/提交事件，依赖人工协调
+## 10. P0-19 & P0-20: 自动流转阻塞问题
 
-### 场景
+> **已单独提取为独立 spec**：`2026-06-22-pair-flow-auto-flow-blockers.md`
 
-2026-06-22 首次真实双 AI 接入：claude 注册为 supervisor 后，对方以 deepseek 身份注册。claude 完全不知道对方已注册——没有通知、没有事件、没有回调。监督者只能被动等待用户口头告知"我接入了"，然后手动 advance。
+首次真实双 AI 接入验证暴露了两个 P0 阻塞级问题：
 
-同样的问题贯穿全流程：
-- 对方 submit 后，当前持笔者不知道可以 claim turn 了
-- 盲审阶段，一方提交盲审后另一方不知道轮到自己
-- 收敛达成后，双方都不知道可以 advance 了
+| # | 问题 | 一句话 |
+|---|------|--------|
+| P0-19 | 无事件通知 | AI 不知道对方注册/提交了，依赖人口头告知 |
+| P0-20 | 无任务上下文 | AI 拿到模板全是 `<列出>` 占位符，不知道要做什么 |
 
-**PairFlow server 是一个纯被动 HTTP 服务——只响应 tool call，不推送任何事件。**
-
-### 根因
-
-设计时隐含假设了 bootstrap 模式的人工协调（"轮到你了"），但 PairFlow v1 的生产目标是无人工介入的自动流转。MCP 协议本身支持 server→client 通知（`notifications/`），但 PairFlow 完全没有利用：
-
-```json
-// MCP 通知（协议原生支持，当前未实现）
-{"jsonrpc":"2.0","method":"notifications/peer_registered","params":{"identity":"deepseek"}}
-{"jsonrpc":"2.0","method":"notifications/turn_ready","params":{"turn":"claude"}}
-{"jsonrpc":"2.0","method":"notifications/converged","params":{"phase":"requirements"}}
-```
-
-### 方案
-
-> **事件通知机制**：PairFlow server 在关键状态变更时向所有已连接的 MCP client 推送通知：
-> - `peer_registered` — 对方注册完成
-> - `turn_ready` — 轮到当前 client（对方 submit 后 / advance 后）
-> - `phase_converged` — 当前阶段收敛，进入盲审
-> - `blind_review_complete` — 双方盲审完成，可 advance
-> - `lease_timeout` — lease 超时警告
->
-> MCP Streamable HTTP 支持 SSE 推送，server 可维护已连接 client 列表并广播事件。
-> 在当前实现之前，bootstrap 模式仍需人工协调。
-
-此问题为 **P0 阻塞级**——没有事件通知，PairFlow 的"自动流转"就是空谈。应纳入功能 spec §4 架构部分，作为 v1.1 必须实现的功能。
-
----
-
-## 11. P0-20: advance 不携带任务上下文，AI 不知道要做什么
-
-### 场景
-
-2026-06-22 首次真实双 AI 接入：claude advance IDLE→REQUIREMENTS 后，turn=deepseek。deepseek claim_turn 拿到模板：
-
-```
-## 本轮审阅范围
-- 重新通读了以下章节：<列出>
-- 本次修改涉及的章节：<列出>
-```
-
-deepseek 的回复：
-
-> "当前是 requirements 阶段的第 1 轮……但在开始之前我需要先确认——我们要做什么功能/项目？"
-
-模板全是 `<列出>` `<N>` `<IDs>` 占位符，没有任何任务信息。AI 不知道要审阅什么文档、要实现什么功能、目标是什么。**状态机推进了，但任务上下文是空的。**
-
-### 根因
-
-`claim_turn(advance)` 的 IDLE→REQUIREMENTS 分支只接收 `timeouts` 参数：
-
-```ts
-const timeouts = args.timeouts as Record<string, number> | undefined;
-```
-
-没有任何字段让监督者传入任务描述、目标文档路径、需求范围。PairFlow 的状态机设计关注"流程怎么走"，忽略了"走的时候要带什么信息"。
-
-更深层：spec §5.1 state.json schema 中没有 `task` 或 `goal` 字段。整个状态对象只描述流程元数据（phase/round/turn/issues），不描述**业务上下文**。
-
-### 方案
-
-> **advance 携带任务上下文**：
-> 1. state.json 新增 `task` 字段：`{ description: string, spec_file?: string, goals?: string[] }`
-> 2. IDLE→REQUIREMENTS 的 advance 必须提供 `task` 参数
-> 3. 模板引擎将 `task` 内容渲染到模板中，替换无意义的 `<列出>` 占位符
-> 4. 后续阶段通过 `get_context` 工具返回 `task`，所有 AI 随时知道在做什么
->
-> 示例：
-> ```json
-> {
->   "mode": "advance",
->   "timeouts": {...},
->   "task": {
->     "description": "实现 PairFlow v1 — 本地 HTTP MCP Server 驱动双 AI 结对编程",
->     "spec_file": "docs/superpowers/specs/2026-06-21-pair-flow-design.md",
->     "goals": ["完成功能 spec 审阅", "产出最终版设计文档"]
->   }
-> }
-> ```
-
-此问题为 **P0 阻塞级**——缺少任务上下文，AI 接入后只能看到空模板，无法自主开始工作。
+两个问题不解决，PairFlow 的"自动流转"无法实现。详见独立 spec。
