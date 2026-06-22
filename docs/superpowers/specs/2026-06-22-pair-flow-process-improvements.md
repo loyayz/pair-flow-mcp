@@ -244,3 +244,58 @@ converge_mark 设计时以 IMPLEMENTATION review 子阶段为原型（需要 sta
 > 在当前实现之前，bootstrap 模式仍需人工协调。
 
 此问题为 **P0 阻塞级**——没有事件通知，PairFlow 的"自动流转"就是空谈。应纳入功能 spec §4 架构部分，作为 v1.1 必须实现的功能。
+
+---
+
+## 11. P0-20: advance 不携带任务上下文，AI 不知道要做什么
+
+### 场景
+
+2026-06-22 首次真实双 AI 接入：claude advance IDLE→REQUIREMENTS 后，turn=deepseek。deepseek claim_turn 拿到模板：
+
+```
+## 本轮审阅范围
+- 重新通读了以下章节：<列出>
+- 本次修改涉及的章节：<列出>
+```
+
+deepseek 的回复：
+
+> "当前是 requirements 阶段的第 1 轮……但在开始之前我需要先确认——我们要做什么功能/项目？"
+
+模板全是 `<列出>` `<N>` `<IDs>` 占位符，没有任何任务信息。AI 不知道要审阅什么文档、要实现什么功能、目标是什么。**状态机推进了，但任务上下文是空的。**
+
+### 根因
+
+`claim_turn(advance)` 的 IDLE→REQUIREMENTS 分支只接收 `timeouts` 参数：
+
+```ts
+const timeouts = args.timeouts as Record<string, number> | undefined;
+```
+
+没有任何字段让监督者传入任务描述、目标文档路径、需求范围。PairFlow 的状态机设计关注"流程怎么走"，忽略了"走的时候要带什么信息"。
+
+更深层：spec §5.1 state.json schema 中没有 `task` 或 `goal` 字段。整个状态对象只描述流程元数据（phase/round/turn/issues），不描述**业务上下文**。
+
+### 方案
+
+> **advance 携带任务上下文**：
+> 1. state.json 新增 `task` 字段：`{ description: string, spec_file?: string, goals?: string[] }`
+> 2. IDLE→REQUIREMENTS 的 advance 必须提供 `task` 参数
+> 3. 模板引擎将 `task` 内容渲染到模板中，替换无意义的 `<列出>` 占位符
+> 4. 后续阶段通过 `get_context` 工具返回 `task`，所有 AI 随时知道在做什么
+>
+> 示例：
+> ```json
+> {
+>   "mode": "advance",
+>   "timeouts": {...},
+>   "task": {
+>     "description": "实现 PairFlow v1 — 本地 HTTP MCP Server 驱动双 AI 结对编程",
+>     "spec_file": "docs/superpowers/specs/2026-06-21-pair-flow-design.md",
+>     "goals": ["完成功能 spec 审阅", "产出最终版设计文档"]
+>   }
+> }
+> ```
+
+此问题为 **P0 阻塞级**——缺少任务上下文，AI 接入后只能看到空模板，无法自主开始工作。
