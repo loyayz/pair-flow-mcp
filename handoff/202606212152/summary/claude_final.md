@@ -77,7 +77,7 @@ scripts/
 |------|------|
 | 完整四阶段 E2E 自动脚本 | 待实现 |
 | 质量数据收集 (收敛率/平均 round/P0 升级频率) | 待实际使用后收集 |
-| MCP SDK 自定义 header | ⚠️ 外部依赖——raw HTTP 可用（curl 验证通过），SDK 需升级 |
+| MCP SDK 自定义 header | ✅ `createClientTransport(url, identity)` — 仅需 `requestInit.headers` |
 
 ## 六、过程改进
 
