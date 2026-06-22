@@ -219,3 +219,44 @@ converge_mark 设计时以 IMPLEMENTATION review 子阶段为原型（需要 sta
 | P0-20 | 无任务上下文 | AI 拿到模板全是 `<列出>` 占位符，不知道要做什么 |
 
 两个问题不解决，PairFlow 的"自动流转"无法实现。详见独立 spec。
+
+---
+
+## 11. P1-22: bootstrap 模式下 AI 身份混淆——用错 `X-AI-Identity` header
+
+### 场景
+
+2026-06-23 REQUIREMENTS 阶段 r1，deepseek 连续两次用错身份：
+
+| 次数 | 行为 | 错误 | 后果 |
+|------|------|------|------|
+| 1 | 评审文档后调 PairFlow MCP | 用 `X-AI-Identity: claude` 调 `get_context`/`get_state`/`claim_turn` | claim_turn 被拒（turn=deepseek 非 claude），且用错误身份读取了不属于自己的 state |
+| 2 | 被用户纠正后提交成功 | 提交后在对话总结中说"我是 claude（监督者）" | 对自己角色的基线认知错误 |
+
+两次错误的共性是：AI 默认使用自己的产品名称（Claude Code → "claude"）作为 PairFlow identity，而非实际注册的 identity（"deepseek"）。
+
+### 根因
+
+1. **bootstrap 模式无身份强制**：正式阶段 PairFlow 通过 MCP session ID 强绑定 identity。但 bootstrap 模式下 AI 通过 HTTP header 自报身份，每次请求都需要手动指定。AI 没有任何机制记住"我在这次 PairFlow 会话中是谁"。
+2. **产品名惯性**：Claude Code CLI 的系统 prompt 中 self-identify 为 "Claude"，AI 自然将 `X-AI-Identity` 设为 "claude"。但 PairFlow 的 identity 是注册时分配的角色名（如 "deepseek"），不是产品名。
+3. **`who_am_i` 未成为习惯**：PairFlow 提供了 `who_am_i` 工具可查询当前身份，但 AI 没有在每次操作前调用它。如果首次操作前调 `who_am_i`，返回 `{ identity: "deepseek", registered: true }`，就可避免身份错误。
+
+更深层：与 P0-19（无事件通知）有关联——如果 PairFlow 能在 register 后主动推送 `peer_registered` 通知并附带当前 session 的 identity 确认信息，AI 可以在收到通知时建立"我是谁"的认知。但通知未实现前，这个确认只能靠 AI 主动调用 `who_am_i`。
+
+### 方案
+
+> **bootstrap 身份确认 checklist（每个 AI session 启动时）**：
+> 1. **第一步**：调 `who_am_i` 确认当前身份和注册状态
+> 2. **第二步**：如果 `who_am_i` 返回 `registered: false` 且需要注册 → 调 `register`
+> 3. **第三步**：后续所有 MCP 请求的 `X-AI-Identity` 必须与 `who_am_i` 返回的 `identity` 一致
+> 4. **每次 claim_turn 前**：确认 `turn === who_am_i.identity`。如果不是自己的 turn → 不调 claim_turn，等待 `turn_ready` 通知（bootstrap 下等用户告知）
+>
+> **此 checklist 应加入 CLAUDE.md 的 PairFlow bootstrap 操作说明**。
+
+### 与 P0-19 的关系
+
+P0-19 的 `peer_registered` 通知如果包含当前 session 的 identity 确认（`{ identity: "deepseek", role: "peer" }`），AI 在收到通知时即可建立身份认知，减少此类错误。但通知只能辅助确认——最终责任在 AI 侧每次操作前检查身份。
+
+### 教训
+
+**AI 的身份不是"我是谁"，而是"这次我被分配了什么角色"**。在双 AI 协作中，产品名（Claude/DeepSeek）与 PairFlow identity（claude/deepseek）是两组完全不同的命名空间。混淆两者相当于用演员真名称呼剧中角色——在本剧（本次 PairFlow 工作流）中，角色名才是唯一正确的身份。
