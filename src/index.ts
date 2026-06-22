@@ -1,35 +1,38 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { z } from "zod";
 import { ping } from "./tools/ping.js";
 import { whoAmI } from "./tools/who-am-i.js";
+import { register } from "./tools/register.js";
+import { claimTurn } from "./tools/claim-turn.js";
+import { getState } from "./tools/get-state.js";
+import { getContext } from "./tools/get-context.js";
 
 const PORT = 3100;
 
-const server = new McpServer(
-  { name: "pair-flow", version: "0.1.0" },
-  { capabilities: { tools: {} } }
-);
+function createServerWithTools() {
+  const mcp = new McpServer(
+    { name: "pair-flow", version: "0.1.0" },
+    { capabilities: { tools: {} } }
+  );
 
-// Register tools
-server.registerTool("ping", { description: "连通性检查。匿名可用。" }, ping);
-server.registerTool(
-  "who_am_i",
-  { description: "身份确认 + 注册信息。解析 X-AI-Identity header。" },
-  whoAmI
-);
+  mcp.registerTool("ping", { description: "连通性检查。匿名可用。" }, ping);
+  mcp.registerTool("who_am_i", { description: "身份确认 + 注册信息。解析 X-AI-Identity header。" }, whoAmI);
+  mcp.registerTool("register", { description: "IDLE 阶段注册身份和角色。", inputSchema: { supervisor: z.boolean(), developer: z.boolean(), identity: z.string().optional() } }, register);
+  mcp.registerTool("claim_turn", {
+    description: "获取 turn 或推进 phase。",
+    inputSchema: { mode: z.enum(["turn", "advance"]), identity: z.string().optional(), timeouts: z.object({ requirements: z.number(), planning: z.number(), implementation: z.number(), summary: z.number() }).optional() },
+  }, claimTurn);
+  mcp.registerTool("get_state", { description: "完整状态快照。" }, getState);
+  mcp.registerTool("get_context", { description: "当前阶段上下文。" }, getContext);
 
-// Create HTTP transport and connect
-const transport = new StreamableHTTPServerTransport({
-  sessionIdGenerator: () => crypto.randomUUID(),
-  // Phase 1 register 实现使用 session ID 标识连接（§4 身份唯一性）
-});
+  return mcp;
+}
 
-server.connect(transport).then(() => {
-  console.log(`[pair-flow] MCP server connected to transport`);
-});
+// Create the MCP server definition (tools only, transport created per-request)
+const { McpServer: _McpServer, ...rest } = { McpServer };
 
-// HTTP server
 const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse) => {
   if (req.url === "/health") {
     res.writeHead(200, { "Content-Type": "application/json" });
@@ -37,15 +40,31 @@ const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse
     return;
   }
 
-  if (req.url === "/mcp" && req.method === "POST") {
-    // Collect body for transport
+  if (req.url?.startsWith("/mcp") && req.method === "POST") {
     const chunks: Buffer[] = [];
     for await (const chunk of req) {
       chunks.push(chunk);
     }
     const body = Buffer.concat(chunks).toString();
+    const parsed = body ? JSON.parse(body) : undefined;
+
+    // Extract session ID from request — stateless: use request correlation
+    const sessionId = parsed?.params?._meta?.sessionId
+      ?? req.headers["mcp-session-id"] as string | undefined
+      ?? undefined;
+
+    // Create a fresh transport per request in stateless mode
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: undefined, // stateless
+    });
+
+    // Create a fresh MCP server for this transport
+    const mcp = createServerWithTools();
+
     try {
-      await transport.handleRequest(req, res, body ? JSON.parse(body) : undefined);
+      await mcp.connect(transport);
+      await transport.handleRequest(req, res, parsed);
+      await transport.close();
     } catch (err) {
       console.error("[pair-flow] request error:", err);
       if (!res.headersSent) {
