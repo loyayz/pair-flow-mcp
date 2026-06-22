@@ -6,6 +6,7 @@ import { parseIdentity } from "../identity.js";
 import { loadState, saveState, isCurrentHolder, isSupervisor, getOtherIdentity, initRequirementsPhase, initPlanningPhase, initImplementationPhase, initSummaryPhase, initIdleState, type PairFlowState } from "../state.js";
 import { logEvent } from "../logger.js";
 import { stateMutex } from "../mutex.js";
+import { getTemplate, getRulesSummary } from "../template.js";
 
 export async function claimTurn(
   args: Record<string, unknown>,
@@ -46,7 +47,11 @@ async function handleTurn(state: PairFlowState, identity: string): Promise<CallT
   await logEvent("claim_turn", { identity, mode: "turn", lease_token: token });
 
   return {
-    content: [{ type: "text", text: JSON.stringify({ ok: true, lease_token: token, lease_expires_at: expires }) }],
+    content: [{ type: "text", text: JSON.stringify({
+      ok: true, lease_token: token, lease_expires_at: expires,
+      template: getTemplate(state),
+      rules_summary: getRulesSummary(state, "turn"),
+    }) }],
   };
 }
 
@@ -82,7 +87,7 @@ async function handleAdvance(state: PairFlowState, identity: string, args: Recor
     const next = initRequirementsPhase(state, nonSupervisor);
     await saveState(next);
     await logEvent("advance", { identity, from: "idle", to: "requirements" });
-    return { content: [{ type: "text", text: JSON.stringify({ ok: true, new_phase: "requirements", turn: nonSupervisor }) }] };
+    return { content: [{ type: "text", text: JSON.stringify({ ok: true, new_phase: "requirements", turn: nonSupervisor, template: getTemplate(next), rules_summary: getRulesSummary(next, "advance") }) }] };
   }
 
   // Non-IDLE phases: must be converged + blind review done
@@ -100,7 +105,7 @@ async function handleAdvance(state: PairFlowState, identity: string, args: Recor
     const next = initPlanningPhase(state, reviewer.identity);
     await saveState(next);
     await logEvent("advance", { identity, from: "requirements", to: "planning" });
-    return { content: [{ type: "text", text: JSON.stringify({ ok: true, new_phase: "planning", turn: reviewer.identity }) }] };
+    return { content: [{ type: "text", text: JSON.stringify({ ok: true, new_phase: "planning", turn: reviewer.identity, template: getTemplate(next), rules_summary: getRulesSummary(next, "advance") }) }] };
   }
 
   if (currentPhase === "planning") {
@@ -111,7 +116,7 @@ async function handleAdvance(state: PairFlowState, identity: string, args: Recor
     const next = initImplementationPhase(state, developer.identity);
     await saveState(next);
     await logEvent("advance", { identity, from: "planning", to: "implementation", dev_phase: next.dev_phase });
-    return { content: [{ type: "text", text: JSON.stringify({ ok: true, new_phase: "implementation", dev_phase: next.dev_phase, sub_phase: "coding", turn: developer.identity }) }] };
+    return { content: [{ type: "text", text: JSON.stringify({ ok: true, new_phase: "implementation", dev_phase: next.dev_phase, sub_phase: "coding", turn: developer.identity, template: getTemplate(next), rules_summary: getRulesSummary(next, "advance") }) }] };
   }
 
   if (currentPhase === "implementation") {
@@ -121,7 +126,7 @@ async function handleAdvance(state: PairFlowState, identity: string, args: Recor
     const next = initSummaryPhase(state, nonSupervisor);
     await saveState(next);
     await logEvent("advance", { identity, from: "implementation", to: "summary" });
-    return { content: [{ type: "text", text: JSON.stringify({ ok: true, new_phase: "summary", turn: nonSupervisor }) }] };
+    return { content: [{ type: "text", text: JSON.stringify({ ok: true, new_phase: "summary", turn: nonSupervisor, template: getTemplate(next), rules_summary: getRulesSummary(next, "advance") }) }] };
   }
 
   if (currentPhase === "summary") {

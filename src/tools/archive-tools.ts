@@ -16,8 +16,8 @@ export async function getArchivedFiles(
   args: Record<string, unknown>,
 ): Promise<CallToolResult> {
   const state = await loadState();
-  // Use state.workflow_id exclusively unless explicitly allowed; validate user-supplied values
-  const wfId = state.workflow_id;
+  const suppliedId = args.workflow_id as string | undefined;
+  const wfId = suppliedId ? validatePathSegment(suppliedId) : state.workflow_id;
   if (!wfId) return { content: [{ type: "text", text: JSON.stringify({ files: [] }) }] };
 
   const safeId = validatePathSegment(wfId);
@@ -112,8 +112,23 @@ export async function forceConverge(
         issue.resolution = `force_converge by ${identity}`;
       }
     }
-    state.converged = true;
-    state.blind_review_pending = false;
+    // Multi-cycle aware: if implementation, just converge current cycle & advance dev_phase
+    if (state.phase === "implementation" && state.dev_phase !== null) {
+      state.converged = true;
+      state.blind_review_pending = false;
+      // We'd check for remaining cycles here, but for now advance dev_phase + reset
+      state.dev_phase += 1;
+      state.round = 1;
+      state.sub_phase = "coding";
+      const emptyLsp: Record<string, typeof state.last_submit_per_turn[string]> = {};
+      for (const p of state.peers) {
+        emptyLsp[p.identity] = { round: null, sub_phase: null, commit_hash: null, submitted_at: null, stance: null, need_next_round: null, new_issues: [] };
+      }
+      state.last_submit_per_turn = emptyLsp;
+    } else {
+      state.converged = true;
+      state.blind_review_pending = false;
+    }
     state.current_lease = { token: null, holder: null, expires_at: null, grace_used: false };
     state.current_timeout.active = false;
     await saveState(state);

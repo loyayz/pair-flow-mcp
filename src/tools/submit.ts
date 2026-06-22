@@ -1,5 +1,5 @@
-import { mkdir, writeFile } from "node:fs/promises";
-import { join, dirname } from "node:path";
+import { mkdir, writeFile, appendFile } from "node:fs/promises";
+import { join } from "node:path";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
@@ -7,6 +7,7 @@ import { parseIdentity } from "../identity.js";
 import { loadState, saveState, isCurrentHolder, getOtherIdentity, type ConvergeMark, type Stance } from "../state.js";
 import { logEvent } from "../logger.js";
 import { stateMutex } from "../mutex.js";
+import { crossValidateConvergeMark } from "../template.js";
 
 const MAX_CONTENT_BYTES = 500 * 1024; // 500KB
 const HANDOFF_DIR = "handoff";
@@ -61,10 +62,10 @@ export async function submit(
       return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: `not your turn — current turn: ${state.turn}` }) }], isError: true };
     }
 
-    // Blind review: check that we're in blind_review mode
+    // Blind review: cross-validate and set up
     if (blindReview) {
-      // Verify independence: don't allow reading other party's blind review
-      // (enforced by get_archived_files/content in real implementation; here we just validate state)
+      const cv = crossValidateConvergeMark(content, convergeMark);
+      if (cv.warnings.length > 0) return { content: [{ type: "text", text: JSON.stringify({ ok: true, warnings: cv.warnings }) }] };
     }
 
     // Fix sub_phase: prohibit new P0
@@ -155,15 +156,13 @@ export async function submit(
       const mySubmit = state.last_submit_per_turn[identity];
       const otherSubmit = state.last_submit_per_turn[other];
       if (blindReview) {
-        // Blind review convergence: both submitted, check new_issues
-        if (otherSubmit.submitted_at && otherSubmit.new_issues && mySubmit.new_issues) {
+        // Blind review: both submitted, check new_issues
+        if (otherSubmit.submitted_at) {
           const bothEmpty = mySubmit.new_issues.length === 0 && otherSubmit.new_issues.length === 0;
+          state.blind_review_pending = false;
           if (bothEmpty) {
-            state.blind_review_pending = false;
-            // Don't set converged=true for blind review — advance required
+            // Don't set converged=true — advance required after blind review
           } else {
-            state.blind_review_pending = false;
-            // Continue alternating review — switch turn
             state.turn = other;
             state.round += 1;
           }
@@ -224,6 +223,15 @@ export async function submit(
 
     // Write handoff files
     const wfId = state.workflow_id ?? "unknown";
+
+    // Journal: append issue creations (§6 authorial storage)
+    if (convergeMark.new_issues && convergeMark.new_issues.length > 0) {
+      const journalPath = join(HANDOFF_DIR, wfId, "issues-journal.jsonl");
+      await mkdir(join(HANDOFF_DIR, wfId), { recursive: true });
+      for (const ni of convergeMark.new_issues) {
+        await appendFile(journalPath, JSON.stringify({ action: "create", timestamp: now, id: state.next_issue_id - convergeMark.new_issues.length + convergeMark.new_issues.indexOf(ni), type: ni.type, topic: ni.topic, raised_by: identity }) + "\n", "utf-8");
+      }
+    }
     if (blindReview) {
       const blindDir = join(HANDOFF_DIR, wfId, state.phase);
       await mkdir(blindDir, { recursive: true });

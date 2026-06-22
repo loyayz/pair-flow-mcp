@@ -6,6 +6,8 @@ import { loadState, saveState, isSupervisor } from "../state.js";
 import { logEvent } from "../logger.js";
 import { stateMutex } from "../mutex.js";
 
+const HANDOFF_DIR = "handoff";
+
 // ── create_issue ──
 
 export async function createIssue(
@@ -41,6 +43,9 @@ export async function createIssue(
       fix_review_cycles: 0, proposal: proposal ?? null, rationale: rationale ?? null,
     });
     await saveState(state);
+    // Journal (§6 authorial storage)
+    const journalPath = `${HANDOFF_DIR}/${state.workflow_id}/issues-journal.jsonl`;
+    await import("node:fs/promises").then(fs => fs.mkdir(`${HANDOFF_DIR}/${state.workflow_id}`, { recursive: true }).then(() => fs.appendFile(journalPath, JSON.stringify({ action: "create", timestamp: new Date().toISOString(), id: issueId, type, topic, raised_by: identity }) + "\n")));
     await logEvent("create_issue", { issue_id: issueId, type, topic, identity });
     return { content: [{ type: "text", text: JSON.stringify({ ok: true, issue_id: issueId }) }] };
   });
@@ -60,14 +65,18 @@ export async function resolveIssue(
 
   return stateMutex.runExclusive(async () => {
     const state = await loadState();
+    if (state.phase === "idle") return err("cannot resolve issue in IDLE phase");
     const issue = state.issues.find((i) => i.id === issueId);
     if (!issue) return err(`issue #${issueId} not found`);
     if (issue.type === "P0" && !isSupervisor(state, identity)) return err("only supervisor can resolve P0 issues");
 
     issue.status = "resolved";
     issue.resolution = resolution;
-    issue.resolved_by = "supervisor_override";
+    issue.resolved_by = issue.type === "P0" ? "supervisor_override" : "converged";
     await saveState(state);
+    // Journal (§6 authorial storage)
+    const journalPath = `${HANDOFF_DIR}/${state.workflow_id}/issues-journal.jsonl`;
+    await import("node:fs/promises").then(fs => fs.mkdir(`${HANDOFF_DIR}/${state.workflow_id}`, { recursive: true }).then(() => fs.appendFile(journalPath, JSON.stringify({ action: "resolve", timestamp: new Date().toISOString(), id: issueId, identity, resolution }) + "\n")));
     await logEvent("resolve_issue", { issue_id: issueId, identity });
     return { content: [{ type: "text", text: JSON.stringify({ ok: true }) }] };
   });
