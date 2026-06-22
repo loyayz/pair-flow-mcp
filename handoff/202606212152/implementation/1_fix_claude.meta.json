@@ -1,0 +1,20 @@
+{
+  "stance": null,
+  "need_next_round": null,
+  "new_issues": [],
+  "dev_phase": 1,
+  "sub_phase": "fix",
+  "fixes": {
+    "P0-6": "atomic write (tmp+rename)",
+    "P0-7": "submit tool (~260 lines)",
+    "P0-8": "global stateMutex",
+    "P1-54": "converged check in handleTurn",
+    "P1-55": "blind_review_pending check in handleAdvance",
+    "P1-57": "dead code removal",
+    "P1-61": "acquireLock integration"
+  },
+  "deferred_to_phase2": ["P1-58", "P1-59", "P1-60", "P2-9"],
+  "verification": { "tsc": "pass", "vitest": "12/12", "integration": "register→advance→submit OK" },
+  "commit_hash": "cc6b437",
+  "submitted_at": "2026-06-22T02:00:00.000Z"
+}
