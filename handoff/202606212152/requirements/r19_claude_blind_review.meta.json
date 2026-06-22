@@ -1,0 +1,23 @@
+{
+  "stance": null,
+  "need_next_round": null,
+  "submit_type": "blind_review",
+  "independence": "compromised — user shared r18 before this review was completed",
+  "new_issues": [
+    { "type": "P1", "id": 34, "topic": "§3 目录结构图未包含盲审产出文件" },
+    { "type": "P1", "id": 35, "topic": "§5.3 三分判断表未覆盖盲审后发现P1的情况" },
+    { "type": "P1", "id": 36, "topic": "§5.3 advance_checklist模板固定16节引用过时（应为17节含§17）" },
+    { "type": "P1", "id": 37, "topic": "§12 REQUIREMENTS初始化last_submit_per_turn含round但需求阶段round永远为null" },
+    { "type": "P1", "id": 39, "topic": "§17第8条issue关闭条件与盲审机制的交互未定义" }
+  ],
+  "resolved_issue_ids": [],
+  "blind_review_stats": {
+    "r18_codebuddy_findings": 11,
+    "r19_claude_findings": 5,
+    "total": 16,
+    "overlap": 0,
+    "note": "盲审证明17轮交替评审漏掉全部16个问题。两个AI视角互补无重叠"
+  },
+  "commit_hash": "r18 commit",
+  "submitted_at": "2026-06-21T22:00:00.000Z"
+}

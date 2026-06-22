@@ -1,13 +1,24 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { writeFile, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { randomUUID } from "node:crypto";
 import { recoverState } from "../crash-recovery.js";
 import { saveState, defaultState } from "../state.js";
 
+const TEST_ROOT = join(tmpdir(), `pairflow-test-${randomUUID()}`);
+const origCwd = process.cwd();
+
 async function resetStateDir() {
-  try { await rm(".pairflow", { recursive: true }); } catch { /* */ }
-  try { await rm("handoff", { recursive: true }); } catch { /* */ }
+  await mkdir(TEST_ROOT, { recursive: true });
+  process.chdir(TEST_ROOT);
+  try { await rm(join(TEST_ROOT, ".pairflow"), { recursive: true }); } catch { /* */ }
+  try { await rm(join(TEST_ROOT, "handoff"), { recursive: true }); } catch { /* */ }
 }
+
+afterEach(() => {
+  process.chdir(origCwd);
+});
 
 describe("Crash recovery", () => {
   beforeEach(resetStateDir);
@@ -28,7 +39,7 @@ describe("Crash recovery", () => {
   });
 
   it("finds latest workflow_id from handoff", async () => {
-    const wfDir = join("handoff", "20260622000001", "requirements");
+    const wfDir = join(TEST_ROOT, "handoff", "20260622000001", "requirements");
     await mkdir(wfDir, { recursive: true });
     await writeFile(join(wfDir, "r1_alice.meta.json"), JSON.stringify({ round: 1, new_issues: [] }));
 

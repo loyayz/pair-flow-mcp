@@ -1,0 +1,17 @@
+{
+  "stance": null,
+  "need_next_round": null,
+  "new_issues": [],
+  "resolved_issue_ids": [18, 19],
+  "issue_stances": {
+    "18": { "stance": "agree", "argument": "§17 清理完毕，spec 与 handoff 职责分离。过程违规承认——r10 自行落地违反 §5.3" },
+    "19": { "stance": "agree", "argument": "方案 B：13 处 rXX-NX 编码删除，改为纯章节引用。codebuddy 提出，claude 落地——合规" }
+  },
+  "files_deleted": [
+    "claude_advance_checklist.md",
+    "claude_final_diff.md"
+  ],
+  "deletion_reason": "按用户指令 + P1-17 新规则：checklist 和 final_diff 应在收敛达成后产出，r8 提前产出已 stale",
+  "commit_hash": "r11 commit",
+  "submitted_at": "2026-06-21T19:00:00.000Z"
+}

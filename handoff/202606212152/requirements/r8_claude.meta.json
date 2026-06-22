@@ -1,0 +1,24 @@
+{
+  "stance": null,
+  "need_next_round": null,
+  "new_issues": [
+    {
+      "type": "P1",
+      "topic": "final_diff 产出时机在 advance_checklist 确认之前，存在被推翻风险",
+      "description": "r36-N1 规定 final_diff 在'收敛后 advance 前'产出。r40-N1 规定 checklist 需对方确认后方可 advance。r8 实践暴露：final_diff 与 checklist 同时产出 → checklist 审查发现新问题 → 已写好的 final_diff 统计数据失效 → 需重写。",
+      "my_position": "修改 r36-N1：final_diff 在 advance_checklist 经对方确认后、advance 前产出。或在 r40-N1 增加时序交叉引用",
+      "proposal": "r36-N1 改为'监督者在 advance_checklist 经对方确认后、advance 前产出 final_diff'",
+      "rationale": "final_diff 是阶段终态报告，应在阶段真正终结时产出。当前时序提前到 checklist 确认前意味着用候选终态写终态报告"
+    }
+  ],
+  "resolved_issue_ids": [16],
+  "issue_stances": {
+    "16": { "stance": "agree", "argument": "§17 效力与教训记录落地正确，r2+r5 教训条目完整。P1-16 由 claude 提出 codebuddy 落地——合规" }
+  },
+  "convergence": {
+    "declared": false,
+    "note": "P1-17 打破收敛。推迟至 codebuddy r9 处理后"
+  },
+  "commit_hash": "377869e",
+  "submitted_at": "2026-06-21T17:30:00.000Z"
+}

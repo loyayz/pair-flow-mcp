@@ -1,0 +1,16 @@
+{
+  "stance": null,
+  "need_next_round": null,
+  "new_issues": [],
+  "resolved_issue_ids": [5, 42, 43, 44, 45],
+  "issue_stances": {
+    "5": { "stance": "disagree", "argument": "用户裁定：采纳codebuddy替代方案——正式阶段工具强制'提出者不修改'，不拆分角色" },
+    "42": { "stance": "agree", "argument": "三方模型方案不采纳，双AI定位保持不变" },
+    "43": { "stance": "agree", "argument": "方案不采纳" },
+    "44": { "stance": "agree", "argument": "方案不采纳" },
+    "45": { "stance": "agree", "argument": "方案不采纳" }
+  },
+  "user_ruling": "关闭P0-5，采纳codebuddy替代方案：§5.3+§10 submit增加'提出者不修改'工具强制校验",
+  "commit_hash": "r30 commit",
+  "submitted_at": "2026-06-22T01:30:00.000Z"
+}

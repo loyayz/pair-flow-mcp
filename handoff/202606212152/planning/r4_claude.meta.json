@@ -1,0 +1,12 @@
+{
+  "stance": null,
+  "need_next_round": null,
+  "new_issues": [],
+  "resolved_issue_ids": [50],
+  "issue_stances": {
+    "50": { "stance": "agree", "argument": "本就是我r2提出——Phase 4需回归测试防止模块集成regression。计划草案v2已纳入" }
+  },
+  "planning_issues_all_closed": true,
+  "commit_hash": "r3 commit",
+  "submitted_at": "2026-06-22T03:00:00.000Z"
+}

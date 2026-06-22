@@ -1,0 +1,14 @@
+{
+  "stance": null,
+  "need_next_round": null,
+  "new_issues": [],
+  "resolved_issue_ids": [],
+  "checklist_random_sampling": {
+    "sections": ["§5.1", "§5.5", "§17"],
+    "§5.1": { "line": 220, "content": "blind_review_pending 字段定义+注释" },
+    "§5.5": { "line": "508-510", "content": "盲审后推进条件：均空→checklist，任一方非空→交替评审" },
+    "§17": { "line": 984, "content": "第8条 bootstrap issue关闭双条件+盲审issue走标准流程" }
+  },
+  "commit_hash": "r33 commit",
+  "submitted_at": "2026-06-22T02:00:00.000Z"
+}

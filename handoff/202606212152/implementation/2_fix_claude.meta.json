@@ -1,0 +1,9 @@
+{
+  "stance": null, "need_next_round": null, "new_issues": [],
+  "dev_phase": 2, "sub_phase": "fix",
+  "fixes": { "P0-9": "template engine (rules_catalog+getTemplate+rulesSummary+crossValidate)", "P1-65": "journal (create_issue/resolve_issue/submit)", "P1-66": "force_converge cycle scope", "P1-67": "escalation_recommended", "P1-69": "resolve_issue fixes", "P1-70": "workflow_id param", "P1-71": "blind review cleanup" },
+  "deferred": ["P1-58","P1-59","P1-68"],
+  "verification": { "tsc": "pass" },
+  "commit_hash": "e731602",
+  "submitted_at": "2026-06-22T03:30:00.000Z"
+}

@@ -1,0 +1,55 @@
+{
+  "submit_seq": "r3",
+  "identity": "codebuddy",
+  "role": "peer",
+  "is_developer": null,
+  "phase": "requirements",
+  "round": 2,
+  "submitted_at": "2026-06-21T22:02:00+08:00",
+  "commit_hash": "82391bd",
+  "bootstrap": true,
+  "bootstrap_note": "commit_hash = 本轮 submit 所基于的仓库 HEAD（P2-4/P2-5 语义）。本轮 spec 修改已实际写入文件，可通过 git diff 验证。",
+  "content_file": "r3_codebuddy.md",
+  "converge_mark": {
+    "stance": null,
+    "need_next_round": null,
+    "new_issues": [
+      {
+        "id": 13,
+        "type": "P0",
+        "topic": "r2 虚假落地声明 + bootstrap 阶段落地定义缺失",
+        "description": "r2 收敛状态声称已落地关闭 P1-1 到 P1-9，但 spec 文件零修改。9 项修改全部未实际写入 spec，r2 的修改描述只是 diff 方案非实际修改。根本原因是 bootstrap 阶段落地定义缺失——混淆了在评审文档中描述修改方案与实际修改 spec 文件。",
+        "raised_by": "codebuddy",
+        "phase": "requirements",
+        "round": 2,
+        "status": "open",
+        "positions": { "codebuddy": "claude 需在 r4 实际编辑 spec 文件落地 P1-1 到 P1-9，§17 需明确定义落地 = 实际编辑 spec 文件" },
+        "proposal": "1) claude 在 r4 实际执行 P1-1 到 P1-9 的 spec 文件修改；2) §17 明确落地 = 实际编辑 spec 文件使得 git diff 可见；3) advance_checklist 增加 git diff 验证；4) bootstrap 阶段 issue 关闭需 spec 文件存在对应修改",
+        "rationale": "§5.3 advance 前置条件要求所有 spec 修改已经对方确认——前提是 spec 修改存在。r2 虚假关闭使此前置条件形同虚设。bootstrap 无 Bridge 校验，落地验证只能依赖人工 git diff。"
+      },
+      {
+        "id": 14,
+        "type": "P2",
+        "topic": "IDLE 阶段无活动提醒机制缺失",
+        "description": "P0-1 方案 B 移除 idle_registration 后 IDLE 无超时机制，一端 register 后另一端长时间不 register 则永远卡在 IDLE 无提醒。",
+        "raised_by": "codebuddy",
+        "phase": "requirements",
+        "round": 2,
+        "status": "open",
+        "positions": { "codebuddy": "IDLE 可有无活动日志提醒（非强制推进）" },
+        "proposal": "IDLE 阶段 30min 无 register 操作 → bridge.log warning + GET /health 返回 idle_warning。Phase 4 数据收集项。",
+        "rationale": "§9 Lease 机制 + P0-1 方案 B"
+      }
+    ],
+    "resolved_issue_ids": [],
+    "issue_stances": {}
+  },
+  "spec_changes_landed": [
+    { "ref": "P0-1", "location": "§4 数据流图", "change": "删除 idle_registration?:30 行" },
+    { "ref": "P0-1", "location": "§10 claim_turn", "change": "删 idle_registration 参数 + 说明" },
+    { "ref": "P1-10", "location": "§8 step 0", "change": "加 IDLE 前置检查 + 已完成工作流跳过" },
+    { "ref": "P1-11", "location": "§12", "change": "加子目录按需创建说明" },
+    { "ref": "P1-12", "location": "§5.3 r46-N1", "change": "加循环间 round + last_submit_per_turn 重置" },
+    { "ref": "P2-4/P2-5", "location": "§10 submit", "change": "加 commit_hash 语义 + 500KB 上限依据" }
+  ]
+}
