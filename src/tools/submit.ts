@@ -266,8 +266,10 @@ export async function submit(
       const phaseDir = join(HANDOFF_DIR, wfId, state.phase);
       await mkdir(phaseDir, { recursive: true });
       const seq = state.round;
-      // P1-17: IMPLEMENTATION 文件名含 sub_phase
-      const subTag = state.phase === "implementation" && state.sub_phase ? `_${state.sub_phase}` : "";
+      // P1-17: IMPLEMENTATION 文件名含 sub_phase（白名单防路径穿越）
+      const VALID_SUB_PHASES = ["coding", "review", "fix", "blind_review"];
+      const safeSub = VALID_SUB_PHASES.includes(state.sub_phase ?? "") ? state.sub_phase : null;
+      const subTag = state.phase === "implementation" && safeSub ? `_${safeSub}` : "";
       const filename = `r${seq}${subTag}_${identity}.md`;
       await writeFile(join(phaseDir, filename), content, "utf-8");
       await writeFile(join(phaseDir, `r${seq}_${identity}.meta.json`), JSON.stringify({ stance: convergeMark.stance, need_next_round: convergeMark.need_next_round, new_issues: (convergeMark.new_issues ?? []).map((ni, i) => ({ id: newIssueIds[i], type: ni.type, topic: ni.topic, description: ni.description })), resolved_issue_ids: convergeMark.resolved_issue_ids ?? [] }, null, 2), "utf-8");
