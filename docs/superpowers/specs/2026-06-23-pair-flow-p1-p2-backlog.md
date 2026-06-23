@@ -49,6 +49,21 @@
 
 ---
 
+### P1: 崩溃恢复不应总是自动执行——缺少"新 session"入口
+
+**来源**: 本 session 真实接入发现
+
+当前 state.json 丢失时 `recoverState()` 自动从 handoff 重建状态，没有给用户选择"开始新 workflow"的机会。每次想全新开始都得手动清理 `.pairflow/` + `handoff/`，操作门槛高且容易误删归档。
+
+**方案**: 提供显式的新 session 入口。选项：
+- A) `register` 时若检测到恢复状态，返回 `recovered: true` 提示，由监督者决定 continue/reset
+- B) 新增 `reset` 工具，清空运行时状态，保留 handoff 归档
+- C) 启动时检查环境变量 `PAIRFLOW_FRESH_START=true` 跳过恢复
+
+**优先级**: 本迭代
+
+---
+
 ### P0-26 → P1: 重启绕过崩溃恢复
 
 **来源**: process-improvements §15
