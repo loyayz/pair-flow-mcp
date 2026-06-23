@@ -392,3 +392,41 @@ P0-20 解决了"task 怎么传"的通道问题，P0-21 解决了"没 task 时拒
 ### 教训
 
 **"知道我是谁"和"按我是谁行动"之间有一道鸿沟。** 前者靠 `who_am_i` 返回的 JSON 就能确认，后者需要服务端强制 + 文档约束 + 自我检查三者共同维持。在服务端强制到位之前，developer AI 的 CLAUDE.md 中必须有醒目的行为约束。
+
+---
+
+## 14. P1-25b: 开发者未确认计划就直接编码——跳过实施范围确认
+
+### 场景
+
+2026-06-23 IMPLEMENTATION 阶段。deepseek（开发者）拿到 turn 后，直接按 PLANNING 阶段 claude r1 的 6 里程碑计划开始写代码（M0→M1→M3），完成了 P0-22 存储层、P0-13 defer 约束、P0-14 SUMMARY 检查。
+
+事后检查发现两个问题：
+
+1. **未确认"按哪个计划执行"**：PLANNING 阶段有两个计划——claude 的 `r1_claude.md`（6 里程碑）和 deepseek 的 `r2_deepseek.md`（审阅，agree）。两个文档都归档了，但开发者没有在动手前看一眼 `get_context` / `get_archived_files` 确认最终采用的计划是哪个。
+2. **未确认"本轮 coding 的范围"**：IMPLEMENTATION 有多个 dev_phase。即使计划定了 6 个里程碑，每轮 coding 应该实现几个？是全部做完还是分批提交？开发者没问、没确认，直接选了 M0/M1/M3 就开始写。
+
+### 根因
+
+与 P1-25 同源——AI 的"行动者"默认模式。进入 IMPLEMENTATION 拿到 turn，第一个念头是"我开始写代码"，而不是"我先确认范围和优先级"。
+
+更深层：PLANNING→IMPLEMENTATION 的 advance 传递了 `dev_phase=0, sub_phase=coding`，但没有传递"本轮 coding 的范围/里程碑"。计划文档在归档里，但不在模板里。开发者拿到的是空模板（`<代码实现描述>`），没有任何里程碑提示。
+
+### 方案
+
+> **IMPLEMENTATION coding 模板应包含计划摘要**：
+> 1. `getTemplate()` 在 IMPLEMENTATION coding 子阶段自动从 PLANNING 归档提取 `实施里程碑` 列表，注入模板
+> 2. 若无法自动提取，模板至少提示"请从 PLANNING 归档中确认实施计划后再开始编码"
+>
+> **开发者行为约束（写入 CLAUDE.md）**：
+> ```markdown
+> ## IMPLEMENTATION coding 前置检查
+> 1. claim_turn 后先调 get_context 确认当前 dev_phase 和 sub_phase
+> 2. 调 get_archived_files(phase="planning") 找到最终计划
+> 3. 确认本轮 coding 范围（几个里程碑、预期产出）
+> 4. 再开始编码
+> ```
+
+### 与 P1-25 的关系
+
+P1-25 是"行为越权"（做不该做的事），P1-25b 是"跳步"（该做的事没做全）。两者都是 AI 行动者模式压制了 PairFlow 角色分工的结果。
