@@ -12,6 +12,7 @@ const HANDOFF_DIR = process.env.HANDOFF_DIR || "handoff";
  */
 export async function recoverState(): Promise<PairFlowState> {
   let state = await loadState();
+  let wasRecovered = false;
   await logEvent("crash_recovery", { phase: state.phase });
 
   // Detect: state claims idle but handoff/ has in-progress work → state.json was lost/reset
@@ -21,6 +22,7 @@ export async function recoverState(): Promise<PairFlowState> {
       // Handoff has uncompleted work — reconstruct state from archive
       const recovered = await reconstructFromHandoff(state);
       if (recovered) {
+        wasRecovered = true;
         state = recovered;
         await saveState(state);
         await logEvent("crash_recovery", { recovered: true, from_handoff: true, workflow_id: state.workflow_id, phase: state.phase });
@@ -121,6 +123,7 @@ export async function recoverState(): Promise<PairFlowState> {
   state.current_lease = { token: null, holder: null, expires_at: null, grace_used: false };
 
   // Step 7: IDLE crash — peers already cleared above
+  state.recovered = wasRecovered;
   await saveState(state);
   await logEvent("crash_recovery", { recovered: true, workflow_id: state.workflow_id, phase: state.phase });
   return state;

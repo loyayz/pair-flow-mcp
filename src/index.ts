@@ -14,6 +14,7 @@ import { getContext } from "./tools/get-context.js";
 import { submit } from "./tools/submit.js";
 import { createIssue, resolveIssue, escalate, deferIssue, listIssues } from "./tools/issue-tools.js";
 import { getArchivedFiles, getArchivedFileContent, forceConverge } from "./tools/archive-tools.js";
+import { resetState } from "./tools/reset.js";
 import { waitForTurn } from "./tools/wait-for-turn.js";
 
 const PORT = parseInt(process.env.PORT || "3100", 10);
@@ -45,6 +46,7 @@ function createServerWithTools() {
   mcp.registerTool("get_archived_files", { description: "列出归档文件。phase/workflow_id 可选过滤。", inputSchema: { phase: z.string().optional(), workflow_id: z.string().optional() } }, getArchivedFiles);
   mcp.registerTool("get_archived_file_content", { description: "读取归档文件内容。phase 参数可选，用于指定子目录（requirements/planning/implementation/summary）。盲审模式下拒绝对方盲审文件。", inputSchema: { filename: z.string(), phase: z.string().optional() } }, getArchivedFileContent);
   mcp.registerTool("force_converge", { description: "强制收敛当前 dev_phase 循环（仅监督者，phase≠idle）。", inputSchema: {} }, forceConverge);
+  mcp.registerTool("reset", { description: "重置运行时状态到 IDLE，保留 handoff 归档。仅监督者，仅 IDLE 阶段可用。", inputSchema: {} }, resetState);
   mcp.registerTool("wait_for_turn", { description: "长轮询等待 turn 切换到调用方。2s 间隔，60s 超时返回当前状态。phase 变更或 converged 时提前返回。" }, waitForTurn);
   mcp.registerTool(
     "submit",

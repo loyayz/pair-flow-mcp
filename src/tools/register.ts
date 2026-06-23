@@ -56,7 +56,7 @@ export async function register(
       state.peers.push({ identity, role: supervisor ? "supervisor" : "peer", is_developer: developer, registered_at: now, work_dir: workDir || existing.work_dir });
       await saveState(state);
       await logEvent("register", { identity, supervisor, developer, work_dir: workDir, overwritten: true });
-      return ok({ ok: true, identity, role: supervisor ? "supervisor" : "peer", is_developer: developer, warning },
+      return ok({ ok: true, identity, role: supervisor ? "supervisor" : "peer", is_developer: developer, warning, recovered: state.recovered || undefined },
         { tool: "wait_for_turn", when: "已重新注册，等待推进" });
     }
 
@@ -73,7 +73,7 @@ export async function register(
     await logEvent("register", { identity, supervisor, developer, work_dir: workDir });
 
     const bothRegistered = state.peers.length >= 2;
-    return ok({ ok: true, identity, role: supervisor ? "supervisor" : "peer", is_developer: developer },
+    return ok({ ok: true, identity, role: supervisor ? "supervisor" : "peer", is_developer: developer, recovered: state.recovered || undefined },
       { tool: "wait_for_turn", when: bothRegistered ? "双方已注册，等待 supervisor advance" : "等待对方注册" });
   });
 }
