@@ -11,10 +11,14 @@ export async function whoAmI(
   const identity = parseIdentity(extra.requestInfo?.headers);
   const state = await loadState();
   const peer = state.peers.find((p) => p.identity === identity);
+  const registered = peer !== undefined;
+  const next = registered
+    ? { tool: "wait_for_turn", when: "等待双方就位并推进阶段" }
+    : { tool: "register", when: "注册身份和角色" };
   return ok({
     identity,
-    registered: peer !== undefined,
+    registered,
     role: peer?.role ?? null,
     is_developer: peer?.is_developer ?? null,
-  });
+  }, next);
 }

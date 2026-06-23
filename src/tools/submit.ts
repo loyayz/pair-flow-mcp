@@ -314,7 +314,10 @@ export async function submit(
       }
     }
 
-    return ok({ ok: true, converged, next_turn: state.turn, checklist: checklist.length > 0 ? checklist : undefined, warnings: cv.warnings.length > 0 ? cv.warnings : undefined });
+    const next = state.blind_review_pending && !blindReview
+      ? { tool: "claim_turn", when: "盲审待完成，claim_turn 进行独立盲审" } as const
+      : { tool: "wait_for_turn", when: "等待对方 review" } as const;
+    return ok({ ok: true, converged, next_turn: state.turn, checklist: checklist.length > 0 ? checklist : undefined, warnings: cv.warnings.length > 0 ? cv.warnings : undefined }, next);
   });
 }
 

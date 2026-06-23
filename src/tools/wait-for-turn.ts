@@ -19,7 +19,8 @@ export async function waitForTurn(
 
   // Already caller's turn — return immediately
   if (initialState.turn === identity) {
-    return ok({ ok: true, turn: initialState.turn, phase: initialState.phase, round: initialState.round, waited_ms: 0 });
+    return ok({ ok: true, turn: initialState.turn, phase: initialState.phase, round: initialState.round, waited_ms: 0 },
+      { tool: "claim_turn", when: "获取 turn 开始工作" });
   }
 
   // Not registered
@@ -35,23 +36,29 @@ export async function waitForTurn(
 
     // Turn switched to caller
     if (state.turn === identity) {
-      return ok({ ok: true, turn: state.turn, phase: state.phase, round: state.round, waited_ms: Date.now() - started });
+      return ok({ ok: true, turn: state.turn, phase: state.phase, round: state.round, waited_ms: Date.now() - started },
+        { tool: "claim_turn", when: "获取 turn 开始工作" });
     }
 
     // Both peers now registered (was waiting for second peer, or both in IDLE)
     if (initialState.peers.length < 2 && state.peers.length >= 2) {
-      return ok({ ok: true, turn: state.turn, phase: state.phase, round: state.round, waited_ms: Date.now() - started, note: "both peers registered" });
+      return ok({ ok: true, turn: state.turn, phase: state.phase, round: state.round, waited_ms: Date.now() - started, note: "both peers registered" },
+        { tool: "wait_for_turn", when: "双方已注册，等待 supervisor advance" });
     }
 
     // Phase changed (converged, advanced from IDLE, etc.) — but not during blind_review_pending
     if (state.phase !== initialPhase || (state.converged && !state.blind_review_pending)) {
-      return ok({ ok: true, turn: state.turn, phase: state.phase, round: state.round, waited_ms: Date.now() - started, note: "phase changed or converged before turn" });
+      const next = state.turn === identity
+        ? { tool: "claim_turn", when: "阶段已变更且 turn=自己，获取 turn" } as const
+        : { tool: "wait_for_turn", when: "阶段已变更但 turn 不是自己，继续等待" } as const;
+      return ok({ ok: true, turn: state.turn, phase: state.phase, round: state.round, waited_ms: Date.now() - started, note: "phase changed or converged before turn" }, next);
     }
   }
 
   // Timeout — return current state
   const finalState = await loadState();
-  return ok({ ok: true, turn: finalState.turn, phase: finalState.phase, round: finalState.round, waited_ms: TIMEOUT_MS, note: "timeout" });
+  return ok({ ok: true, turn: finalState.turn, phase: finalState.phase, round: finalState.round, waited_ms: TIMEOUT_MS, note: "timeout" },
+    { tool: "wait_for_turn", when: "超时，继续轮询" });
 }
 
 function sleep(ms: number): Promise<void> {

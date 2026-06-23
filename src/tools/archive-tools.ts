@@ -73,8 +73,16 @@ export async function getArchivedFileContent(
   const wfId = state.workflow_id;
   if (!wfId) return err("no active workflow");
 
+  // P1: optional phase parameter — prepend to filename for phase subdirectory
+  const phase = args.phase as string | undefined;
+  const VALID_PHASES = ["requirements", "planning", "implementation", "summary"];
+  if (phase && !VALID_PHASES.includes(phase)) {
+    return err(`invalid phase: ${phase}. Must be one of: ${VALID_PHASES.join(", ")}`);
+  }
+  const safeFilename = phase ? join(validatePathSegment(phase), filename) : filename;
+
   const safeWfId = validatePathSegment(wfId);
-  const filePath = join(HANDOFF_DIR, safeWfId, filename);
+  const filePath = join(HANDOFF_DIR, safeWfId, safeFilename);
   // Prevent path traversal
   if (!resolve(filePath).startsWith(resolve(join(HANDOFF_DIR, safeWfId)))) {
     return err("invalid filename");
@@ -133,6 +141,7 @@ export async function forceConverge(
     stopLeaseTimer();
     await saveState(state);
     await logEvent("force_converge", { identity, phase: state.phase });
-    return ok({ ok: true });
+    return ok({ ok: true },
+      { tool: "claim_turn", when: "进入盲审" });
   });
 }

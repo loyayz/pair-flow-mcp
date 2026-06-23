@@ -1,3 +1,4 @@
+import { readdir } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -42,7 +43,7 @@ function createServerWithTools() {
   mcp.registerTool("escalate", { description: "升级 P0 → escalated（仅监督者）。", inputSchema: { issue_id: z.number(), reason: z.string() } }, escalate);
   mcp.registerTool("list_issues", { description: "列出 issue。scope=current_phase/all。", inputSchema: { status: z.string().optional(), scope: z.string().optional() } }, listIssues);
   mcp.registerTool("get_archived_files", { description: "列出归档文件。phase/workflow_id 可选过滤。", inputSchema: { phase: z.string().optional(), workflow_id: z.string().optional() } }, getArchivedFiles);
-  mcp.registerTool("get_archived_file_content", { description: "读取归档文件内容。盲审模式下拒绝对方盲审文件。", inputSchema: { filename: z.string() } }, getArchivedFileContent);
+  mcp.registerTool("get_archived_file_content", { description: "读取归档文件内容。phase 参数可选，用于指定子目录（requirements/planning/implementation/summary）。盲审模式下拒绝对方盲审文件。", inputSchema: { filename: z.string(), phase: z.string().optional() } }, getArchivedFileContent);
   mcp.registerTool("force_converge", { description: "强制收敛当前 dev_phase 循环（仅监督者，phase≠idle）。", inputSchema: {} }, forceConverge);
   mcp.registerTool("wait_for_turn", { description: "长轮询等待 turn 切换到调用方。2s 间隔，60s 超时返回当前状态。phase 变更或 converged 时提前返回。" }, waitForTurn);
   mcp.registerTool(
@@ -119,6 +120,8 @@ httpServer.listen(PORT, async () => {
     if (recovered.phase !== "idle") {
       console.log(`[pair-flow] Recovered state: phase=${recovered.phase}, workflow_id=${recovered.workflow_id}`);
     }
+    // P0-26: orphan handoff warning at startup
+    await warnOrphanHandoffs();
   } catch (err) {
     console.error(`[pair-flow] Startup failed:`, err);
     process.exit(1);
@@ -130,6 +133,34 @@ httpServer.listen(PORT, async () => {
 
 process.on("SIGTERM", async () => { await releaseLock(); process.exit(0); });
 process.on("SIGINT", async () => { await releaseLock(); process.exit(0); });
+
+// P0-26: orphan handoff warning — scan for incomplete workflows at startup
+async function warnOrphanHandoffs() {
+  const HANDOFF_DIR = process.env.HANDOFF_DIR || "handoff";
+  try {
+    const entries = await readdir(HANDOFF_DIR, { withFileTypes: true });
+    const wfDirs = entries.filter((e) => e.isDirectory() && /^\d{14}$/.test(e.name));
+    const orphans: string[] = [];
+    for (const d of wfDirs) {
+      try {
+        const summaryDir = `${HANDOFF_DIR}/${d.name}/summary`;
+        const summaryEntries = await readdir(summaryDir);
+        if (!summaryEntries.some((e) => e.includes("_final.md"))) {
+          orphans.push(d.name);
+        }
+      } catch {
+        // No summary dir — orphan
+        orphans.push(d.name);
+      }
+    }
+    if (orphans.length > 0) {
+      console.warn(`[pair-flow] ⚠ ${orphans.length} orphan handoff workflow(s) without _final.md: ${orphans.join(", ")}`);
+      console.warn(`[pair-flow] ⚠ Run 'npx tsx scripts/clean.ts --dry-run' to review or 'npx tsx scripts/clean.ts --force' to remove.`);
+    }
+  } catch {
+    // handoff dir doesn't exist yet, skip
+  }
+}
 
 // Crash handling: log + cleanup + exit. External process manager (PM2/systemd/docker)
 // is responsible for restart. crash-recovery.ts will restore state from handoff on next start.

@@ -64,7 +64,7 @@ async function handleTurn(state: PairFlowState, identity: string): Promise<CallT
     ok: true, lease_token: token, lease_expires_at: expires,
     template: getTemplate(state),
     rules_summary: getRulesSummary(state, "turn"),
-  });
+  }, { tool: "get_state", when: "获取当前状态（issues/round/上次提交）后按 template 产出并 submit" });
 }
 
 async function handleAdvance(state: PairFlowState, identity: string, args: Record<string, unknown>): Promise<CallToolResult> {
@@ -110,7 +110,7 @@ async function handleAdvance(state: PairFlowState, identity: string, args: Recor
     const next = initRequirementsPhase(state, nonSupervisor, taskObj);
     await saveState(next);
     await logEvent("advance", { identity, from: "idle", to: "requirements", task: taskObj.description });
-    return ok({ ok: true, new_phase: "requirements", turn: nonSupervisor, task: taskObj, template: getTemplate(next), rules_summary: getRulesSummary(next, "advance") });
+    return ok({ ok: true, new_phase: "requirements", turn: nonSupervisor, task: taskObj, template: getTemplate(next), rules_summary: getRulesSummary(next, "advance") }, { tool: "wait_for_turn", when: "turn 已切换给对方" });
   }
 
   // Non-IDLE phases: must be converged + blind review done
@@ -128,7 +128,7 @@ async function handleAdvance(state: PairFlowState, identity: string, args: Recor
     const next = initPlanningPhase(state, reviewer.identity);
     await saveState(next);
     await logEvent("advance", { identity, from: "requirements", to: "planning" });
-    return ok({ ok: true, new_phase: "planning", turn: reviewer.identity, template: getTemplate(next), rules_summary: getRulesSummary(next, "advance") });
+    return ok({ ok: true, new_phase: "planning", turn: reviewer.identity, template: getTemplate(next), rules_summary: getRulesSummary(next, "advance") }, { tool: "wait_for_turn", when: "turn 已切换给对方" });
   }
 
   if (currentPhase === "planning") {
@@ -139,7 +139,7 @@ async function handleAdvance(state: PairFlowState, identity: string, args: Recor
     const next = initImplementationPhase(state, developer.identity);
     await saveState(next);
     await logEvent("advance", { identity, from: "planning", to: "implementation", dev_phase: next.dev_phase });
-    return ok({ ok: true, new_phase: "implementation", dev_phase: next.dev_phase, sub_phase: "coding", turn: developer.identity, template: getTemplate(next), rules_summary: getRulesSummary(next, "advance") });
+    return ok({ ok: true, new_phase: "implementation", dev_phase: next.dev_phase, sub_phase: "coding", turn: developer.identity, template: getTemplate(next), rules_summary: getRulesSummary(next, "advance") }, { tool: "wait_for_turn", when: "turn 已切换给对方" });
   }
 
   if (currentPhase === "implementation") {
@@ -185,7 +185,7 @@ async function handleAdvance(state: PairFlowState, identity: string, args: Recor
     const next = initSummaryPhase(state, nonSupervisor);
     await saveState(next);
     await logEvent("advance", { identity, from: "implementation", to: "summary" });
-    return ok({ ok: true, new_phase: "summary", turn: nonSupervisor, template: getTemplate(next), rules_summary: getRulesSummary(next, "advance") });
+    return ok({ ok: true, new_phase: "summary", turn: nonSupervisor, template: getTemplate(next), rules_summary: getRulesSummary(next, "advance") }, { tool: "wait_for_turn", when: "turn 已切换给对方" });
   }
 
   if (currentPhase === "summary") {
