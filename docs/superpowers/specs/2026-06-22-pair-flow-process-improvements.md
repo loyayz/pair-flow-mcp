@@ -496,9 +496,10 @@ npx tsx src/index.ts
 
 ### 方案
 
-> **服务端自动 commit**：AI 无法执行 shell 命令，commit 必须在服务端完成。
-> 1. submit 写入 handoff 文件后，服务端自动执行 `git add handoff/{wfId}/` + `git commit -m "handoff: {phase} r{round} — {identity}"`
-> 2. commit 失败不阻塞 submit（repo 可能不在 git 管理下），仅 log warning
-> 3. 若 AI 同时修改了 spec 文件（非 handoff），需额外机制处理——但当前 AI 没有写文件能力，handoff 是唯一产出物，自动 commit handoff 即可覆盖
+> **不修服务端——修认知**。PairFlow 是通用 MCP server，不应綁定 git 操作。handoff 文件是否 commit 是**使用方（人）的运维责任**，不是 PairFlow 的职责。
+>
+> PairFlow 能做的：确保 handoff 文件完整、可读、路径清晰。本次验证中这部分已经做到——4 轮产出的所有 `.md` 和 `.meta.json` 文件都在 `handoff/{wfId}/` 下，结构正确，内容完整。
+>
+> 使用方应做的：在 PairFlow 工作流结束后（或定期），将 `handoff/` 目录纳入 git 管理。这不是自动化问题，是操作规范问题。
 
-此问题为 **P0 阻塞级**——工作流产出物没有进入版本管理，等于没有产出。状态机跑得再完美，git log 为空就是空转。
+此问题为 **P1**——handoff 产出完整但未纳入 git 是使用方运维问题，不阻塞 PairFlow 功能。服务端不应越界做 git 操作。
