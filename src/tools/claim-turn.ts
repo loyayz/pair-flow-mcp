@@ -6,7 +6,7 @@ import { parseIdentity } from "../identity.js";
 import { loadState, saveState, isCurrentHolder, isSupervisor, getOtherIdentity, initRequirementsPhase, initPlanningPhase, initImplementationPhase, initSummaryPhase, initIdleState, type PairFlowState } from "../state.js";
 import { logEvent } from "../logger.js";
 import { stateMutex } from "../mutex.js";
-import { err } from "../response.js";
+import { err, ok } from "../response.js";
 import { getTemplate, getRulesSummary } from "../template.js";
 import { startLeaseTimer, stopLeaseTimer } from "../lease.js";
 import { extractCycleCount } from "../planning.js";
@@ -17,12 +17,12 @@ export async function claimTurn(
 ): Promise<CallToolResult> {
   const identity = parseIdentity(extra.requestInfo?.headers);
   if (identity === "unknown") {
-    return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "identity required" }) }], isError: true };
+    return err("identity required");
   }
 
   const mode = args.mode as string;
   if (mode !== "turn" && mode !== "advance") {
-    return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "mode must be 'turn' or 'advance'" }) }], isError: true };
+    return err("mode must be 'turn' or 'advance'");
   }
 
   return stateMutex.runExclusive(async () => {
@@ -37,18 +37,18 @@ export async function claimTurn(
 
 async function handleTurn(state: PairFlowState, identity: string): Promise<CallToolResult> {
   if (state.converged && !state.blind_review_pending) {
-    return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "phase already converged — claim_turn(turn) not allowed" }) }], isError: true };
+    return err("phase already converged — claim_turn(turn) not allowed");
   }
   // Blind review: allow any registered peer to claim turn
   if (state.converged && state.blind_review_pending) {
     const isPeer = state.peers.some((p) => p.identity === identity);
     if (!isPeer) {
-      return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "identity not registered" }) }], isError: true };
+      return err("identity not registered");
     }
     state.turn = identity;
     // Allow — bypass isCurrentHolder check below
   } else if (!isCurrentHolder(state, identity)) {
-    return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: `not your turn — current turn: ${state.turn}` }) }], isError: true };
+    return err(`not your turn — current turn: ${state.turn}`);
   }
 
   const token = randomUUID();
@@ -60,18 +60,16 @@ async function handleTurn(state: PairFlowState, identity: string): Promise<CallT
   await logEvent("claim_turn", { identity, mode: "turn", lease_token: token });
   startLeaseTimer(state);
 
-  return {
-    content: [{ type: "text", text: JSON.stringify({
-      ok: true, lease_token: token, lease_expires_at: expires,
-      template: getTemplate(state),
-      rules_summary: getRulesSummary(state, "turn"),
-    }) }],
-  };
+  return ok({
+    ok: true, lease_token: token, lease_expires_at: expires,
+    template: getTemplate(state),
+    rules_summary: getRulesSummary(state, "turn"),
+  });
 }
 
 async function handleAdvance(state: PairFlowState, identity: string, args: Record<string, unknown>): Promise<CallToolResult> {
   if (!isSupervisor(state, identity)) {
-    return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "only supervisor can advance" }) }], isError: true };
+    return err("only supervisor can advance");
   }
 
   // Validate phase transitions
@@ -80,21 +78,21 @@ async function handleAdvance(state: PairFlowState, identity: string, args: Recor
   if (currentPhase === "idle") {
     // IDLE → REQUIREMENTS
     if (state.peers.length < 2) {
-      return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "both peers must register before advance" }) }], isError: true };
+      return err("both peers must register before advance");
     }
     const developers = state.peers.filter((p) => p.is_developer);
     if (developers.length !== 1) {
-      return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "exactly one peer must be developer=true" }) }], isError: true };
+      return err("exactly one peer must be developer=true");
     }
     // Require timeouts on first advance
     const timeouts = args.timeouts as Record<string, number> | undefined;
     if (!timeouts || !timeouts.requirements || !timeouts.planning || !timeouts.implementation || !timeouts.summary) {
-      return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "first advance requires timeouts: { requirements, planning, implementation, summary }" }) }], isError: true };
+      return err("first advance requires timeouts: { requirements, planning, implementation, summary }");
     }
     // P0-21: require task on IDLE→REQUIREMENTS
     const task = args.task as { description?: string; spec_file?: string; goals?: string[]; context?: string } | undefined;
     if (!task || !task.description || task.description.trim().length < 10) {
-      return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "advance from IDLE requires task: { description (≥10 chars), spec_file?, goals?, context? }" }) }], isError: true };
+      return err("advance from IDLE requires task: { description (≥10 chars), spec_file?, goals?, context? }");
     }
     const taskObj: import("../state.js").Task = {
       description: task.description.trim(),
@@ -112,7 +110,7 @@ async function handleAdvance(state: PairFlowState, identity: string, args: Recor
     const next = initRequirementsPhase(state, nonSupervisor, taskObj);
     await saveState(next);
     await logEvent("advance", { identity, from: "idle", to: "requirements", task: taskObj.description });
-    return { content: [{ type: "text", text: JSON.stringify({ ok: true, new_phase: "requirements", turn: nonSupervisor, task: taskObj, template: getTemplate(next), rules_summary: getRulesSummary(next, "advance") }) }] };
+    return ok({ ok: true, new_phase: "requirements", turn: nonSupervisor, task: taskObj, template: getTemplate(next), rules_summary: getRulesSummary(next, "advance") });
   }
 
   // Non-IDLE phases: must be converged + blind review done
@@ -125,23 +123,23 @@ async function handleAdvance(state: PairFlowState, identity: string, args: Recor
   if (currentPhase === "requirements") {
     const reviewer = state.peers.find((p) => !p.is_developer);
     if (!reviewer) {
-      return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "no reviewer (is_developer=false) registered" }) }], isError: true };
+      return err("no reviewer (is_developer=false) registered");
     }
     const next = initPlanningPhase(state, reviewer.identity);
     await saveState(next);
     await logEvent("advance", { identity, from: "requirements", to: "planning" });
-    return { content: [{ type: "text", text: JSON.stringify({ ok: true, new_phase: "planning", turn: reviewer.identity, template: getTemplate(next), rules_summary: getRulesSummary(next, "advance") }) }] };
+    return ok({ ok: true, new_phase: "planning", turn: reviewer.identity, template: getTemplate(next), rules_summary: getRulesSummary(next, "advance") });
   }
 
   if (currentPhase === "planning") {
     const developer = state.peers.find((p) => p.is_developer);
     if (!developer) {
-      return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "no developer (is_developer=true) registered" }) }], isError: true };
+      return err("no developer (is_developer=true) registered");
     }
     const next = initImplementationPhase(state, developer.identity);
     await saveState(next);
     await logEvent("advance", { identity, from: "planning", to: "implementation", dev_phase: next.dev_phase });
-    return { content: [{ type: "text", text: JSON.stringify({ ok: true, new_phase: "implementation", dev_phase: next.dev_phase, sub_phase: "coding", turn: developer.identity, template: getTemplate(next), rules_summary: getRulesSummary(next, "advance") }) }] };
+    return ok({ ok: true, new_phase: "implementation", dev_phase: next.dev_phase, sub_phase: "coding", turn: developer.identity, template: getTemplate(next), rules_summary: getRulesSummary(next, "advance") });
   }
 
   if (currentPhase === "implementation") {
@@ -154,7 +152,7 @@ async function handleAdvance(state: PairFlowState, identity: string, args: Recor
         (!i.resolution || i.resolution.trim().length === 0)
       );
       if (noReasonDeferred.length > 0) {
-        return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: `cannot advance: ${noReasonDeferred.length} deferred issue(s) without reason`, deferred_issues: noReasonDeferred.map((i) => ({ id: i.id, topic: i.topic })) }) }], isError: true };
+        return err(`cannot advance: ${noReasonDeferred.length} deferred issue(s) without reason`, { deferred_issues: noReasonDeferred.map((i) => ({ id: i.id, topic: i.topic })) });
       }
     }
     // Auto-escalate issues deferred across 2+ consecutive phases
@@ -179,7 +177,7 @@ async function handleAdvance(state: PairFlowState, identity: string, args: Recor
       const next = initImplementationPhase(state, nextDev);
       await saveState(next);
       await logEvent("advance", { identity, from: "implementation", to: "implementation", dev_phase: next.dev_phase });
-      return { content: [{ type: "text", text: JSON.stringify({ ok: true, new_phase: "implementation", dev_phase: next.dev_phase, sub_phase: "coding", turn: nextDev, template: getTemplate(next), rules_summary: getRulesSummary(next, "advance") }) }] };
+      return ok({ ok: true, new_phase: "implementation", dev_phase: next.dev_phase, sub_phase: "coding", turn: nextDev, template: getTemplate(next), rules_summary: getRulesSummary(next, "advance") });
     }
 
     // Last cycle or no cycle count — advance to SUMMARY
@@ -187,23 +185,23 @@ async function handleAdvance(state: PairFlowState, identity: string, args: Recor
     const next = initSummaryPhase(state, nonSupervisor);
     await saveState(next);
     await logEvent("advance", { identity, from: "implementation", to: "summary" });
-    return { content: [{ type: "text", text: JSON.stringify({ ok: true, new_phase: "summary", turn: nonSupervisor, template: getTemplate(next), rules_summary: getRulesSummary(next, "advance") }) }] };
+    return ok({ ok: true, new_phase: "summary", turn: nonSupervisor, template: getTemplate(next), rules_summary: getRulesSummary(next, "advance") });
   }
 
   if (currentPhase === "summary") {
     // P0-14: check open/deferred issues before SUMMARY→IDLE
     const unresolved = state.issues.filter((i) => i.status === "open" || i.status === "deferred");
     if (unresolved.length > 0) {
-      return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: `cannot advance to IDLE: ${unresolved.length} unresolved issue(s)`, unresolved_issues: unresolved.map((i) => ({ id: i.id, topic: i.topic, status: i.status })) }) }], isError: true };
+      return err(`cannot advance to IDLE: ${unresolved.length} unresolved issue(s)`, { unresolved_issues: unresolved.map((i) => ({ id: i.id, topic: i.topic, status: i.status })) });
     }
 
     const next = initIdleState(state);
     await saveState(next);
     await logEvent("advance", { identity, from: "summary", to: "idle" });
-    return { content: [{ type: "text", text: JSON.stringify({ ok: true, new_phase: "idle" }) }] };
+    return ok({ ok: true, new_phase: "idle" });
   }
 
-  return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: `unknown phase: ${currentPhase}` }) }], isError: true };
+  return err(`unknown phase: ${currentPhase}`);
 }
 
 function getPhaseTimeoutMinutes(state: PairFlowState): number {

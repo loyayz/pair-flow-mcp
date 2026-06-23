@@ -1,27 +1,39 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { spawn, type ChildProcess } from "node:child_process";
 import { rm } from "node:fs/promises";
+import { resolve } from "node:path";
+import { execSync } from "node:child_process";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { createClientTransport } from "../client-transport.js";
 
 const PORT = 3197;
+const TEST_HANDOFF = resolve(".pairflow-test-transport-handoff");
+const TEST_STATE = resolve(".pairflow-test-transport");
 let server: ChildProcess;
 
 async function startServer() {
-  await rm(".pairflow-test-transport", { recursive: true }).catch(() => {});
-  await rm(".pairflow-test-transport-handoff", { recursive: true }).catch(() => {});
-  const npxCmd = process.platform === "win32" ? "npx.cmd" : "npx";
-  server = spawn(npxCmd, ["tsx", "src/index.ts"], {
-    env: { ...process.env, PORT: String(PORT), STATE_DIR: ".pairflow-test-transport", HANDOFF_DIR: ".pairflow-test-transport-handoff" },
-    stdio: "pipe", shell: true,
+  await rm(TEST_STATE, { recursive: true }).catch(() => {});
+  await rm(TEST_HANDOFF, { recursive: true }).catch(() => {});
+  server = spawn(process.execPath, ["--import", "tsx/esm", "src/index.ts"], {
+    env: { ...process.env, PORT: String(PORT), STATE_DIR: TEST_STATE, HANDOFF_DIR: TEST_HANDOFF },
+    stdio: "pipe",
   });
   await new Promise((r) => setTimeout(r, 2000));
 }
 
 async function stopServer() {
-  server?.kill();
+  if (server?.pid) {
+    try {
+      if (process.platform === "win32") {
+        execSync(`taskkill //F //PID ${server.pid} //T 2>nul`, { stdio: "ignore" });
+      } else {
+        process.kill(-server.pid, "SIGKILL");
+      }
+    } catch { /* already dead */ }
+  }
   await new Promise((r) => setTimeout(r, 500));
-  await rm(".pairflow-test-transport-handoff", { recursive: true }).catch(() => {});
+  await rm(TEST_HANDOFF, { recursive: true }).catch(() => {});
+  await rm(TEST_STATE, { recursive: true }).catch(() => {});
 }
 
 async function call(client: Client, name: string, args: Record<string, unknown> = {}) {

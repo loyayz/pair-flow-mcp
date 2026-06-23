@@ -58,6 +58,8 @@ export async function acquireLock(): Promise<LockData> {
         const isZombie = Date.now() - lastHb > HEARTBEAT_TIMEOUT_MS;
         if (isZombie) {
           console.log("[pair-flow] Lock holder PID", existing.pid, "heartbeat timeout — overwriting zombie lock");
+          // #5: reset crash_count — zombie isn't a crash, it's an unresponsive process
+          existing.crash_count = 0;
         } else {
           throw new Error(`Lock held by PID ${existing.pid} (started ${existing.started_at}). Refusing to start.`);
         }

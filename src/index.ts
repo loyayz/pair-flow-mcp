@@ -17,6 +17,10 @@ import { waitForTurn } from "./tools/wait-for-turn.js";
 
 const PORT = parseInt(process.env.PORT || "3100", 10);
 
+// Gate: reject MCP requests until crash-recovery completes. Prevents phantom
+// session creation during the listen→recovery race window.
+let ready = false;
+
 function createServerWithTools() {
   const mcp = new McpServer(
     { name: "pair-flow", version: "0.1.0" },
@@ -75,6 +79,11 @@ const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse
   }
 
   if (req.url?.startsWith("/mcp") && req.method === "POST") {
+    if (!ready) {
+      res.writeHead(503, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: false, error: "Server starting — recovery in progress, retry shortly" }));
+      return;
+    }
     const chunks: Buffer[] = [];
     for await (const chunk of req) {
       chunks.push(chunk);
@@ -114,6 +123,7 @@ httpServer.listen(PORT, async () => {
     console.error(`[pair-flow] Startup failed:`, err);
     process.exit(1);
   }
+  ready = true;
   console.log(`[pair-flow] HTTP MCP Server listening on http://localhost:${PORT}/mcp`);
   console.log(`[pair-flow] Health check: http://localhost:${PORT}/health`);
 });
@@ -121,20 +131,27 @@ httpServer.listen(PORT, async () => {
 process.on("SIGTERM", async () => { await releaseLock(); process.exit(0); });
 process.on("SIGINT", async () => { await releaseLock(); process.exit(0); });
 
-// §15 crash auto-restart
+// Crash handling: log + cleanup + exit. External process manager (PM2/systemd/docker)
+// is responsible for restart. crash-recovery.ts will restore state from handoff on next start.
+// Per Node.js best practice: do not attempt in-process recovery after uncaughtException.
 let crashCount = 0;
+let lastCrashTime = 0;
 process.on("uncaughtException", async (err) => {
   console.error("[pair-flow] Uncaught exception:", err);
-  crashCount++;
+  const now = Date.now();
+  // Crash loop detection: 3 crashes within 30s → refuse to let PM restart us
+  if (now - lastCrashTime < 30_000) {
+    crashCount++;
+  } else {
+    crashCount = 1;
+  }
+  lastCrashTime = now;
   if (crashCount >= 3) {
-    console.error("[pair-flow] Crash loop detected (3 crashes), refusing to restart");
+    console.error("[pair-flow] Crash loop detected (3 crashes in 30s). Check environment.");
     await releaseLock();
     process.exit(1);
   }
-  console.log("[pair-flow] Restarting in 1s...");
-  setTimeout(() => {
-    httpServer.close(() => {
-      httpServer.listen(PORT, () => console.log(`[pair-flow] Re-listening on ${PORT}`));
-    });
-  }, 1000);
+  console.error("[pair-flow] Exiting — external process manager should restart. crash-recovery will restore state.");
+  await releaseLock();
+  setTimeout(() => process.exit(1), 100); // allow releaseLock to flush
 });

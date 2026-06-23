@@ -3,6 +3,7 @@ import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/proto
 import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
 import { parseIdentity } from "../identity.js";
 import { loadState } from "../state.js";
+import { ok } from "../response.js";
 
 export async function whoAmI(
   extra: RequestHandlerExtra<ServerRequest, ServerNotification>
@@ -10,17 +11,10 @@ export async function whoAmI(
   const identity = parseIdentity(extra.requestInfo?.headers);
   const state = await loadState();
   const peer = state.peers.find((p) => p.identity === identity);
-  return {
-    content: [
-      {
-        type: "text",
-        text: JSON.stringify({
-          identity,
-          registered: peer !== undefined,
-          role: peer?.role ?? null,
-          is_developer: peer?.is_developer ?? null,
-        }),
-      },
-    ],
-  };
+  return ok({
+    identity,
+    registered: peer !== undefined,
+    role: peer?.role ?? null,
+    is_developer: peer?.is_developer ?? null,
+  });
 }

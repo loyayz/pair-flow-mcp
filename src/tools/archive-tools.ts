@@ -1,8 +1,8 @@
 import { readdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
-import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
+import type { CallToolResult, ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
+import { err, ok } from "../response.js";
 import { parseIdentity } from "../identity.js";
 import { loadState, saveState } from "../state.js";
 import { logEvent } from "../logger.js";
@@ -19,7 +19,7 @@ export async function getArchivedFiles(
   const state = await loadState();
   const suppliedId = args.workflow_id as string | undefined;
   const wfId = suppliedId ? validatePathSegment(suppliedId) : state.workflow_id;
-  if (!wfId) return { content: [{ type: "text", text: JSON.stringify({ files: [] }) }] };
+  if (!wfId) return ok({ files: [] });
 
   const safeId = validatePathSegment(wfId);
   let dir = join(HANDOFF_DIR, safeId);
@@ -29,15 +29,15 @@ export async function getArchivedFiles(
 
   // Verify resolved path stays within HANDOFF_DIR
   if (!resolve(dir).startsWith(resolve(HANDOFF_DIR))) {
-    return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "invalid path" }) }], isError: true };
+    return err("invalid path");
   }
 
   try {
     const entries = await readdir(dir, { recursive: true });
     const files = entries.filter((e) => e.endsWith(".md") || e.endsWith(".json") || e.endsWith(".jsonl"));
-    return { content: [{ type: "text", text: JSON.stringify({ files }) }] };
+    return ok({ files });
   } catch {
-    return { content: [{ type: "text", text: JSON.stringify({ files: [] }) }] };
+    return ok({ files: [] });
   }
 }
 
@@ -56,7 +56,7 @@ export async function getArchivedFileContent(
 ): Promise<CallToolResult> {
   const identity = parseIdentity(extra.requestInfo?.headers);
   const filename = args.filename as string;
-  if (!filename) return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "filename required" }) }], isError: true };
+  if (!filename) return err("filename required");
 
   const state = await loadState();
 
@@ -66,25 +66,25 @@ export async function getArchivedFileContent(
     // Check if this file belongs to the other party
     const other = state.peers.find((p) => p.identity !== identity);
     if (other && filename.includes(other.identity)) {
-      return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "access denied: cannot read other party's blind review during blind review phase" }) }], isError: true };
+      return err("access denied: cannot read other party's blind review during blind review phase");
     }
   }
 
   const wfId = state.workflow_id;
-  if (!wfId) return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "no active workflow" }) }], isError: true };
+  if (!wfId) return err("no active workflow");
 
   const safeWfId = validatePathSegment(wfId);
   const filePath = join(HANDOFF_DIR, safeWfId, filename);
   // Prevent path traversal
   if (!resolve(filePath).startsWith(resolve(join(HANDOFF_DIR, safeWfId)))) {
-    return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "invalid filename" }) }], isError: true };
+    return err("invalid filename");
   }
 
   try {
     const content = await readFile(filePath, "utf-8");
-    return { content: [{ type: "text", text: content }] };
+    return ok({ content });
   } catch {
-    return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: `file not found: ${filename}` }) }], isError: true };
+    return err(`file not found: ${filename}`);
   }
 }
 
@@ -95,13 +95,13 @@ export async function forceConverge(
   extra: RequestHandlerExtra<ServerRequest, ServerNotification>
 ): Promise<CallToolResult> {
   const identity = parseIdentity(extra.requestInfo?.headers);
-  if (identity === "unknown") return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "identity required" }) }], isError: true };
+  if (identity === "unknown") return err("identity required");
 
   return stateMutex.runExclusive(async () => {
     const state = await loadState();
     const isSup = state.peers.some((p) => p.identity === identity && p.role === "supervisor");
-    if (!isSup) return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "only supervisor can force_converge" }) }], isError: true };
-    if (state.phase === "idle") return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "cannot force_converge in IDLE phase" }) }], isError: true };
+    if (!isSup) return err("only supervisor can force_converge");
+    if (state.phase === "idle") return err("cannot force_converge in IDLE phase");
 
     // Close all open issues
     for (const issue of state.issues) {
@@ -133,6 +133,6 @@ export async function forceConverge(
     stopLeaseTimer();
     await saveState(state);
     await logEvent("force_converge", { identity, phase: state.phase });
-    return { content: [{ type: "text", text: JSON.stringify({ ok: true }) }] };
+    return ok({ ok: true });
   });
 }

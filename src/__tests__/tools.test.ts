@@ -1,9 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { spawn, type ChildProcess } from "node:child_process";
 import { rm } from "node:fs/promises";
+import { resolve } from "node:path";
+import { execSync } from "node:child_process";
 import http from "node:http";
 
 const PORT = 3199;
+const TEST_HANDOFF = resolve(".pairflow-test-handoff");
+const TEST_STATE = resolve(".pairflow-test");
 let server: ChildProcess;
 
 function mcpRequest(name: string, args: Record<string, unknown> = {}, headers: Record<string, string> = {}): Promise<Record<string, unknown>> {
@@ -28,20 +32,28 @@ function mcpRequest(name: string, args: Record<string, unknown> = {}, headers: R
 }
 
 async function startServer() {
-  await rm(".pairflow-test", { recursive: true }).catch(() => {});
-  await rm(".pairflow-test-handoff", { recursive: true }).catch(() => {});
-  const npxCmd = process.platform === "win32" ? "npx.cmd" : "npx";
-  server = spawn(npxCmd, ["tsx", "src/index.ts"], {
-    env: { ...process.env, PORT: String(PORT), STATE_DIR: ".pairflow-test", HANDOFF_DIR: ".pairflow-test-handoff" },
-    stdio: "pipe", shell: true,
+  await rm(TEST_STATE, { recursive: true }).catch(() => {});
+  await rm(TEST_HANDOFF, { recursive: true }).catch(() => {});
+  server = spawn(process.execPath, ["--import", "tsx/esm", "src/index.ts"], {
+    env: { ...process.env, PORT: String(PORT), STATE_DIR: TEST_STATE, HANDOFF_DIR: TEST_HANDOFF },
+    stdio: "pipe",
   });
   await new Promise((r) => setTimeout(r, 2000));
 }
 
 async function stopServer() {
-  server?.kill();
+  if (server?.pid) {
+    try {
+      if (process.platform === "win32") {
+        execSync(`taskkill //F //PID ${server.pid} //T 2>nul`, { stdio: "ignore" });
+      } else {
+        process.kill(-server.pid, "SIGKILL");
+      }
+    } catch { /* already dead */ }
+  }
   await new Promise((r) => setTimeout(r, 500));
-  await rm(".pairflow-test-handoff", { recursive: true }).catch(() => {});
+  await rm(TEST_HANDOFF, { recursive: true }).catch(() => {});
+  await rm(TEST_STATE, { recursive: true }).catch(() => {});
 }
 
 async function setup() {

@@ -9,6 +9,7 @@ import { logEvent } from "../logger.js";
 import { stateMutex } from "../mutex.js";
 import { crossValidateConvergeMark } from "../template.js";
 import { checkGraceSubmit, applyGraceSubmit, stopLeaseTimer } from "../lease.js";
+import { err, ok } from "../response.js";
 
 const MAX_CONTENT_BYTES = 500 * 1024; // 500KB
 const HANDOFF_DIR = process.env.HANDOFF_DIR || "handoff";
@@ -19,7 +20,7 @@ export async function submit(
 ): Promise<CallToolResult> {
   const identity = parseIdentity(extra.requestInfo?.headers);
   if (identity === "unknown") {
-    return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "identity required" }) }], isError: true };
+    return err("identity required");
   }
 
   const content = args.content as string;
@@ -30,24 +31,24 @@ export async function submit(
   // Validate content size
   const contentBytes = Buffer.byteLength(content, "utf-8");
   if (contentBytes > MAX_CONTENT_BYTES) {
-    return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: `content exceeds 500KB limit (${contentBytes} bytes). Please split or reference external files.` }) }], isError: true };
+    return err(`content exceeds 500KB limit (${contentBytes} bytes). Please split or reference external files.`);
   }
 
   // Validate commit_hash format
   if (!commitHash || !/^[a-f0-9]{7,40}$/i.test(commitHash)) {
-    return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "invalid commit_hash format" }) }], isError: true };
+    return err("invalid commit_hash format");
   }
 
   // Blind review: stance and need_next_round must be null
   if (blindReview && (convergeMark.stance !== null || convergeMark.need_next_round !== null)) {
-    return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "blind_review submit requires stance=null and need_next_round=null" }) }], isError: true };
+    return err("blind_review submit requires stance=null and need_next_round=null");
   }
 
   // Validate stance/need_next consistency (§7)
   if (!blindReview) {
-    const err = validateStanceConsistency(convergeMark.stance, convergeMark.need_next_round);
-    if (err) {
-      return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: err }) }], isError: true };
+    const stanceErr = validateStanceConsistency(convergeMark.stance, convergeMark.need_next_round);
+    if (stanceErr) {
+      return err(stanceErr);
     }
   }
 
@@ -56,7 +57,17 @@ export async function submit(
 
     // Validate mandatory review scope (only required for requirements/planning per §11; exempt blind_review)
     if (!blindReview && (state.phase === "requirements" || state.phase === "planning") && !content.includes("## 本轮审阅范围")) {
-      return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "missing required '## 本轮审阅范围' section" }) }], isError: true };
+      return err("missing required '## 本轮审阅范围' section");
+    }
+
+    // P0-15: developer self-review required for IMPLEMENTATION coding/fix
+    if (!blindReview && state.phase === "implementation" && (state.sub_phase === "coding" || state.sub_phase === "fix") && !content.includes("## 开发者自审")) {
+      return err("missing required '## 开发者自审' section — per P0-15, coding/fix submissions must include self-review evidence");
+    }
+
+    // P0-16: independent testing required for IMPLEMENTATION review
+    if (!blindReview && state.phase === "implementation" && state.sub_phase === "review" && !content.includes("## 独立测试")) {
+      return err("missing required '## 独立测试' section — per P0-16, review submissions must include independent test results");
     }
 
     // Grace: allow submit even if turn changed (lease timeout + grace period)
@@ -67,7 +78,7 @@ export async function submit(
         await applyGraceSubmit(state, identity);
         usedGrace = true;
       } else {
-        return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: `not your turn — current turn: ${state.turn}` }) }], isError: true };
+        return err(`not your turn — current turn: ${state.turn}`);
       }
     }
 
@@ -79,7 +90,7 @@ export async function submit(
     if (subPhase === "fix" && convergeMark.new_issues) {
       for (const issue of convergeMark.new_issues) {
         if (issue.type === "P0") {
-          return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "new P0 issues are not allowed during fix sub_phase; use resolve_issue to close existing P0s" }) }], isError: true };
+          return err("new P0 issues are not allowed during fix sub_phase; use resolve_issue to close existing P0s");
         }
       }
     }
@@ -89,7 +100,7 @@ export async function submit(
       const raisedByMe = state.issues
         .filter((i) => convergeMark.resolved_issue_ids!.includes(i.id) && i.raised_by === identity && i.status === "open");
       if (raisedByMe.length > 0) {
-        return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: `issue #${raisedByMe[0].id} was raised by you; the other party must land the spec change` }) }], isError: true };
+        return err(`issue #${raisedByMe[0].id} was raised by you; the other party must land the spec change`);
       }
     }
 
@@ -289,9 +300,21 @@ export async function submit(
     await saveState(state);
     await logEvent("submit", { identity, round: state.round, new_issues: newIssueIds, converged, blind_review: blindReview, usedGrace });
 
-    return {
-      content: [{ type: "text", text: JSON.stringify({ ok: true, converged, next_turn: state.turn, warnings: cv.warnings.length > 0 ? cv.warnings : undefined }) }],
-    };
+    // Build checklist for the next party — server-initiated reminders, not dependent on AI memory
+    const checklist: string[] = [];
+    if (!blindReview) {
+      checklist.push("检查对方 ## 文档更新确认 段：是否更新了相关文档？如缺失或敷衍，追问");
+      if (state.phase === "implementation") {
+        if (state.sub_phase === "coding" || state.sub_phase === "fix") {
+          checklist.push("核查对方 ## 开发者自审：是否跑了端到端流程？检查关键步骤返回和测试结果");
+        }
+        if (state.sub_phase === "review") {
+          checklist.push("核查对方 ## 独立测试：是否覆盖了端到端和对抗性场景？");
+        }
+      }
+    }
+
+    return ok({ ok: true, converged, next_turn: state.turn, checklist: checklist.length > 0 ? checklist : undefined, warnings: cv.warnings.length > 0 ? cv.warnings : undefined });
   });
 }
 

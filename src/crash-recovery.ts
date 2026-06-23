@@ -227,9 +227,20 @@ async function reconstructFromHandoff(state: PairFlowState): Promise<PairFlowSta
     if (roundMatch) {
       const r = parseInt(roundMatch[1], 10);
       if (r > maxRound) maxRound = r;
-      // Extract identity
+      // Extract identity: r{N}_{identity}.meta.json or r{N}_{subphase}_{identity}.meta.json
       const idMatch = base.match(/^r\d+_(.+)\.meta\.json$/);
-      if (idMatch) lastSubmitter = idMatch[1];
+      if (idMatch) {
+        let identity = idMatch[1];
+        // Strip sub-phase prefix for IMPLEMENTATION files
+        const subPhases = ["coding", "review", "fix", "blind_review"];
+        for (const sp of subPhases) {
+          if (identity.startsWith(sp + "_")) {
+            identity = identity.slice(sp.length + 1);
+            break;
+          }
+        }
+        lastSubmitter = identity;
+      }
     }
     // Detect blind review
     if (base.includes("blind_review")) {
@@ -277,15 +288,30 @@ async function determinePhase(wfDir: string): Promise<Phase> {
 
 async function extractIdentities(wfDir: string): Promise<Set<string>> {
   const ids = new Set<string>();
+  const subPhases = ["coding", "review", "fix", "blind_review"];
   for (const phase of PHASE_PRIORITY) {
     try {
       const files = await findFiles(join(wfDir, phase), ".meta.json");
       for (const f of files) {
         // Use basename for matching — findFiles may return paths with subdir prefix
         const base = f.includes("/") || f.includes("\\") ? f.replace(/^.*[/\\]/, "") : f;
-        // r{N}_{identity}.meta.json
+        // r{N}_{identity}.meta.json (REQUIREMENTS/PLANNING)
+        // r{N}_{subphase}_{identity}.meta.json (IMPLEMENTATION: r1_coding_alice, r2_review_bob, ...)
         const roundMatch = base.match(/^r\d+_(.+)\.meta\.json$/);
-        if (roundMatch) { ids.add(roundMatch[1]); continue; }
+        if (roundMatch) {
+          const captured = roundMatch[1];
+          // Strip known sub-phase prefix if present
+          let identity = captured;
+          for (const sp of subPhases) {
+            if (captured === sp) break; // bare sub-phase (unlikely), skip
+            if (captured.startsWith(sp + "_")) {
+              identity = captured.slice(sp.length + 1);
+              break;
+            }
+          }
+          ids.add(identity);
+          continue;
+        }
         // {identity}_blind_review.md.meta.json
         const blindMatch = base.match(/^(.+)_blind_review\.md\.meta\.json$/);
         if (blindMatch) { ids.add(blindMatch[1]); }
@@ -302,7 +328,18 @@ async function getFirstSubmitter(wfDir: string, phase: string): Promise<string |
     for (const f of files) {
       const base = f.includes("/") || f.includes("\\") ? f.replace(/^.*[/\\]/, "") : f;
       const match = base.match(/^r1_(.+)\.meta\.json$/);
-      if (match) return match[1];
+      if (match) {
+        let identity = match[1];
+        // Strip sub-phase prefix for IMPLEMENTATION files
+        const subPhases = ["coding", "review", "fix", "blind_review"];
+        for (const sp of subPhases) {
+          if (identity.startsWith(sp + "_")) {
+            identity = identity.slice(sp.length + 1);
+            break;
+          }
+        }
+        return identity;
+      }
     }
   } catch { /* */ }
   return null;
@@ -323,28 +360,41 @@ async function findLatestWorkflowId(): Promise<string | null> {
     const dirs = entries.filter((e) => e.isDirectory() && /^\d{14}$/.test(e.name));
     if (dirs.length === 0) return null;
 
-    // Sort descending, skip completed workflows (those with summary/ containing *_final.md)
-    dirs.sort((a, b) => b.name.localeCompare(a.name));
+    // Score each incomplete workflow by content count, pick the most substantive
+    type ScoredDir = { name: string; score: number; phaseCount: number; hasBlindReview: boolean };
+    const scored: ScoredDir[] = [];
     for (const d of dirs) {
       try {
+        // Skip completed workflows (summary/ with _final.md)
         const summaryDir = join(HANDOFF_DIR, d.name, "summary");
-        const implDir = join(HANDOFF_DIR, d.name, "implementation");
-        // Check if it has a summary directory with final files (completed)
-        const summaryEntries = await readdir(summaryDir);
-        const hasFinal = summaryEntries.some((e) => e.includes("_final.md"));
-        if (hasFinal) continue; // completed workflow, skip
-        // Has implementation? Might be in progress
-        const hasContent = summaryEntries.length > 0;
-        if (hasContent) return d.name;
-      } catch { /* dir not exist, try next */ }
-      // Has meta.json files? Likely in progress
-      try {
+        try {
+          const summaryEntries = await readdir(summaryDir);
+          if (summaryEntries.some((e) => e.includes("_final.md"))) continue;
+        } catch { /* no summary dir */ }
+
+        // Count meta.json files across all phases — more content = higher score
         const allFiles = await findFiles(join(HANDOFF_DIR, d.name), ".meta.json");
-        if (allFiles.length > 0) return d.name;
+        if (allFiles.length === 0) continue; // empty workflow, skip
+
+        // Count distinct phase directories
+        const phaseDirs = new Set<string>();
+        for (const f of allFiles) {
+          const seg = f.includes("/") || f.includes("\\") ? f.replace(/[/\\].*$/, "") : "";
+          if (seg) phaseDirs.add(seg);
+        }
+        const hasBlind = allFiles.some((f) => f.includes("blind_review"));
+
+        // Score = meta.json count × 10 + phase count × 100 + blind review bonus × 1000
+        const score = allFiles.length * 10 + phaseDirs.size * 100 + (hasBlind ? 1000 : 0);
+        scored.push({ name: d.name, score, phaseCount: phaseDirs.size, hasBlindReview: hasBlind });
       } catch { /* */ }
     }
-    // Fallback: newest directory
-    return dirs[0]?.name ?? null;
+
+    if (scored.length === 0) return null;
+
+    // Sort by score descending, then by name descending (newest) as tiebreaker
+    scored.sort((a, b) => b.score - a.score || b.name.localeCompare(a.name));
+    return scored[0].name;
   } catch {
     return null;
   }
