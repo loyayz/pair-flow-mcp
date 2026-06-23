@@ -119,6 +119,49 @@ export async function escalate(
   });
 }
 
+// ── defer_issue ── (P0-13: defer 工具)
+
+export async function deferIssue(
+  args: Record<string, unknown>,
+  extra: RequestHandlerExtra<ServerRequest, ServerNotification>
+): Promise<CallToolResult> {
+  const identity = parseIdentity(extra.requestInfo?.headers);
+  if (identity === "unknown") return err("identity required");
+
+  const issueId = args.issue_id as number;
+  const reason = (args.reason as string) ?? "";
+
+  if (!reason) return err("defer reason required");
+
+  return stateMutex.runExclusive(async () => {
+    const state = await loadState();
+    if (state.phase === "idle") return err("cannot defer issue in IDLE phase");
+
+    const issue = state.issues.find((i) => i.id === issueId);
+    if (!issue) return err("issue #" + issueId + " not found");
+    if (issue.status !== "open") return err("issue #" + issueId + " is not open (status: " + issue.status + ")");
+
+    // Permission: issue creator or supervisor can defer
+    if (issue.raised_by !== identity && !isSupervisor(state, identity)) {
+      return err("only issue creator or supervisor can defer — §6 defer permission");
+    }
+
+    issue.status = "deferred";
+    issue.deferred_reason = reason;
+    issue.deferred_since_phase = state.phase;
+    issue.deferred_count += 1;
+
+    await saveState(state);
+    // Journal (§6 authorial storage)
+    const journalPath = HANDOFF_DIR + "/" + (state.workflow_id ?? "unknown") + "/issues-journal.jsonl";
+    await mkdir(HANDOFF_DIR + "/" + (state.workflow_id ?? "unknown"), { recursive: true }).then(() =>
+      appendFile(journalPath, JSON.stringify({ action: "defer", timestamp: new Date().toISOString(), id: issueId, identity, reason }) + "\n")
+    );
+    await logEvent("defer_issue", { issue_id: issueId, identity, reason });
+    return { content: [{ type: "text", text: JSON.stringify({ ok: true }) }] };
+  });
+}
+
 // ── list_issues ──
 
 export async function listIssues(

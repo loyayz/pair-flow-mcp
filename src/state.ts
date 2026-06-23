@@ -18,6 +18,7 @@ export interface Peer {
   role: PeerRole;
   is_developer: boolean;
   registered_at: string;
+  work_dir?: string; // P0-28: 注册时上报的工作目录
 }
 
 export interface LastSubmit {

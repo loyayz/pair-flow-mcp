@@ -1,0 +1,13 @@
+{
+  "stance": null,
+  "need_next_round": null,
+  "new_issues": [
+    {
+      "id": 6,
+      "type": "P1",
+      "topic": "current-state.md P0-13/P0-14 状态与实际代码不一致",
+      "description": "P0-13 defer check 已在 claim-turn.ts:148-168 实现（但缺 defer 工具）；P0-14 SUMMARY check 已在 claim-turn.ts:193-203 完整实现。current-state.md 标记两者均为 ❌ 未实现，需更新为准确状态。"
+    }
+  ],
+  "resolved_issue_ids": []
+}

@@ -1,0 +1,10 @@
+{"action":"create","timestamp":"2026-06-23T04:13:02.782Z","id":1,"type":"P1","topic":"uncaughtException → log+exit 改为外部进程管理器重启","raised_by":"deepseek"}
+{"action":"create","timestamp":"2026-06-23T04:15:07.513Z","id":2,"type":"P0","topic":"uncaughtException handler 改为 log+exit 而非 in-process 重启","raised_by":"claude"}
+{"action":"create","timestamp":"2026-06-23T04:15:07.513Z","id":3,"type":"P1","topic":"lock.ts 僵死进程心跳机制","raised_by":"claude"}
+{"action":"create","timestamp":"2026-06-23T04:15:07.513Z","id":4,"type":"P1","topic":"design.md §4 补充 wait_for_turn 超时行为规范","raised_by":"claude"}
+{"action":"resolve","timestamp":"2026-06-23T04:17:27.407Z","id":1,"identity":"claude","resolution":"�ظ� #2 ���� ͬһ���⣬P0 �汾��׼ȷ�������˰�ȫ���պ�ʵʩ����"}
+{"action":"resolve","timestamp":"2026-06-23T04:18:42.336Z","id":2,"identity":"claude","resolution":"����Ϊ P1 ���� ��ǰ crash �������ƹ�����������Ϊ log+exit �����ʵ���Ľ����������� bug�����´���Ϊ P1 issue��"}
+{"action":"create","timestamp":"2026-06-23T04:18:56.509Z","id":5,"type":"P1","topic":"uncaughtException handler ��Ϊ log+exit ���� in-process ����","raised_by":"claude"}
+{"action":"create","timestamp":"2026-06-23T04:21:09.663Z","id":6,"type":"P1","topic":"current-state.md P0-13/P0-14 状态与实际代码不一致","raised_by":"claude"}
+{"action":"create","timestamp":"2026-06-23T04:27:55.213Z","id":7,"type":"P1","topic":"convergence 逻辑：非 IMPLEMENTATION 阶段 P0 阻塞收敛的机制需文档化","raised_by":"claude"}
+{"action":"create","timestamp":"2026-06-23T04:27:55.213Z","id":8,"type":"P1","topic":"Cycle 0 缺测试覆盖——work_dir 校验 + lock 心跳","raised_by":"claude"}

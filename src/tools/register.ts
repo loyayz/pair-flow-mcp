@@ -17,6 +17,7 @@ export async function register(
 
   const supervisor = args.supervisor === true;
   const developer = args.developer === true;
+  const workDir = (args.work_dir as string) ?? ""; // P0-28: work_dir 参数
 
   return stateMutex.runExclusive(async () => {
     const state = await loadState();
@@ -25,6 +26,17 @@ export async function register(
     // Validate phase
     if (state.phase !== "idle") {
       return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: `register only allowed in IDLE phase, current: ${state.phase}` }) }], isError: true };
+    }
+
+    // P0-28: 校验 work_dir（第二个 peer 注册时）
+    if (workDir && state.peers.length === 1) {
+      const firstPeer = state.peers[0];
+      if (firstPeer.work_dir && firstPeer.work_dir !== workDir) {
+        return { content: [{ type: "text", text: JSON.stringify({
+          ok: false,
+          error: `work_dir mismatch — yours: "${workDir}", ${firstPeer.identity}'s: "${firstPeer.work_dir}". Verify same git repository.`,
+        }) }], isError: true };
+      }
     }
 
     // Check for existing registration
@@ -41,9 +53,9 @@ export async function register(
       const warning = `previous connection had in-flight operation, completed before override`;
       // Remove old, add new
       state.peers = state.peers.filter((p) => p.identity !== identity);
-      state.peers.push({ identity, role: supervisor ? "supervisor" : "peer", is_developer: developer, registered_at: now });
+      state.peers.push({ identity, role: supervisor ? "supervisor" : "peer", is_developer: developer, registered_at: now, work_dir: workDir || existing.work_dir });
       await saveState(state);
-      await logEvent("register", { identity, supervisor, developer, overwritten: true });
+      await logEvent("register", { identity, supervisor, developer, work_dir: workDir, overwritten: true });
       return {
         content: [{ type: "text", text: JSON.stringify({ ok: true, identity, role: supervisor ? "supervisor" : "peer", is_developer: developer, warning }) }],
       };
@@ -57,9 +69,9 @@ export async function register(
       }
     }
 
-    state.peers.push({ identity, role: supervisor ? "supervisor" : "peer", is_developer: developer, registered_at: now });
+    state.peers.push({ identity, role: supervisor ? "supervisor" : "peer", is_developer: developer, registered_at: now, work_dir: workDir || undefined });
     await saveState(state);
-    await logEvent("register", { identity, supervisor, developer });
+    await logEvent("register", { identity, supervisor, developer, work_dir: workDir });
 
     return {
       content: [{ type: "text", text: JSON.stringify({ ok: true, identity, role: supervisor ? "supervisor" : "peer", is_developer: developer }) }],

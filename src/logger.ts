@@ -8,8 +8,8 @@ const MAX_FILES = 5;
 
 export type LogEvent =
   | "register" | "claim_turn" | "submit" | "create_issue" | "resolve_issue"
-  | "escalate" | "force_converge" | "advance" | "timeout" | "crash_recovery"
-  | "phase_change" | "blind_review";
+  | "defer_issue" | "escalate" | "force_converge" | "advance" | "timeout"
+  | "crash_recovery" | "phase_change" | "blind_review";
 
 export async function logEvent(event: LogEvent, details: Record<string, unknown> = {}): Promise<void> {
   await mkdir(dirname(LOG_FILE), { recursive: true });

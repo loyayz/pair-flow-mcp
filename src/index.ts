@@ -11,7 +11,7 @@ import { claimTurn } from "./tools/claim-turn.js";
 import { getState } from "./tools/get-state.js";
 import { getContext } from "./tools/get-context.js";
 import { submit } from "./tools/submit.js";
-import { createIssue, resolveIssue, escalate, listIssues } from "./tools/issue-tools.js";
+import { createIssue, resolveIssue, escalate, deferIssue, listIssues } from "./tools/issue-tools.js";
 import { getArchivedFiles, getArchivedFileContent, forceConverge } from "./tools/archive-tools.js";
 import { waitForTurn } from "./tools/wait-for-turn.js";
 
@@ -25,7 +25,7 @@ function createServerWithTools() {
 
   mcp.registerTool("ping", { description: "连通性检查。匿名可用。" }, ping);
   mcp.registerTool("who_am_i", { description: "身份确认 + 注册信息。解析 X-AI-Identity header。" }, whoAmI);
-  mcp.registerTool("register", { description: "IDLE 阶段注册身份和角色。仅通过 X-AI-Identity header 识别身份（不可通过 args 传递）。", inputSchema: { supervisor: z.boolean(), developer: z.boolean() } }, register);
+  mcp.registerTool("register", { description: "IDLE 阶段注册身份和角色。仅通过 X-AI-Identity header 识别身份（不可通过 args 传递）。work_dir 用于双方校验同一仓库。", inputSchema: { supervisor: z.boolean(), developer: z.boolean(), work_dir: z.string().optional() } }, register);
   mcp.registerTool("claim_turn", {
     description: "获取 turn 或推进 phase。仅通过 X-AI-Identity header 识别身份。advance 模式 IDLE→REQUIREMENTS 时 task 必填。",
     inputSchema: { mode: z.enum(["turn", "advance"]), timeouts: z.object({ requirements: z.number(), planning: z.number(), implementation: z.number(), summary: z.number() }).optional(), task: z.object({ description: z.string(), spec_file: z.string().optional(), goals: z.array(z.string()).optional(), context: z.string().optional() }).optional() },
@@ -34,6 +34,7 @@ function createServerWithTools() {
   mcp.registerTool("get_context", { description: "当前阶段上下文。" }, getContext);
   mcp.registerTool("create_issue", { description: "创建 issue。P0/P1 必填 proposal+rationale，P2 可选。fix sub_phase 禁 P0。", inputSchema: { type: z.enum(["P0","P1","P2"]), topic: z.string().max(200), description: z.string(), my_position: z.string().optional(), proposal: z.string().optional(), rationale: z.string().optional() } }, createIssue);
   mcp.registerTool("resolve_issue", { description: "关闭 issue。P0 仅监督者。", inputSchema: { issue_id: z.number(), resolution: z.string() } }, resolveIssue);
+  mcp.registerTool("defer_issue", { description: "延迟 issue 到后续阶段处理。仅 issue 创建者或监督者可操作。", inputSchema: { issue_id: z.number(), reason: z.string() } }, deferIssue);
   mcp.registerTool("escalate", { description: "升级 P0 → escalated（仅监督者）。", inputSchema: { issue_id: z.number(), reason: z.string() } }, escalate);
   mcp.registerTool("list_issues", { description: "列出 issue。scope=current_phase/all。", inputSchema: { status: z.string().optional(), scope: z.string().optional() } }, listIssues);
   mcp.registerTool("get_archived_files", { description: "列出归档文件。phase/workflow_id 可选过滤。", inputSchema: { phase: z.string().optional(), workflow_id: z.string().optional() } }, getArchivedFiles);

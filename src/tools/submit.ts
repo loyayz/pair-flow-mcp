@@ -98,6 +98,8 @@ export async function submit(
     if (convergeMark.new_issues && convergeMark.new_issues.length > 0) {
       for (const ni of convergeMark.new_issues) {
         const issueId = state.next_issue_id++;
+        // P0-22: proposal/rationale 使用 topic+description，避免 null（markdown content 为权威来源）
+        const derivedProposal = ni.topic + ": " + ni.description;
         state.issues.push({
           id: issueId,
           type: ni.type,
@@ -112,8 +114,8 @@ export async function submit(
           resolved_by: null,
           escalated_at: null,
           fix_review_cycles: 0,
-          proposal: null,
-          rationale: null,
+          proposal: derivedProposal,
+          rationale: derivedProposal,
           deferred_reason: null,
           deferred_since_phase: null,
           deferred_count: 0,
