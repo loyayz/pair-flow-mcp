@@ -469,3 +469,36 @@ npx tsx src/index.ts
 > **3. 服务端预警**：server 启动时若 `loadState()` 返回 `defaultState()`（即无 state.json），检查 `handoff/` 是否有未完成的 workflow 目录。若有 → log warning `"found orphaned handoff directories without state: [dirs]. run scripts/clean.ts to clean up"`。提醒运维者存在未清理的废弃数据。
 >
 > 此问题不阻塞功能——操作规范的文档化即可解决。清理脚本和服务端预警是防御性措施。
+
+---
+
+## 16. P0-27: 双方均未 commit、未修改需求文档——流程走完但输出为零
+
+### 场景
+
+2026-06-23 真实双 AI 接入，完成 REQUIREMENTS + PLANNING 两阶段完整流转（含盲审、收敛、advance）。但事后检查发现：
+
+- **双方均未 git commit**：`git log` 中没有一条来自 deepseek 或 claude 在 PairFlow 工作流中产生的 commit。所有 commit 都是用户（人）手动提交的。
+- **需求文档零修改**：`process-improvements.md` 和 `auto-flow-blockers.md` 的内容在被审阅后没有任何变更。deepseek 的 r1 提出了 4 项待补充、多项遗漏标注，但没有一项实际写入文档。
+- **handoff 文件未纳入版本管理**：PairFlow server 写入了 `handoff/{wfId}/requirements/r1_deepseek.md` 等文件，但从未 `git add` + `git commit`。这些文件是工作流产出的唯一物证，但它们不在 git 历史中。
+
+整个过程：4 轮交替评审、12 个 issue、收敛达成、盲审通过、PLANNING 计划制定——**状态机完美运转，但 git 历史为零。** 这是 P0-3（退化发现）、P0-4（形式主义）、P0-14（未修即结束）的集大成表现。
+
+### 根因
+
+三层缺失：
+
+1. **AI 没有 git 操作意识**：AI 把 PairFlow 理解为"调 MCP 工具完成工作流"，而不是"协作修改文档并提交到 git"。submit 返回 `{ok: true}` 就被视为"完成了"，但实际上 submit 只完成了 PairFlow 内部的状态记录——文档变更和 git commit 仍然需要 AI 手动执行。
+
+2. **PairFlow server 不管 git**：`commit_hash` 参数是 submit 的必填字段，但它只校验格式（`/^[a-f0-9]{7,40}$/`），不校验 hash 是否真的对应一个包含文档变更的 commit。AI 可以传一个随便写的 hash（如 `6406d25`），server 照单全收。
+
+3. **模板不提示 commit**：submit 返回的模板和 rules_summary 中没有"请 git add + git commit"的提示。R014 规则只说"需带 git commit_hash"，但没说"commit_hash 必须对应包含文档变更的实际 commit"。
+
+### 方案
+
+> **三层修复**：
+> 1. **AI 侧（CLAUDE.md）**：submit 之后必须执行 `git add -A && git commit -m "handoff: ..."`。在 PairFlow bootstrap 流程中明确：每次 submit → 立即 commit
+> 2. **服务端（submit.ts）**：`commit_hash` 校验不改（无法验证远程 git），但在 submit 返回的 response 中追加提示：`"reminder: commit handoff files and spec changes to git"`
+> 3. **模板（template.ts）**：submit 返回的 rules_summary 中新增 R015 规则：`"[R015] submit 后必须 git commit handoff 文件和文档变更"`
+
+此问题为 **P0 阻塞级**——工作流产出物没有进入版本管理，等于没有产出。状态机跑得再完美，git log 为空就是空转。
