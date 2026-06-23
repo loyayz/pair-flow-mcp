@@ -8,12 +8,14 @@ import { saveState, defaultState } from "../state.js";
 
 const TEST_ROOT = join(tmpdir(), `pairflow-test-${randomUUID()}`);
 const origCwd = process.cwd();
+const STATE_DIR = process.env.STATE_DIR || ".pairflow";
+const HANDOFF_DIR = process.env.HANDOFF_DIR || "handoff";
 
 async function resetStateDir() {
   await mkdir(TEST_ROOT, { recursive: true });
   process.chdir(TEST_ROOT);
-  try { await rm(join(TEST_ROOT, ".pairflow"), { recursive: true }); } catch { /* */ }
-  try { await rm(join(TEST_ROOT, "handoff"), { recursive: true }); } catch { /* */ }
+  try { await rm(join(TEST_ROOT, STATE_DIR), { recursive: true }); } catch { /* */ }
+  try { await rm(join(TEST_ROOT, HANDOFF_DIR), { recursive: true }); } catch { /* */ }
 }
 
 afterEach(() => {
@@ -39,7 +41,7 @@ describe("Crash recovery", () => {
   });
 
   it("finds latest workflow_id from handoff", async () => {
-    const wfDir = join(TEST_ROOT, "handoff", "20260622000001", "requirements");
+    const wfDir = join(TEST_ROOT, HANDOFF_DIR, "20260622000001", "requirements");
     await mkdir(wfDir, { recursive: true });
     await writeFile(join(wfDir, "r1_alice.meta.json"), JSON.stringify({ round: 1, new_issues: [] }));
 

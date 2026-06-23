@@ -1,17 +1,18 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { writeFile, mkdir, rm } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import { defaultState, loadState, saveState, initRequirementsPhase, initPlanningPhase, initImplementationPhase, isSupervisor, getOtherIdentity } from "../state.js";
 import type { PairFlowState } from "../state.js";
 
+const STATE_DIR = process.env.STATE_DIR || ".pairflow";
+
 async function resetState() {
-  try { await rm(".pairflow", { recursive: true }); } catch { /* ok */ }
-  await mkdir(".pairflow", { recursive: true });
+  try { await rm(STATE_DIR, { recursive: true }); } catch { /* ok */ }
   await saveState(defaultState());
 }
 
 describe("State management", () => {
   beforeEach(resetState);
-  afterEach(async () => { try { await rm(".pairflow", { recursive: true }); } catch { /* ok */ } });
+  afterEach(async () => { try { await rm(STATE_DIR, { recursive: true }); } catch { /* ok */ } });
 
   it("loads default state on first run", async () => {
     const state = await loadState();
