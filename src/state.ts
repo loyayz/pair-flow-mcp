@@ -151,6 +151,17 @@ export async function loadState(): Promise<PairFlowState> {
   }
 }
 
+/** Check whether state.json exists on disk. Used by crash-recovery to distinguish
+ *  "fresh start" from "state file was deleted mid-session". */
+export async function stateFileExists(): Promise<boolean> {
+  try {
+    await readFile(STATE_FILE, "utf-8");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function saveState(state: PairFlowState): Promise<void> {
   await mkdir(dirname(STATE_FILE), { recursive: true });
   const tmp = join(tmpdir(), `pairflow-state-${randomUUID()}.json`);
