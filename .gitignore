@@ -12,3 +12,7 @@ Thumbs.db
 
 # PairFlow runtime
 .pairflow/
+.pairflow-test/
+.pairflow-test-transport/
+.pairflow-test-handoff/
+.pairflow-test-transport-handoff/
