@@ -13,13 +13,13 @@
       "identity": "a",
       "role": "supervisor",
       "is_developer": false,
-      "registered_at": "2026-06-23T01:40:08.623Z"
+      "registered_at": "2026-06-23T03:15:52.067Z"
     },
     {
       "identity": "b",
       "role": "peer",
       "is_developer": true,
-      "registered_at": "2026-06-23T01:40:08.640Z"
+      "registered_at": "2026-06-23T03:15:52.081Z"
     }
   ],
   "last_submit_per_turn": {},
