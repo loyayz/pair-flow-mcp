@@ -496,9 +496,9 @@ npx tsx src/index.ts
 
 ### 方案
 
-> **三层修复**：
-> 1. **AI 侧（CLAUDE.md）**：submit 之后必须执行 `git add -A && git commit -m "handoff: ..."`。在 PairFlow bootstrap 流程中明确：每次 submit → 立即 commit
-> 2. **服务端（submit.ts）**：`commit_hash` 校验不改（无法验证远程 git），但在 submit 返回的 response 中追加提示：`"reminder: commit handoff files and spec changes to git"`
-> 3. **模板（template.ts）**：submit 返回的 rules_summary 中新增 R015 规则：`"[R015] submit 后必须 git commit handoff 文件和文档变更"`
+> **服务端自动 commit**：AI 无法执行 shell 命令，commit 必须在服务端完成。
+> 1. submit 写入 handoff 文件后，服务端自动执行 `git add handoff/{wfId}/` + `git commit -m "handoff: {phase} r{round} — {identity}"`
+> 2. commit 失败不阻塞 submit（repo 可能不在 git 管理下），仅 log warning
+> 3. 若 AI 同时修改了 spec 文件（非 handoff），需额外机制处理——但当前 AI 没有写文件能力，handoff 是唯一产出物，自动 commit handoff 即可覆盖
 
 此问题为 **P0 阻塞级**——工作流产出物没有进入版本管理，等于没有产出。状态机跑得再完美，git log 为空就是空转。
