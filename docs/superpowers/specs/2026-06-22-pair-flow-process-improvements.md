@@ -503,3 +503,31 @@ npx tsx src/index.ts
 > 使用方应做的：在 PairFlow 工作流结束后（或定期），将 `handoff/` 目录纳入 git 管理。这不是自动化问题，是操作规范问题。
 
 此问题为 **P1**——handoff 产出完整但未纳入 git 是使用方运维问题，不阻塞 PairFlow 功能。服务端不应越界做 git 操作。
+
+---
+
+## 17. P0-28: handoff 文件落在 PairFlow 自身仓库而非接入项目目录
+
+### 场景
+
+`HANDOFF_DIR` 默认为相对路径 `"handoff"`。PairFlow server 从自身 repo 根目录启动，所有外部接入项目的 handoff 产出全部落在：
+
+```
+C:\code\loyayz\pair-flow-mcp\handoff/{workflow_id}/
+```
+
+而不是接入项目的目录里。外部项目使用 PairFlow 后，产出物留在 PairFlow 的仓库中——这显然是错的。
+
+虽然 `HANDOFF_DIR` 支持环境变量覆盖，但外部项目接入时不会记得设置。
+
+### 根因
+
+PairFlow 启动时不知道"接入项目的工作目录在哪"。`register` 工具接收 `supervisor` 和 `developer` 两个布尔值，没有任何字段让监督者告知"我们的项目在哪"。
+
+### 方案
+
+> **监督者注册后，server 主动告知并要求设置工作目录**：
+> 1. 监督者 `register` 成功后，server 在返回中附带当前 `handoff_dir` 的绝对路径：`"handoff_dir": "/abs/path/to/handoff"`
+> 2. 同时提示监督者：若不正确，调用 `set_work_dir` 工具传入项目根目录
+> 3. 新增 `set_work_dir` 工具（仅监督者，IDLE 阶段可用）：接收项目根目录绝对路径，更新 `HANDOFF_DIR` 指向 `{work_dir}/.pairflow-handoff/`
+> 4. 工作目录一旦设定，同一 workflow 内不可更改
