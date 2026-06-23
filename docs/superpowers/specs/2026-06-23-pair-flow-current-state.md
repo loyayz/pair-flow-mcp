@@ -2,7 +2,9 @@
 
 > 日期: 2026-06-23
 > 来源: 多轮真实双 AI 接入验证 + code-review
-> 仅保留 P0 级。P1/P2 问题另提需求单。
+> 仅保留 P0 级。P1/P2 问题见 `2026-06-23-pair-flow-p1-p2-backlog.md`
+>
+> **修改规则**：所有问题的讨论和决议直接修改本文档，原文档（`design.md`、`auto-flow-blockers.md`、`process-improvements.md`）保持不变。本文档是当前状态的唯一权威来源。
 
 ---
 

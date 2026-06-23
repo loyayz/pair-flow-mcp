@@ -3,6 +3,8 @@
 > 日期: 2026-06-23
 > 来源: 多轮真实双 AI 接入验证 + code-review + process-improvements spec
 > P0 问题见 `2026-06-23-pair-flow-current-state.md`
+>
+> **修改规则**：所有问题的讨论和决议直接修改本文档，原文档（`design.md`、`auto-flow-blockers.md`、`process-improvements.md`）保持不变。本文档是 P1/P2 问题的唯一权威来源。
 
 ---
 
