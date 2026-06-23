@@ -221,7 +221,7 @@ export function initImplementationPhase(state: PairFlowState, developerId: strin
     round: 1,
     turn: developerId,
     converged: false,
-    issues: [],
+    issues: state.issues.filter((i) => i.status !== "open"), // preserve escalated/deferred/resolved across phases
     last_submit_per_turn: lsp,
     current_lease: { token: null, holder: null, expires_at: null, grace_used: false },
     current_timeout: { ...state.current_timeout, active: true, started: now, expires: addMinutes(now, state.current_timeout.phase_config.implementation) },
@@ -243,7 +243,7 @@ export function initSummaryPhase(state: PairFlowState, nonSupervisorId: string):
     round: 1,
     turn: nonSupervisorId,
     converged: false,
-    issues: [],
+    issues: state.issues.filter((i) => i.status !== "open"), // preserve escalated/deferred/resolved across phases
     last_submit_per_turn: lsp,
     current_lease: { token: null, holder: null, expires_at: null, grace_used: false },
     current_timeout: { ...state.current_timeout, active: true, started: now, expires: addMinutes(now, state.current_timeout.phase_config.summary) },

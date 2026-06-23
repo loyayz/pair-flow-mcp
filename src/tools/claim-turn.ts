@@ -147,16 +147,24 @@ async function handleAdvance(state: PairFlowState, identity: string, args: Recor
   if (currentPhase === "implementation") {
     // P0-13: check deferred issues before advance
     const deferredIssues = state.issues.filter((i) => i.status === "deferred" && i.phase === currentPhase);
-    const noReasonDeferred = deferredIssues.filter((i) => !i.deferred_reason || i.deferred_reason.trim().length === 0);
-    if (noReasonDeferred.length > 0) {
-      return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: `cannot advance: ${noReasonDeferred.length} deferred issue(s) without reason`, deferred_issues: noReasonDeferred.map((i) => ({ id: i.id, topic: i.topic })) }) }], isError: true };
+    if (deferredIssues.length > 0) {
+      // deferred_reason may be null until defer tool is implemented — accept resolution as fallback
+      const noReasonDeferred = deferredIssues.filter((i) =>
+        (!i.deferred_reason || i.deferred_reason.trim().length === 0) &&
+        (!i.resolution || i.resolution.trim().length === 0)
+      );
+      if (noReasonDeferred.length > 0) {
+        return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: `cannot advance: ${noReasonDeferred.length} deferred issue(s) without reason`, deferred_issues: noReasonDeferred.map((i) => ({ id: i.id, topic: i.topic })) }) }], isError: true };
+      }
     }
     // Auto-escalate issues deferred across 2+ consecutive phases
     for (const di of deferredIssues) {
+      di.deferred_count += 1; // increment each advance while deferred
       if (di.deferred_count >= 2) {
         di.status = "escalated";
         di.escalated_at = new Date().toISOString();
         di.type = "P0"; // upgrade
+        di.deferred_count = 0; // reset after escalation
       }
     }
 
