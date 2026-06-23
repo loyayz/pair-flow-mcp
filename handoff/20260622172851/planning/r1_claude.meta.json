@@ -2,7 +2,5 @@
   "stance": null,
   "need_next_round": null,
   "new_issues": [],
-  "resolved_issue_ids": [
-    12
-  ]
+  "resolved_issue_ids": []
 }

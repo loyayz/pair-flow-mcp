@@ -145,6 +145,21 @@ async function handleAdvance(state: PairFlowState, identity: string, args: Recor
   }
 
   if (currentPhase === "implementation") {
+    // P0-13: check deferred issues before advance
+    const deferredIssues = state.issues.filter((i) => i.status === "deferred" && i.phase === currentPhase);
+    const noReasonDeferred = deferredIssues.filter((i) => !i.deferred_reason || i.deferred_reason.trim().length === 0);
+    if (noReasonDeferred.length > 0) {
+      return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: `cannot advance: ${noReasonDeferred.length} deferred issue(s) without reason`, deferred_issues: noReasonDeferred.map((i) => ({ id: i.id, topic: i.topic })) }) }], isError: true };
+    }
+    // Auto-escalate issues deferred across 2+ consecutive phases
+    for (const di of deferredIssues) {
+      if (di.deferred_count >= 2) {
+        di.status = "escalated";
+        di.escalated_at = new Date().toISOString();
+        di.type = "P0"; // upgrade
+      }
+    }
+
     // Multi-cycle: check planning draft for total cycles
     const totalCycles = state.workflow_id ? await extractCycleCount(state.workflow_id) : null;
     const currentCycle = state.dev_phase ?? 0;
@@ -168,6 +183,12 @@ async function handleAdvance(state: PairFlowState, identity: string, args: Recor
   }
 
   if (currentPhase === "summary") {
+    // P0-14: check open/deferred issues before SUMMARY→IDLE
+    const unresolved = state.issues.filter((i) => i.status === "open" || i.status === "deferred");
+    if (unresolved.length > 0) {
+      return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: `cannot advance to IDLE: ${unresolved.length} unresolved issue(s)`, unresolved_issues: unresolved.map((i) => ({ id: i.id, topic: i.topic, status: i.status })) }) }], isError: true };
+    }
+
     const next = initIdleState(state);
     await saveState(next);
     await logEvent("advance", { identity, from: "summary", to: "idle" });

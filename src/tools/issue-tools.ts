@@ -43,6 +43,7 @@ export async function createIssue(
       status: "open", positions: { [identity]: myPosition ?? "" },
       resolution: null, resolved_by: null, escalated_at: null,
       fix_review_cycles: 0, proposal: proposal ?? null, rationale: rationale ?? null,
+      deferred_reason: null, deferred_since_phase: null, deferred_count: 0,
     });
     await saveState(state);
     // Journal (§6 authorial storage)

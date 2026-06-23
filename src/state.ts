@@ -9,7 +9,7 @@ export type Phase = "idle" | "requirements" | "planning" | "implementation" | "s
 export type SubPhase = "coding" | "review" | "fix" | "blind_review" | null;
 export type PeerRole = "supervisor" | "peer";
 export type IssueType = "P0" | "P1" | "P2";
-export type IssueStatus = "open" | "resolved" | "escalated";
+export type IssueStatus = "open" | "resolved" | "escalated" | "deferred";
 export type ResolvedBy = "converged" | "supervisor_override" | "force_converge" | null;
 export type Stance = "agree" | "disagree" | "require_clarification" | null;
 
@@ -46,6 +46,9 @@ export interface Issue {
   fix_review_cycles: number;
   proposal: string | null;
   rationale: string | null;
+  deferred_reason: string | null;
+  deferred_since_phase: string | null;
+  deferred_count: number;
 }
 
 export interface HistoryEntry {

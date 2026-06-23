@@ -35,6 +35,15 @@ export async function waitForTurn(
   const initialPhase = initialState.phase;
   const initialTurn = initialState.turn;
 
+  // Both peers already registered and still in IDLE — no need to wait
+  if (initialState.phase === "idle" && initialState.peers.length >= 2) {
+    return {
+      content: [{ type: "text", text: JSON.stringify({
+        ok: true, turn: initialState.turn, phase: initialState.phase, round: initialState.round, waited_ms: 0, note: "both peers registered",
+      }) }],
+    };
+  }
+
   while (Date.now() - started < TIMEOUT_MS) {
     await sleep(POLL_INTERVAL_MS);
     const state = await loadState();

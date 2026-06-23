@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "workflow_id": null,
+  "next_issue_id": 1,
+  "phase": "idle",
+  "sub_phase": null,
+  "dev_phase": null,
+  "round": 1,
+  "turn": "idle",
+  "converged": false,
+  "peers": [
+    {
+      "identity": "a",
+      "role": "supervisor",
+      "is_developer": false,
+      "registered_at": "2026-06-23T01:40:08.623Z"
+    },
+    {
+      "identity": "b",
+      "role": "peer",
+      "is_developer": true,
+      "registered_at": "2026-06-23T01:40:08.640Z"
+    }
+  ],
+  "last_submit_per_turn": {},
+  "issues": [],
+  "history": [],
+  "pending_supervisor_review": false,
+  "blind_review_pending": false,
+  "current_lease": {
+    "token": null,
+    "holder": null,
+    "expires_at": null,
+    "grace_used": false
+  },
+  "current_timeout": {
+    "active": false,
+    "started": null,
+    "expires": null,
+    "phase_config": {
+      "requirements": 10,
+      "planning": 10,
+      "implementation": 60,
+      "summary": 30
+    }
+  }
+}

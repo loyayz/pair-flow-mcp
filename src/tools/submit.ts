@@ -107,13 +107,16 @@ export async function submit(
           phase: state.phase,
           round: state.round,
           status: "open",
-          positions: {},
+          positions: { [identity]: "" },
           resolution: null,
           resolved_by: null,
           escalated_at: null,
           fix_review_cycles: 0,
           proposal: null,
           rationale: null,
+          deferred_reason: null,
+          deferred_since_phase: null,
+          deferred_count: 0,
         });
         newIssueIds.push(issueId);
       }

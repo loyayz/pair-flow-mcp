@@ -1,0 +1,3 @@
+{"action":"create","timestamp":"2026-06-23T01:38:18.862Z","id":1,"type":"P1","topic":"test","raised_by":"claude"}
+{"action":"create","timestamp":"2026-06-23T01:38:18.881Z","id":2,"type":"P2","topic":"to close","raised_by":"claude"}
+{"action":"resolve","timestamp":"2026-06-23T01:38:18.895Z","id":2,"identity":"claude","resolution":"done"}

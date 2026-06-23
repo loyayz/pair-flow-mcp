@@ -45,7 +45,7 @@ export async function recoverState(): Promise<PairFlowState> {
             // Reconstruct issue if not present
             const exists = state.issues.find((i) => i.id === ni.id);
             if (!exists) {
-              state.issues.push({ id: ni.id ?? 0, type: ni.type ?? "P1", topic: ni.topic ?? "", description: ni.description ?? "", raised_by: ni.raised_by ?? "unknown", phase: state.phase, round: meta.round ?? state.round, status: "open", positions: {}, resolution: null, resolved_by: null, escalated_at: null, fix_review_cycles: 0, proposal: null, rationale: null });
+              state.issues.push({ id: ni.id ?? 0, type: ni.type ?? "P1", topic: ni.topic ?? "", description: ni.description ?? "", raised_by: ni.raised_by ?? "unknown", phase: state.phase, round: meta.round ?? state.round, status: "open", positions: {}, resolution: null, resolved_by: null, escalated_at: null, fix_review_cycles: 0, proposal: null, rationale: null, deferred_reason: null, deferred_since_phase: null, deferred_count: 0 });
             }
           }
         }
