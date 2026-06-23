@@ -430,3 +430,42 @@ P0-20 解决了"task 怎么传"的通道问题，P0-21 解决了"没 task 时拒
 ### 与 P1-25 的关系
 
 P1-25 是"行为越权"（做不该做的事），P1-25b 是"跳步"（该做的事没做全）。两者都是 AI 行动者模式压制了 PairFlow 角色分工的结果。
+
+---
+
+## 15. P0-26: 每次重启手动删除 .pairflow 绕过崩溃恢复——废弃 workflow 泛滥
+
+### 场景
+
+2026-06-23 双 AI 接入验证期间，因反复修复 bug，server 重启了约 12 次。每次重启的操作模式是：
+
+```bash
+rm -rf .pairflow    # 手动删状态
+npx tsx src/index.ts
+```
+
+结果：
+- handoff/ 下产生了 12 个废弃 workflow 目录（如 `20260623013816/`），每个只含 1-2 轮 submit，因 server 重启而被永久遗弃
+- §8 崩溃恢复机制（`initializeRecovery()` → `recoverState()`）从未被触发——因为我们手动删了 `.pairflow/state.json`，`loadState()` 读不到文件就返回 `defaultState()`，恢复路径走的是"无状态"分支而非"恢复"分支
+- 每次重启后两个 AI 重新 register，产生新的 `workflow_id`，旧 workflow 的手写产出（handoff 文件）留在磁盘上无人认领
+
+### 根因
+
+开发和调试阶段的操作习惯（`rm -rf .pairflow`）绕过了 §8 崩溃恢复机制。恢复机制设计是正确的——如果 `state.json` 存在，它会扫描 `handoff/` 找到最新 workflow、replay journal、恢复 lease timer。但我们每次都主动删除了 state.json。
+
+这不是代码 bug——是**操作规范的缺失**。开发者和运维者不知道"重启的正确方式是不删 `.pairflow`"。
+
+更深层：§8 恢复机制缺少一个"干净重启"入口。用户想要"放弃当前 workflow，开始全新 workflow"时，正确做法应该是 `SUMMARY → IDLE` 再重新 `advance`，而不是 `rm -rf .pairflow`。但前者需要走完完整流程，后者只需一行命令——后者太容易了。
+
+### 方案
+
+> **1. 操作规范**：
+> - 正常重启（不放弃 workflow）：直接启动 server，`initializeRecovery()` 自动恢复
+> - 放弃当前 workflow：先正常重启恢复状态 → `force_converge` → advance 到 SUMMARY → advance 到 IDLE → 重新 register
+> - **禁止**直接 `rm -rf .pairflow`——这会留下废弃 handoff 目录且绕过恢复机制
+>
+> **2. 清理工具**：新增 `scripts/clean.ts` 脚本，扫描 `handoff/` 下没有对应 `state.json` 中 `workflow_id` 的目录并清理。开发期间手动删除 `.pairflow` 后运行此脚本清理对应的废弃 handoff。
+>
+> **3. 服务端预警**：server 启动时若 `loadState()` 返回 `defaultState()`（即无 state.json），检查 `handoff/` 是否有未完成的 workflow 目录。若有 → log warning `"found orphaned handoff directories without state: [dirs]. run scripts/clean.ts to clean up"`。提醒运维者存在未清理的废弃数据。
+>
+> 此问题不阻塞功能——操作规范的文档化即可解决。清理脚本和服务端预警是防御性措施。
