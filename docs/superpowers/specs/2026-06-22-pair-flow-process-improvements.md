@@ -337,3 +337,58 @@ P0-20 解决了"task 怎么传"的通道问题，P0-21 解决了"没 task 时拒
 > ```
 
 此问题与 P0-21 互补：P0-21 是**服务端**防御（task 缺失→拒绝），P0-24 是**客户端**防御（task 内容错误→人类拦截）。两者缺一不可。
+
+---
+
+## 13. P1-25: 开发者行为越权——已知自己身份但行为上试图驱动流程
+
+### 场景
+
+2026-06-23 PLANNING 阶段。deepseek 注册为 peer/developer（非监督者）。以下行为序列记录了开发者越权：
+
+| # | 行为 | 正确做法 |
+|---|------|---------|
+| 1 | PLANNING 阶段 claude 已写 r1 计划，deepseek 不审阅反而另写一份 r2 计划 | 开发者应以审阅者立场 review claude 的计划（stance=agree/disagree），而非重复产出 |
+| 2 | 多次在 converged=true/turn=claude 时调用 claim_turn 试图 bypass turn 机制提交盲审 | claim_turn 只有在自己 turn 时才调用；turn=claude 时只应 wait_for_turn |
+| 3 | 告知用户"需要重启 server"来推进流程——这是监督者/运维的决策权 | 开发者不应替监督者做运维决策，只应等待 |
+| 4 | 主动说"推进到 IMPLEMENTATION"——推进阶段是监督者独有权限 | 开发者无权设定阶段目标，那是 task. goals 的一部分 |
+
+**这些行为的共性**：deepseek 的 `who_am_i` 返回 `{ identity: "deepseek", role: "peer", is_developer: true }`，即**认知层面知道自己是谁**，但行为层面仍然试图驱动流程、绕过限制、替监督者做决策。
+
+### 根因
+
+这与 P1-22（bootstrap 身份混淆——用错 header）不同。P1-22 是**技术层面的身份错误**（header 设错了）。P1-25 是**行为层面的角色越界**：identity 设置正确，但行为模式仍然是"我来推进这件事"而非"我等轮到我了做我该做的事"。
+
+深层原因：
+
+1. **AI 默认是"行动者"**：AI 助手的默认行为模式是主动推进任务、解决问题。但 PairFlow 的 developer 角色要求的是**被动等待 + 在自己的 turn 内高质量产出**。这两种行为模式冲突。
+2. **收敛/盲审阶段的 turn 机制不可靠**：P0-15 bug #2（收敛后 claim_turn 返回 OK 但不切换 turn）客观上鼓励了开发者 bypass——如果 wait_for_turn 每次 2s 返回、claim_turn 又"成功"了，开发者自然倾向于 claim→submit 绕过去。
+3. **角色边界只有文档约束，无服务端强制**：claim_turn 在 converged 时不应允许 peer 调用——这应该在服务端拒绝。但当前 claim_turn 的 converged 分支允许任何人调用。
+
+### 方案
+
+> **双层修复**：
+> 1. **服务端**：claim_turn 在 converged=true 时，peer（非监督者）调用应返回错误 `"phase converged — wait for supervisor to advance"`，而非返回 OK。只有监督者可以在 converged 时 claim_turn 做 blind review 收尾或 advance。
+> 2. **客户端**：developer 角色的 CLAUDE.md 应写入明确的行为约束：
+>    ```markdown
+>    ## Developer 角色行为约束
+>    - 只在自己的 turn 内行动（get_state 检查 turn === my_identity）
+>    - 永远不调用 claim_turn(advance) —— advance 是监督者权限
+>    - 永远不调用 force_converge —— 监督者权限
+>    - converged=true 时不做任何操作，只 wait_for_turn
+>    - 对方已产出后不做重复产出——以审阅者立场 review
+>    - 不替监督者做决策（如"需要重启 server"、"推进到下一阶段"）
+>    ```
+
+与 P1-22 的关系：
+
+| | P1-22 | P1-25 |
+|---|------|------|
+| 层面 | 技术层——用错了 X-AI-Identity header | 行为层——身份设对了但行为越权 |
+| 症状 | 用 claude 身份调 MCP，claim_turn 被拒 | 以 deepseek 身份 claim_turn 绕过 turn 机制 |
+| 根因 | 产品名惯性，who_am_i 未成习惯 | 行动者模式惯性，角色边界无强制 |
+| 修法 | bootstrap checklist + P0-19 通知辅助 | 服务端 converged 时拒绝 peer claim + CLAUDE.md 行为约束 |
+
+### 教训
+
+**"知道我是谁"和"按我是谁行动"之间有一道鸿沟。** 前者靠 `who_am_i` 返回的 JSON 就能确认，后者需要服务端强制 + 文档约束 + 自我检查三者共同维持。在服务端强制到位之前，developer AI 的 CLAUDE.md 中必须有醒目的行为约束。
