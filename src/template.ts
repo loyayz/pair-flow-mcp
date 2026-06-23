@@ -72,7 +72,7 @@ export function getTemplate(state: PairFlowState): string {
   }
 
   if (isImplementationCoding) {
-    return `## 实现\n\n<代码实现描述>\n\n## 收敛状态\n- 本轮新增 issue：P0：<N>，P1：<N>，P2：<N>\n- 本轮关闭 issue：<IDs>\n- 对对方上一轮产出的立场：null（产出方）\n- 是否需要下一轮：null`;
+    return taskSection(state) + `## 实现\n\n<代码实现描述>\n\n## 开发者自审\n- 启动 server 并以双方身份走完整流程：register → advance → claim_turn → submit×2 → converge → blind_review → advance\n- 确认无阻塞性错误\n- 关键步骤返回：<register 结果> | <submit 结果> | <converge 状态>\n- 测试结果：<vitest / 端到端>\n\n## 收敛状态\n- 本轮新增 issue：P0：<N>，P1：<N>，P2：<N>\n- 本轮关闭 issue：<IDs>\n- 对对方上一轮产出的立场：null（产出方）\n- 是否需要下一轮：null`;
   }
 
   if (isImplementationFix) {
@@ -80,7 +80,7 @@ export function getTemplate(state: PairFlowState): string {
   }
 
   if (isImplementationReview) {
-    return `## 审查\n\n<code review findings>\n\n## 收敛状态\n- stance: <agree/disagree/require_clarification>\n- need_next_round: <true/false>\n- 对对方上一轮产出的立场：<stance>\n- 本轮新增 issue：P0：<N>，P1：<N>，P2：<N>\n- 本轮关闭 issue：<IDs>`;
+    return `## 审查\n\n<code review findings>\n\n## 独立测试\n- 端到端场景（开发者测试套件未覆盖的跨工具/跨轮/跨 phase 完整路径）：<场景 + 结果>\n- 对抗性场景（并发冲突 / 异常输入 / 超时边界 / 状态冲突 中至少选 1）：<场景 + 结果>\n\n## 收敛状态\n- stance: <agree/disagree/require_clarification>\n- need_next_round: <true/false>\n- 对对方上一轮产出的立场：<stance>\n- 本轮新增 issue：P0：<N>，P1：<N>，P2：<N>\n- 本轮关闭 issue：<IDs>`;
   }
 
   if (phase === "summary") {
