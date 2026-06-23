@@ -45,6 +45,7 @@ async function handleTurn(state: PairFlowState, identity: string): Promise<CallT
     if (!isPeer) {
       return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "identity not registered" }) }], isError: true };
     }
+    state.turn = identity;
     // Allow — bypass isCurrentHolder check below
   } else if (!isCurrentHolder(state, identity)) {
     return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: `not your turn — current turn: ${state.turn}` }) }], isError: true };

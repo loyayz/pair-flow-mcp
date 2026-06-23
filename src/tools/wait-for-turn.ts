@@ -8,7 +8,6 @@ const POLL_INTERVAL_MS = 2000;
 const TIMEOUT_MS = 60_000;
 
 export async function waitForTurn(
-  _args: Record<string, unknown>,
   extra: RequestHandlerExtra<ServerRequest, ServerNotification>
 ): Promise<CallToolResult> {
   const identity = parseIdentity(extra.requestInfo?.headers);
@@ -49,8 +48,18 @@ export async function waitForTurn(
       };
     }
 
-    // Phase changed (converged, advanced, etc.)
-    if (state.phase !== initialPhase || state.converged) {
+    // Both peers now registered (was waiting for second peer)
+    if (initialState.peers.length < 2 && state.peers.length >= 2) {
+      return {
+        content: [{ type: "text", text: JSON.stringify({
+          ok: true, turn: state.turn, phase: state.phase, round: state.round,
+          waited_ms: Date.now() - started, note: "both peers registered",
+        }) }],
+      };
+    }
+
+    // Phase changed (converged, advanced, etc.) — but not during blind_review_pending
+    if (state.phase !== initialPhase || (state.converged && !state.blind_review_pending)) {
       return {
         content: [{ type: "text", text: JSON.stringify({
           ok: true, turn: state.turn, phase: state.phase, round: state.round,
