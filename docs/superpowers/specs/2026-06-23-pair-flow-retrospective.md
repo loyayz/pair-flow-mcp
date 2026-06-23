@@ -220,8 +220,62 @@ IMPLEMENTATION coding 是效率最高的阶段——开发者拿到 turn，按 P
 
 ---
 
-## 七、结论
+## 七、监督者补充观察
+
+### 7.1 关于"给非监督者有限度的推进能力"
+
+开发者（§6.2）建议非监督者在监督者长时间离线后获得有限 advance 权。**明确回复：不允许。**
+
+理由：
+
+1. **advance 是 PairFlow 最核心的控制闸门**。监督者的 advance 不是"权限"问题，而是"质量关卡"——advance 前监督者必须检查 deferred issue 列表（P0-13）、确认所有 P0 已处理、检查双方已充分讨论。把这个关卡交给非监督者等于拆除 PairFlow 唯一的强制审阅节点。
+2. **"监督者离线"是运维问题，不是流程问题**。如果监督者离线 5 分钟就自动转交 advance 权，那么在监督者真正需要时间审查时（比如阅读 2000 行的 IMPLEMENTATION diff），系统也会误判为"离线"而放行。
+3. **非监督者的角色定义就是执行者**——产出、回应 review、修复问题。推进是监督者的职责。如果非监督者也能 advance，那么监督者这个角色就没有存在意义了。
+
+如果监督者确实长时间离线：这是使用方运维决策问题（换个监督者、重启 session、或使用 force_converge），不应编码到协议层。
+
+### 7.2 每次运行 vitest 时服务都会挂掉
+
+**现象**：本 session 中多次观察到 `npx vitest run` 导致 PairFlow 服务崩溃（端口 3100 进程消失）。开发者在 Cycle 0 自审时提到"29 tests passed"，但未注意到测试套件的 setup/teardown 与运行中的服务冲突。
+
+**推测根因**：测试套件（`src/__tests__/`）中部分测试启动了临时 server 实例，与主服务争抢端口或共享 `.pairflow/` 状态目录。测试清理逻辑（`taskkill //F //PID`）可能误杀了主服务进程。
+
+**影响**：
+- 每次验证代码正确性都必须重启服务，打断了协作流
+- 开发者在 coding 阶段运行测试后服务挂掉，自己可能不知道（服务在他的环境下运行），但监督者这边的连接断开了
+- 进一步加剧了状态丢失问题——服务挂掉→重启→崩溃恢复→状态残缺
+
+**建议**：测试套件使用独立的 `.pairflow-test/` 目录和独立端口，杜绝与主服务的任何耦合。
+
+### 7.3 IMPLEMENTATION 之前无 git commit、也未完善本轮需求单
+
+**现象**：整个 REQUIREMENTS 和 PLANNING 阶段（5 rounds + 2 blind reviews），没有任何 git commit。首笔 commit（Cycle 0: `9d73558`）直到 IMPLEMENTATION coding 阶段才出现。同时，`p1-p2-backlog.md` 中本迭代优先级表（§三）未在 REQUIREMENTS 阶段更新——rules_catalog 仍标注为"本迭代"但实际已延后。
+
+**问题**：
+
+1. **文档产出与代码脱节**。REQUIREMENTS 和 PLANNING 的分析、计划都只存在于 `handoff/{wfId}/` 中，是 PairFlow 内部归档。Git 历史只记录了代码实现，看不到需求讨论和方案决策的演进轨迹。
+
+2. **handoff 是运行时产物，git 是版本资产**。站在项目长期维护的角度，handoff 可能被清理、被 crash、被 `.gitignore`（当前确实被 ignore），而 git log 会一直保留。如果 PLANNING 中确定了"2 cycles，Cycle 0 哪些文件"，这个决策应该以某种形式落在 git 中——不论是更新 spec、写 ADR、还是 commit handoff 文件本身。
+
+3. **backlog 文档维护滞后**。REQUIREMENTS 阶段已确认 rules_catalog 不在本迭代范围，但 backlog 优先级表未同步更新。这给后续读者（或恢复后的 AI）传递了过时信息。
+
+**建议**：
+- PLANNING 收敛后将实施计划摘要写回 spec/backlog 文档并 commit
+- 或在 REQUIREMENTS 收敛后 commit handoff 中的 meta.json + journal，将分析成果纳入版本管理
+- 至少在每个 phase 收敛后确认相关文档已更新（这正是"文档更新确认"的设计初衷，但本 session 中双方均未严格执行）
+
+## 八、结论
 
 首次完整 PairFlow 协作证明了流程的可行性——双方在结构化的 5 阶段框架内完成了从需求分析到代码交付的完整闭环。但状态机的韧性是当前最大短板：每次状态丢失导致 8-12 round 的恢复开销，严重侵蚀协作效率。
 
-**最优先事项**：崩溃恢复字段补全 + submit.ts 文件命名顺序修复 + lease 超时安全网。这三项解决后，PairFlow 的稳定性将从"需要人工干预"提升到"可自愈"。
+**最优先事项**：
+
+| # | 项 | 来源 |
+|---|-----|------|
+| 1 | 测试套件隔离——独立端口 + 独立 `.pairflow-test/` 目录 | §7.2 |
+| 2 | 崩溃恢复补全 6 个字段 | §2.2 |
+| 3 | submit.ts 文件命名顺序修复 | §2.5 |
+| 4 | lease 超时安全网（phase_config 缺失时默认 30min） | §2.1 |
+| 5 | REQUIREMENTS/PLANNING 收敛后 commit 文档变更 | §7.3 |
+
+这五项解决后，PairFlow 的稳定性将从"需要人工干预"提升到"可自愈"，且 git 历史将完整反映从需求到代码的决策链路。
