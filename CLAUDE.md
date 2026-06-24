@@ -17,7 +17,8 @@ Node.js / TypeScript · `@modelcontextprotocol/sdk`（HTTP Streamable）· `asyn
 - **运行时 vs 归档分离**：`.pairflow/` 存放运行时状态（gitignore，崩溃可重建），`handoff/{workflow_id}/` 存放归档产出（纳入版本管理，meta.json + journal 为权威来源）
 - **身份判定**：HTTP header `X-AI-Identity` 自报身份，PairFlow 不预设"谁是谁"
 - **状态机**：`IDLE → REQUIREMENTS → PLANNING → IMPLEMENTATION → SUMMARY → IDLE`，进程级 mutex 保护所有状态变更
-- **开发阶段**：按 Phase 0→4 顺序推进，每 Phase 有硬性判定标准（见 spec §14）。当前处于 Phase 0，代码尚未开始
+- **收敛前置盲审**（P0-3 已修复）：双方 agree → `blind_review_pending=true` → 双方各自独立盲审 → 盲审无新 P0/P1 → `converged=true` → 监督者 advance。盲审是收敛的前置条件，不再是后置步骤。
+- **IMPLEMENTATION 收敛**（P0-1 已修复）：仅依赖 review 方 `stance=agree + need_next_round=false`。coding 产出方 stance=null 不参与收敛判定。
 
 ## 命令
 
@@ -60,7 +61,8 @@ curl http://localhost:3100/health
 - **只在自己的 turn 内行动**（get_state 检查 turn === identity）
 - **永远不调 claim_turn(advance)** —— advance 是监督者权限
 - **永远不调 force_converge** —— 监督者权限
-- converged=true 时不做任何操作，只 wait_for_turn
+- `blind_review_pending=true` 时：调用 claim_turn → 获取盲审模板 → 独立审视 spec 全文 → submit（`blind_review: true`）
+- `converged=true` 时不做任何操作，只 wait_for_turn（等待监督者 advance）
 - 对方已产出后不做重复产出——以审阅者立场 review
 - 不替监督者做运维决策（如"重启 server"）
 
@@ -73,13 +75,48 @@ curl http://localhost:3100/health
 
 ## wait_for_turn 行为规范
 
-wait_for_turn 返回 `{ turn, phase, round, waited_ms, note }`。note 类型和行为对照：
+wait_for_turn 返回 `{ turn, phase, round, waited_ms, note }`。超时 600s。note 类型和行为对照：
 
 | note | 含义 | AI 行为 |
 |------|------|---------|
 | `"both peers registered"` | 双方已注册，等待 advance | 继续 wait_for_turn |
-| `"timeout"` (60s) | 等待超时 | 继续 wait_for_turn（循环） |
-| `"phase changed or converged before turn"` | 阶段变更或收敛 | 检查 get_state → 如果 turn=自己则 claim_turn，否则继续 wait |
+| `"timeout"` (600s) | 等待超时 | 继续 wait_for_turn（循环） |
+| `"phase changed or converged before turn"` | 阶段变更、收敛或盲审开始 | 检查 get_state → 如果 turn=自己或 blind_review_pending=true 则 claim_turn，否则继续 wait |
+| `"recovered — re-register required"` | 崩溃恢复，需重新注册 | 调用 register 重新确认在线状态 |
+| `"converged — waiting for supervisor to advance"` | 阶段已收敛，等待监督者 | 继续 wait_for_turn（非监督者不主动 advance） |
 | 无 note（turn=自己） | turn 已切换到调用方 | claim_turn → 开始工作 |
 
 标准循环模式：`while (turn !== my_identity) { wait_for_turn() }`
+
+## 盲审流程（收敛前置）
+
+盲审是收敛的**前置条件**（P0-3 已修复），不再是收敛后的额外步骤：
+
+```
+双方 submit agree + need_next_round=false + 无新增 P0/P1
+  → blind_review_pending=true（converged 仍为 false）
+  → 双方各自 claim_turn（盲审期间任何已注册 peer 可 claim）
+  → getTemplate 返回盲审模板（逐节审视 spec 全文）
+  → submit（blind_review: true, stance=null, need_next_round=null）
+  → 双方盲审无新问题 → converged=true + blind_review_pending=false
+  → turn 释放给监督者 → 监督者 advance
+```
+
+关键参数：
+- 盲审 submit：`blind_review: true`, `stance: null`, `need_next_round: null`
+- 盲审模板自动触发条件：`blind_review_pending=true`（不再依赖 `sub_phase === "blind_review"`）
+- 盲审 claim_turn：`blind_review_pending=true` 时任何已注册 peer 均可 claim，绕过正常 turn 检查
+
+## 收敛模型
+
+各阶段收敛条件：
+
+| 阶段 | 收敛条件 |
+|------|---------|
+| REQUIREMENTS | 双方无新增 P0/P1 + 无 open P0 → `blind_review_pending=true` |
+| PLANNING | 同上 |
+| IMPLEMENTATION | review 方 `stance=agree + need_next_round=false` + 无 open P0/escalated → `blind_review_pending=true` |
+| SUMMARY | 同上 |
+| 盲审后 | 双方盲审无新 issue → `converged=true` |
+
+IMPLEMENTATION 收敛**仅依赖 review 方**（P0-1 已修复）——coding 产出方 stance=null 不参与判定。
