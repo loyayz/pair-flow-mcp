@@ -11,9 +11,9 @@
 | 级别 | 已实现且验证通过 | 未实现/待实现 | 实现但存在问题 | 新发现 |
 |------|:---:|:---:|:---:|:---:|
 | P0 | 14 | 2 | 0 | 0 |
-| P1 | 4 | 5 | 1 | 2 |
-| P2 | 2 | 5 | 0 | 2 |
-| **合计** | **20** | **12** | **1** | **4** |
+| P1 | 4 | 6 | 1 | 2 |
+| P2 | 2 | 6 | 0 | 3 |
+| **合计** | **20** | **14** | **1** | **5** |
 
 ---
 
@@ -139,6 +139,14 @@
 - **当前状态**: `src/template.ts:15-30` rulesCatalog仅14条。retro-1 §5.1确认"编码规范工具"未实现
 - **建议**: 扩展catalog至覆盖所有spec章节（§1-§16），实现覆盖率lint脚本
 
+#### P1-F: meta.json 不存 task 字段——崩溃恢复丢失任务上下文
+
+- **来源**: claude r2 审阅补充发现 + 本次代码库验证
+- **严重程度**: P1 — 崩溃恢复后 state.json 丢失时 task 无法从 handoff 恢复
+- **代码位置**: `src/tools/submit.ts:280-293` — meta.json 写入不包含 task 字段
+- **说明**: retro-2 §4.1 已记录"task 完整保留"（因为 restore 了 state.json 而非丢失），但如果 state.json 被删除，recoverState() 从 handoff 重建后 task=null——reconstructFromHandoff() 没有恢复 task 的逻辑
+- **建议**: meta.json 新增 `task` 字段存储当前任务快照，crash-recovery.ts 的 reconstructFromHandoff() 从 meta.json 恢复 task
+
 ### 2.3 P2 级（次要）
 
 #### P2-A: advance_checklist的"验证重点"来源未实现
@@ -172,6 +180,14 @@
 - **代码位置**: `src/tools/claim-turn.ts:170-171`: `const totalCycles = ...; if (totalCycles !== null && ...)`
 - **说明**: 若handoff/planning不可读导致`extractCycleCount`返回null，则跳过cycle check直接advance到SUMMARY(L184-189)。这意味着PLANNING中定义的循环总数在handoff不可用时被忽略
 - **建议**: totalCycles=null时发出警告，而非静默推进
+
+#### P2-F: advance 前 issue 拦截仅 SUMMARY→IDLE 有——其他 phase 缺失
+
+- **来源**: claude r2 审阅补充发现 + 本次代码库验证
+- **严重程度**: P2 — 其他 phase advance 可能遗留未处理 issue
+- **代码位置**: `src/tools/claim-turn.ts:193-196` — 仅 SUMMARY→IDLE 检查 unresolved issues
+- **说明**: REQUIREMENTS→PLANNING (L124-133)、PLANNING→IMPLEMENTATION (L135-144)、IMPLEMENTATION→SUMMARY (L146-189) 均无此检查。不过各 phase advance 前已有 converged 前置条件（需无 open P0），实际风险较低
+- **建议**: 在各 phase advance 入口加 warning（非 hard reject），提醒监督者存在 open P1/P2
 
 ---
 
