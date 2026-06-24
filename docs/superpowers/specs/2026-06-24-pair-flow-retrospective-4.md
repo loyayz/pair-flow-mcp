@@ -3,7 +3,7 @@
 > 日期: 2026-06-24
 > 触发: Session 3 代码实现后的首次重启验证
 > 发现: `require_re_register` 机制的 60s 窗口误判
-> 产出: 1 commit (`551e60c`)
+> 产出: 2 commits (`551e60c` + `b8690c0`)
 
 ---
 
@@ -78,14 +78,50 @@ Session 3 实现了 6 项关键缺陷修复（commit `9fb778e`），其中包括
 
 崩溃恢复写入的 `registered_at` 表示"peer 身份被恢复到 state 中的时间"，而非"peer 确认在线的时间"。前者是数据恢复行为，后者是协议行为——不应共享同一个语义。
 
-### 4.2 60 秒窗口是 fragile 的
+### 4.2 修复验证——epoch 方案自身暴露了第二个问题
 
-用时间窗口区分"新注册"和"旧注册"本身就脆弱。更 robust 的方案：
+epoch 修复（`551e60c`）部署后，立即进行了第二次重启验证：
 
-- 用显式的枚举值标记状态（`"recovered" | actual_time_string`）
-- 或用单独的 `re_registered: boolean` 字段跟踪每方是否已重新注册
+```
+1. 服务重启 + crash recovery → peers registered_at = epoch
+2. claude 调用 register → re_register: true, all_re_registered: false ✅
+3. deepseek 调用 register → re_register: true, all_re_registered: false ❌
+```
 
-但 epoch 方案已足够解决当前问题——它把"恢复时间戳"和"注册时间戳"彻底区分开来。
+`all_re_registered` 仍为 false，但双方都已调用 register。查看 state：
+
+```json
+{
+  "require_re_register": true,
+  "peers": [
+    { "identity": "claude",   "registered_at": "2026-06-24T03:20:20.833Z" },
+    { "identity": "deepseek", "registered_at": "2026-06-24T03:21:47.861Z" }
+  ]
+}
+```
+
+双方 `registered_at` 都已更新为非 epoch 值——但 register.ts 中的检测逻辑**仍是 60s 时间窗口**，而非 epoch 哨兵检查。
+
+根因：第一次修复只改了 crash-recovery.ts（写入侧），未同步修改 register.ts（读取侧）。register.ts 仍用 `(Date.now() - t) < 60_000` 判断，而两次 register 间隔 87 秒 > 60 秒 → claude 被窗口排除 → allReRegistered = false。
+
+**这不是窗口参数调大能解决的问题**——任何固定时间窗口都会在某个间隔下失效。正确方案是 register.ts 和 crash-recovery.ts 使用同一个哨兵值：
+
+```diff
+// register.ts
+- const allReRegistered = state.peers.every((p) => {
+-   const t = new Date(p.registered_at).getTime();
+-   const nowMs = Date.now();
+-   return (nowMs - t) < 60_000;
+- });
++ const EPOCH = "1970-01-01T00:00:00.000Z";
++ const allReRegistered = state.peers.every((p) => p.registered_at !== EPOCH);
+```
+
+**commit `b8690c0`**：彻底移除 60s 时间窗口，读写两侧统一使用 epoch 哨兵。
+
+### 4.3 教训：写入侧和读取侧的约定必须同步
+
+一个字段的语义由写入侧定义，但由读取侧解释。修改写入侧（crash-recovery.ts 写 epoch）后，必须同步修改读取侧（register.ts 读 epoch）。只改一侧，另一侧仍用旧逻辑——这是分布式系统中"读写不一致"的经典模式，在单进程单文件中同样存在。
 
 ### 4.3 改进项自身的 bug 需要实战发现
 
@@ -97,4 +133,9 @@ Session 3 实现了 6 项关键缺陷修复（commit `9fb778e`），其中包括
 
 ## 五、结论
 
-一次实战验证发现一个 bug。`require_re_register` 机制的设计思路正确，但 60s 窗口的时间源选择错误。修复后，恢复的 peers 必须真正调用 register 才能继续参与流程——这正是"幽灵注册"问题的解决方案。
+一次实战验证发现**两个连锁 bug**：
+
+1. **写入侧时间源错误**（`551e60c`）：恢复时写入当前时间，与真注册无法区分 → 改用 epoch
+2. **读取侧逻辑未同步**（`b8690c0`）：修复了写入侧但遗留 60s 窗口 → 彻底改用 epoch 哨兵
+
+`require_re_register` 机制经过两次重启验证后确认有效。epoch 哨兵方案比时间窗口更简单、更可靠——它把"是否已注册"变成了布尔命题而非时间算术。
