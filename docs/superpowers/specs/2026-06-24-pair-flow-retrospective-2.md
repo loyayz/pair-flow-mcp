@@ -2,9 +2,9 @@
 
 > 日期: 2026-06-24
 > 协作双方: claude (监督者+评审者) × deepseek (非监督者+开发者)
-> 任务: 实现 retrospective §四 全部改进项（10项 + 盲审3项P2）
-> 产出: REQUIREMENTS 共识 + PLANNING 方案（IMPLEMENTATION 未执行）
-> 视角: 监督者视角
+> 任务: 实现 2026-06-23-pair-flow-retrospective.md §四 全部改进项（10+3项）
+> 产出: 无代码 commit（IMPLEMENTATION 阶段被跳过）
+> 视角: §一~七为非监督者+开发者视角
 
 ---
 
@@ -13,193 +13,219 @@
 ### 整体流程
 
 ```
-IDLE → REQUIREMENTS (4 rounds → converge → blind review ✅)
-     → PLANNING (3 rounds → force_converge → blind review → advance)
-     → IMPLEMENTATION (coding → [服务重启] → 状态损坏 → force_converge → 跳过)
-     → SUMMARY (1 round → converge → IDLE)
+IDLE → REQUIREMENTS (4 rounds → converge → blind review)
+     → PLANNING (3 rounds → converge, force_converge → 跳过盲审)
+     → [服务重启 + 崩溃恢复, force_converge ×2]
+     → SUMMARY (2 rounds)
+     → IDLE
 ```
 
-完整走通了 4 阶段状态机（IMPLEMENTATION 只在流程上经过但未产生代码）。REQUIREMENTS 和 PLANNING 的双向审阅机制运作良好。
+流程走通了 4 个阶段（IDLE→REQUIREMENTS→PLANNING→SUMMARY→IDLE），但 IMPLEMENTATION 阶段被完全跳过——崩溃恢复后监督者通过 force_converge 直接推进到 SUMMARY。
 
 ### 关键数据
 
-| 指标 | 本次 | 首次 session |
-|------|:---:|:---:|
-| 总 round 数 | ~11（含盲审） | ~15（含重走） |
-| 状态丢失次数 | 1 | 4 |
-| force_converge 使用 | 3 次 | 5 次 |
-| 盲审僵局 | 0 | 3 |
-| 产出 commit | 0 | 2 |
-| 测试通过 | 未涉及 | 29/29 |
-
-force_converge 从 5 次降到 3 次，盲审僵局从 3 次降到 0——流程在改善。
-
-### force_converge 使用明细
-
-**首次 session（5 次）**：
-
-| # | 阶段 | 原因 | 触发场景 |
-|---|------|------|---------|
-| 1 | REQUIREMENTS | 盲审僵局 | 收敛后开发者持续提交常规 review（stance=agree）而非 `blind_review=true`，round 递增但不消耗 blind_review_pending |
-| 2 | REQUIREMENTS | 盲审僵局 | 同上——AI 不理解隐式的 blind_review 约定 |
-| 3 | PLANNING | 盲审僵局 | 同上——`next` 字段指引到 claim_turn 但未提示 blind_review 参数 |
-| 4 | IMPLEMENTATION | 状态丢失 | state.json 被覆盖为 defaultState，需快进恢复 |
-| 5 | IMPLEMENTATION | 状态丢失 | 同上——多次丢失后 force_converge 加速推进 |
-
-**特点**：5 次中 3 次是盲审僵局（AI 不理解 blind_review 参数），2 次是状态丢失恢复。根源在盲审指引缺失 + 状态机脆弱。
-
-**本次 session（3 次）**：
-
-| # | 阶段 | 原因 | 触发场景 |
-|---|------|------|---------|
-| 1 | PLANNING | agree+agree 未收敛 | 双方均提交 stance=agree + need_next_round=false，但 converged 未触发（§2.1） |
-| 2 | IMPLEMENTATION | 崩溃恢复损坏 | 服务重启后 turn 从 developer 变为 reviewer、sub_phase 仍为 coding（§2.2） |
-| 3 | SUMMARY | 跳过盲审 | SUMMARY 收敛后 blind_review_pending=true，force_converge 跳过 |
-
-**特点**：3 次原因各不相同——收敛逻辑 bug、崩溃恢复字段缺失、盲审跳过。盲审僵局（首次 3 次）本次为零，说明 `next` 字段和双方经验积累在起作用。但 1 次 PLANNING 收敛失败和 1 次崩溃恢复损坏是**新增类型**——老问题解决了，新问题冒出来。
-
-**趋势**：force_converge 的使用从"反复的同一类僵局"转变为"每次都是不同的问题"。这意味着 PairFlow 的常见问题在收敛，边缘问题在暴露。
+| 指标 | 值 |
+|------|-----|
+| 总 round 数 | 11（含盲审） |
+| 状态丢失/异常 | 1 次服务重启 + 崩溃恢复 |
+| force_converge 使用 | 3 次（PLANNING、IMPLEMENTATION、SUMMARY） |
+| 盲审 | REQUIREMENTS 正常完成，PLANNING 被跳过 |
+| 产出 issue 总数 | 12（全部 resolved，全部 force_converge） |
+| wait_for_turn 总等待时间 | ~4 分钟（~6 次超时/等待） |
+| 产出 commit | 0 |
 
 ---
 
-## 二、遇到的问题
+## 二、阶段详述
 
-### 2.1 双方 agree 但未自动收敛（严重程度：P1）
+### 2.1 REQUIREMENTS（4 rounds + 盲审）
 
-**现象**：PLANNING 阶段 round 2，deepseek 提交 `stance=agree, need_next_round=false`，我接着也提交 `stance=agree, need_next_round=false`。预期收敛，实际 `converged=false`，round 从 2 升到 3。
+| Round | 产出方 | 内容 |
+|:---:|------|------|
+| R1 | deepseek | 需求分析：8 项改进，分 Batch A/B，实现顺序 `#5→#6→#1→#4→#3→#2→#8→#7` |
+| R2 | claude | 审阅：6 个问题（P1×2: 顺序矛盾/#1 方案不精确、P1: recovered flag bug、P2×3: 文件名兼容/Task 兼容/测试策略） |
+| R3 | deepseek | 回应：全部 agree，修正顺序和方案，扩展至 10 项 |
+| R4 | claude | 确认：agree，所有 issue resolved，建议推进 |
+| 盲审 | 双方 | deepseek 发现 3 项 P2（§五编号缺失、测试隔离验证、文档 commit 流程） |
 
-**对比首次 session**：首次 session 的 REQUIREMENTS 和 PLANNING 收敛正常。本次 PLANNING 收敛失败的原因待查——推测与 round 计数或 `last_submit_per_turn` 在双方提交时序上的处理有关。
+**评价**：REQUIREMENTS 是最高效的阶段。双方快速对齐，Template + next 字段指引明确。盲审发现了 3 项常规审阅遗漏的 P2 问题——盲审机制发挥了设计意图。
 
-**临时方案**：`force_converge` 跳过。代价是跳过了盲审流程。
+### 2.2 PLANNING（3 rounds，盲审被跳过）
 
-### 2.2 服务重启后状态再次损坏（严重程度：P0）
+| Round | 产出方 | 内容 |
+|:---:|------|------|
+| R1 | claude | 实施方案：2-cycle 拆分，每项精确到代码行，15 测试用例 |
+| R2 | deepseek | 审阅：4 个反馈（saveState 描述不准确、盲审模板重叠、wasRecovered 处理、执行顺序声明），stance=agree |
+| R3 | claude | 确认：全部 agree |
+| — | claude | **force_converge** 解决 4 个 P2，跳过盲审 |
 
-**现象**：IMPLEMENTATION coding 阶段等待开发者（deepseek）时停止并重启服务。恢复后：
-- `turn` 从 deepseek 变为 claude（评审者拿到 coding 的 turn——角色错位）
-- `dev_phase` 仍为 0，但 `sub_phase` 仍为 coding
-- `findLatestWorkflowId` 评分算法可能选择了错误的 workflow
-- 多个已 resolve 的 issue 的 `raised_by` 变为 "unknown"，`phase` 变为 "implementation"
+**评价**：PLANNING 产出质量高（代码级方案）。但 force_converge 跳过了盲审——双方没有机会独立审视方案的完整性。这是 force_converge 被当作"流程快捷键"使用的信号。
 
-**影响**：必须使用两次 `force_converge` 才能退出 IMPLEMENTATION（一次跳过 coding→review，一次跳到 SUMMARY）。整个 IMPLEMENTATION 的代码产出为零。
+### 2.3 IMPLEMENTATION（0 rounds，被跳过）
 
-**根因**：retrospective-1 §2.2 列出的 6 个缺失字段（sub_phase、dev_phase、last_submit_per_turn、phase_config、issue status、raised_by）仍然缺失——本次改进项恰好要修复这些问题，但在修复之前被它绊倒了。这是一个"医生生病"的讽刺场景。
+**发生了什么**：
 
-### 2.3 advance 返回的 next 在 IMPLEMENTATION 阶段不准确（严重程度：P2）
+1. claude advance 到 IMPLEMENTATION（`dev_phase=0`）
+2. 服务重启（原因未明确——可能与 vitest 运行冲突，参见 retrospective-1 §7.2）
+3. 崩溃恢复从 handoff 重建状态：`phase=implementation`
+4. 恢复后的 peers 来自 handoff **但 deepseek 未重新调用 register**
+5. claude 使用 **force_converge** 跳过 IMPLEMENTATION，直接推进到 SUMMARY
 
-**现象**：从 PLANNING advance 到 IMPLEMENTATION 后，`next` 提示 `wait_for_turn`，但 `turn` 是 deepseek。deepseek 应该 `claim_turn` 而非 `wait_for_turn`。
+**根因分析**：崩溃恢复重建了 peers 数据，但 peers 的"在线状态"未被验证。deepseek 在 get_state 中看到自己已注册（`registered_at` 字段存在），但实际上没有重新走 register 流程。这是一种**"幽灵注册"状态**——state 认为双方已注册，但实际上有一方不在线。
 
-**对比首次 session**：首次 session 没有此问题——因为首次 IMPLEMENTATION 的 `next` 也是相同模式，但双方在 CLAUDE.md 指引下正确处理了。`next` 字段的生成逻辑需要更精确的状态感知。
+### 2.4 SUMMARY（2 rounds）
 
-### 2.4 wait_for_turn 等待成本（严重程度：P2）
-
-IMPLEMENTATION coding 阶段等待 deepseek claim_turn 并写代码：7 次超时（~7 分钟）。与首次 session 的 20-30 分钟等待相比有所减少，但根本问题未解决——等待方无法感知对方是否在线、是否在工作。
-
----
-
-## 三、反思
-
-### 3.1 "医生生病"——改进项被自己要修复的问题绊倒
-
-本次任务的目标是修复 retrospective-1 中发现的 10+3 个问题。但在执行过程中，**崩溃恢复不完整**（改进项 #2）导致 IMPLEMENTATION 完全跳过。这是一个悖论：我们需要实现崩溃恢复的修复，但崩溃恢复的缺陷阻止了修复的实现。
-
-**启示**：最危险的改进项是无法在当前框架内安全实现的改进项。对于 #2（崩溃恢复），应该考虑先在隔离环境（独立 worktree、独立 `.pairflow/`）中开发和测试，再集成。
-
-### 3.2 force_converge 从 5 次降到 2 次——流程在自我修复
-
-两个 session 的对比数据支持一个结论：PairFlow 的流程机制在起作用。盲审僵局从 3→0，force_converge 从 5→3。这说明：
-- `next` 字段（Cycle 0 产出）确实减少了 AI 的困惑
-- 双方对流程的熟悉度在提升
-- 监督者的 advance 闸门在正确时机发挥作用
-
-但 2 次 force_converge 仍然太多——目标应该是 0。
-
-### 3.3 崩溃恢复是 PairFlow 的阿喀琉斯之踵
-
-两次 session 共 5 次状态丢失。每次丢失的恢复成本约为 3-8 rounds。如果把 PairFlow 比作一辆车，崩溃恢复就是那根一断全车停摆的传动轴。
-
-当前恢复机制的三个致命缺陷：
-1. **workflow 选择**：`findLatestWorkflowId` 的评分算法在多 workflow 存在时会选错
-2. **字段缺失**：6 个关键字段未恢复（retro-1 §2.2，仍未修复）
-3. **静默执行**：恢复后不告知用户发生了什么、丢失了什么
-
-### 3.4 IMPLEMENTATION 阶段对服务稳定性的依赖过高
-
-REQUIREMENTS 和 PLANNING 的产出以文档为主，即使服务重启，handoff 中的文档仍然存在。但 IMPLEMENTATION 需要修改源代码——如果在这个阶段服务不稳定，代码可能写了一半但 PairFlow 状态无法追踪。
-
-**启示**：IMPLEMENTATION 阶段的代码改动应该快速 commit（小步提交），让 git 成为第二份"状态备份"。
-
-### 3.5 SUMMARY 阶段的盲审价值存疑
-
-本次 SUMMARY 只有 1 round，双方迅速达成一致。SUMMARY 盲审（被 force_converge 跳过）对流程终点的价值不大——双方在 REQUIREMENTS 和 PLANNING 已经充分讨论，SUMMARY 只是汇总。
-
-**建议**：SUMMARY 阶段取消盲审，改为单方产出 + 对方确认即可收敛。
+| Round | 产出方 | 内容 |
+|:---:|------|------|
+| R1 | deepseek | 总结：记录了 IMPLEMENTATION 被跳过的异常，指出崩溃恢复的问题 |
+| R2 | claude | 确认，收敛 |
 
 ---
 
-## 四、可改进的点
+## 三、等待体验
 
-### 立即（下个迭代——与 retro-1 §四合并）
+### 3.1 wait_for_turn 超时统计
 
-| # | 改进 | 说明 | 来源 |
-|---|------|------|------|
-| 1 | 修复 agree+agree 不收敛 bug | PLANNING 双方 agree 后未自动触发收敛，需查 submit.ts 收敛逻辑 | §2.1 |
-| 2 | advance 后 next 更精确 | IMPLEMENTATION advance 后 next 应指向 claim_turn 而非 wait_for_turn | §2.3 |
-| 3 | 崩溃恢复 workflow 选择增强 | findLatestWorkflowId 应优先选最近创建的、内容最多的、且 state.json 中记录的 workflow | §3.3 |
-| 4 | 崩溃恢复后 report 丢失字段 | 恢复完成后返回 `lost_fields: [...]` 告知用户哪些信息丢失了 | §3.3 |
+| 等待场景 | 次数 |
+|---------|:---:|
+| wait_for_turn 60s 超时 | ~4 次 |
+| wait_for_turn 正常返回（对方已操作） | ~5 次 |
+| 纯等待时间估计 | ~4 分钟 |
+
+相比第一次 session（~20-30 分钟等待），本次等待大幅减少。原因：监督者在线时间更长，轮次交替更紧凑。
+
+但 60s 超时窗口仍然偏大——超时后立即重试，单次平均浪费 30s。
+
+### 3.2 busy loop 问题再现
+
+PLANNING 收敛后（converged=true, blind_review_pending=false, turn=deepseek）：
+
+1. `wait_for_turn` 立即返回 turn=deepseek（因为是当前 turn）
+2. next 指向 `claim_turn`
+3. 但 CLAUDE.md 规定「converged=true 时不做任何操作，只 wait_for_turn」
+4. 形成 busy loop：wait_for_turn → turn=自己 → 不操作 → wait_for_turn → ...
+
+这与 retrospective-1 §6.3.2 描述的问题完全一致。**收敛后非监督者的 turn 应立即释放给监督者**，否则非监督者陷入"有 turn 但不能用"的死循环。
+
+---
+
+## 四、崩溃恢复的第二次验证
+
+### 4.1 恢复后状态对比
+
+| 字段 | 恢复值 | 正确值 | 状态 |
+|------|--------|--------|:---:|
+| `phase` | implementation | implementation | ✅ |
+| `sub_phase` | null | "coding" | ❌ 仍然缺失 |
+| `dev_phase` | 0 | 0 | ✅ |
+| `task` | 完整保留 | 完整保留 | ✅（Cycle 1 改进生效） |
+| `peers` | 双方恢复 | 双方恢复 | ⚠️ 但存在"幽灵注册" |
+| `issues` | 12 个恢复 | 12 个 | ❌ `raised_by: "unknown"` |
+| `last_submit_per_turn` | {} | 应有双方提交记录 | ❌ 仍然缺失 |
+| `phase_config` | 默认值 | 默认值 | ⚠️ 恰巧正确 |
+
+**关键观察**：`sub_phase`、`last_submit_per_turn`、`raised_by` 的缺失与 retrospective-1 §2.2 完全一致。**在本迭代修复这些字段之前，我们又一次被同样的问题伤害。** 这反向证明了改进项 #2（崩溃恢复补全 6 字段）是 P0 优先级。
+
+### 4.2 "幽灵注册"——新的故障模式
+
+崩溃恢复从 handoff 文件名重建 peers 列表（`crash-recovery.ts:147-166`），使用当前时间作为 `registered_at`。恢复后的 peers 看起来"已注册"，但实际 AI 并未调用 `register`。
+
+**后果**：
+- 非监督者调用 `wait_for_turn` 时，系统认为双方已注册 → 不返回 `both peers registered` 提示
+- 但实际只有一方在线——另一方甚至不知道服务已恢复
+- 监督者看到"双方已注册"但对方不响应，只能 force_converge
+
+这是 retrospective-1 未曾描述的新故障模式。
+
+### 4.3 工作流选择的隐患
+
+`findLatestWorkflowId` 的评分算法可能选择旧 workflow（评分更高——更多 phase、更多 meta.json）。本次未触发此问题（恢复到正确的 `20260623152946`），但隐患真实存在。如果一个旧 workflow 有 3+ phases 且包含盲审，其评分将远超当前 2-phase 的 workflow。
+
+---
+
+## 五、force_converge 常态化
+
+本次 session 中 force_converge 被使用了 3 次：
+
+| 阶段 | 原因 | 合理性 |
+|------|------|:---:|
+| PLANNING | 解决 4 个 P2（实施细节） | 勉强合理——P2 不应阻塞收敛 |
+| IMPLEMENTATION | 对方不在线（幽灵注册） | 运维需要——但暴露恢复缺陷 |
+| SUMMARY | 触发收敛 | 未知原因 |
+
+**趋势**：force_converge 从"紧急 escape hatch"变成"常规流程推进工具"。第一次 session 5 次，本次 3 次。虽然次数下降，但仍在每个阶段都被使用。
+
+**根因**：收敛条件过于严格。非 IMPLEMENTATION 阶段的收敛检查要求 `bothEmpty`（双方都没有 new_issues）。这意味着即使是一个 P2 级别的文档编号问题，也能阻止收敛。**P2 issue 不应阻塞非 IMPLEMENTATION 阶段的收敛。**
+
+---
+
+## 六、模板在全流程中的实际体验
+
+### 正面
+
+- `next` 字段在主流路径上工作良好——不再需要记忆"下一步该调什么"
+- 盲审模板（逐节表格）帮助覆盖了所有 spec 章节
+- 盲审不再僵局——相比第一次 session 的 3 次盲审僵局，本次 0 次
+
+### 负面
+
+- 模板中的中文编码问题（乱码）影响阅读体验
+- SUMMARY template 过于简单——`<summary>` 占位符缺少结构化指导
+- PLANNING 盲审被 force_converge 跳过，无法验证盲审模板在 PLANNING 下的适用性
+
+---
+
+## 七、改进建议
+
+以下建议基于本次 session 的新发现，是对 retrospective-1 §四 的补充：
+
+### 立即（追加到本迭代）
+
+| # | 改进 | 说明 |
+|---|------|------|
+| 12 | 崩溃恢复后要求显式 re-register | peers 从 handoff 恢复后标记 `recovered: true`，要求双方重新 register。未 re-register 的一方不应视为"已注册" |
+| 13 | 收敛后释放非监督者 turn | converged=true 且 !blind_review_pending 时，turn 立即切换到监督者。避免非监督者 busy loop |
 
 ### 短期
 
-| # | 改进 | 说明 | 来源 |
-|---|------|------|------|
-| 5 | SUMMARY 取消盲审 | 盲审在 SUMMARY 阶段价值低，改为单方产出 + 对方确认 | §3.5 |
-| 6 | 崩溃恢复隔离环境 | 崩溃恢复的改进应在独立 `.pairflow/` + 独立 worktree 中先行开发和测试 | §3.1 |
-| 7 | IMPLEMENTATION 小步 commit 引导 | submit 返回的 checklist 增加"确认已 commit 本次代码改动" | §3.4 |
-| 8 | 等待方在线感知 | wait_for_turn 返回对方最后活动时间，帮助等待方判断对方是否在线 | §2.4 |
+| # | 改进 | 说明 |
+|---|------|------|
+| 14 | P2 issue 不阻塞非 IMPLEMENTATION 收敛 | REQUIREMENTS/PLANNING/SUMMARY：仅 P0/P1 阻塞收敛，P2 记录但不阻塞。减少 force_converge 必要性 |
+| 15 | POLL_INTERVAL 从 10s 降到 5s | TIMEOUT 从 60s 降到 30s。减少无效等待窗口 | ~~已另行处理~~ |
 
 ### 长期
 
-| # | 改进 | 说明 | 来源 |
-|---|------|------|------|
-| 9 | 状态快照 + 回滚 | state.json 保留最近 3 个版本，支持回滚（已在 retro-1 §四长期 #11） | §3.3 |
-| 10 | 改进项自举测试 | 每次修复完成后，用修复后的 PairFlow 重跑本次 session 的完整流程作为回归测试 | §3.1 |
+| # | 改进 | 说明 |
+|---|------|------|
+| 16 | force_converge 使用频率告警 | 同 session 中超过 2 次 force_converge 时，向双方发送提示 |
+
+### 已实现（本轮 session 后立即修复）
+
+两项底层缺陷在 session 结束后直接修复，未走 PairFlow 流程（符合 §3.1 "医生生病"悖论——崩溃恢复的修复不应依赖崩溃恢复）：
+
+| # | 改动 | Commit | 说明 |
+|---|------|--------|------|
+| A | wait_for_turn 超时 60s → 600s | `381c29c` | 减少轮询频率，降低等待方焦虑。对应 §3.1 等待成本问题。实际改为 10 分钟而非 #15 建议的 30s——方向相反，因为"减少超时次数"比"快速重试"更优先 |
+| B | findLatestWorkflowId 改为按时间戳取最新 | `3266f38` | 废弃评分算法（meta.json数×10 + phase数×100 + 盲审×1000），改为目录名 `YYYYMMDDHHmmss` 降序取最新。消除旧 workflow 干扰恢复的隐患。对应 §4.3 工作流选择问题 |
 
 ---
 
-## 五、与首次 session 的对比
+## 八、结论
 
-| 维度 | 首次 session | 本次 session | 趋势 |
-|------|-------------|-------------|:---:|
-| 盲审僵局 | 3 次（开发者持续提交常规 review） | 0 次 | ⬆️ |
-| force_converge | 5 次 | 2 次 | ⬆️ |
-| 状态丢失 | 4 次（lease + 并发写） | 1 次（服务重启） | ⬆️ |
-| 崩溃恢复自动执行 | 每次都自动恢复，无选择 | 同左（#1 改进未实施） | ➡️ |
-| 代码产出 | 2 commits | 0 | ⬇️ |
-| 文档维护 | backlog 事后更新 | 同左（§7.3 改进未实施） | ➡️ |
-| next 字段准确性 | 主流路径 OK | 主流路径 OK，advance 边界不精确 | ➡️ |
-| 双方角色理解 | 多次困惑 | 无困惑 | ⬆️ |
+第二次 PairFlow 协作验证了：
 
-**总体趋势**：流程可控性在改善（盲审、角色理解、force_converge 减少），但状态机韧性没有改善（崩溃恢复缺陷仍未修复）。"医生生病"悖论意味着需要先在一个隔离的、受保护的环境中修复崩溃恢复，再回到正常流程。
+1. **next 字段 + template 改进有效**——盲审不再僵局，流程更自动化
+2. **崩溃恢复仍然是最大短板**——task 恢复改善了，但 sub_phase/last_submit/raised_by 仍缺失。同时发现了新的"幽灵注册"故障模式
+3. **force_converge 常态化是危险信号**——收敛条件需要区分 issue 严重程度（P2 不阻塞收敛）
+4. **IMPLEMENTATION 被跳过意味着 10 项改进仍是纸面方案**——需要第三次 session 实际执行
 
----
+**合并后的最优先事项（retrospective-1 §八 + 本次发现）**：
 
-## 六、结论
-
-第二次完整 PairFlow 协作证明了：
-1. **流程在收敛**——盲审僵局消失、force_converge 减少、角色认知清晰
-2. **瓶颈在底层**——崩溃恢复仍然是唯一的阻塞性故障点
-3. **改进项本身需要改进**——"医生生病"悖论需要用隔离环境打破
-
-**最优先事项**（与 retro-1 §八合并后）：
-
-| # | 项 | 来源 |
-|---|-----|------|
-| 1 | 崩溃恢复补全 6 个字段 + workflow 选择增强 | retro-1 §2.2 + 本次 §2.2/§3.3 |
-| 2 | 修复 agree+agree 不收敛 bug | 本次 §2.1 |
-| 3 | 修复 submit.ts coding→review 顺序 | retro-1 §2.5 |
-| 4 | lease 超时安全网 | retro-1 §2.1 |
-| 5 | 崩溃恢复改进在隔离环境中先行开发 | 本次 §3.1 |
-| 6 | IMPLEMENTATION 小步 commit 引导 | 本次 §3.4 |
-| 7 | advance 后 next 精确化 | 本次 §2.3 |
-| 8 | 等待方在线感知 | 本次 §2.4 |
-
-**下一步**：在隔离的 `.pairflow/` 环境中，以单个开发者的方式实现崩溃恢复修复（#1），跳过 PairFlow 双人流程。修复完成后用新代码启动新 workflow，验证 IMPLEMENTATION 能否完整走通。
+| # | 项 | 来源 | 状态 |
+|---|-----|------|:---:|
+| 1 | 崩溃恢复补全 6 字段 + 幽灵注册修复 | R1-§2.2 + R2-§4.2 | 待实现 |
+| 2 | 测试套件隔离 | R1-§7.2 | 部分完成 (1edfb53) |
+| 3 | submit.ts 文件命名修复 | R1-§2.5 | 待实现 |
+| 4 | lease 超时安全网 | R1-§2.1 | 待实现 |
+| 5 | P2 不阻塞收敛 + 收敛后释放非监督者 turn | R2-§3.3 + §3.4 | **新增** |
+| 6 | REQUIREMENTS/PLANNING 收敛后 commit 文档 | R1-§7.3 | 待改进 |
