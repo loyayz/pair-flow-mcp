@@ -149,7 +149,6 @@ async function reconstructFromHandoff(state: PairFlowState): Promise<PairFlowSta
   const identities = await extractIdentities(wfDir);
   if (identities.size === 0) return null; // can't recover without peers
 
-  const now = new Date().toISOString();
   const phaseDirs = await listPhaseDirs(wfDir);
 
   // Infer roles: first submitter in requirements = developer; first in planning = reviewer
@@ -163,7 +162,9 @@ async function reconstructFromHandoff(state: PairFlowState): Promise<PairFlowSta
       identity: id,
       role: isSup ? "supervisor" : "peer",
       is_developer: isDev,
-      registered_at: now,
+      // Use epoch to force re-register — 60s window check in register.ts
+      // will reject this until the peer actually calls register()
+      registered_at: "1970-01-01T00:00:00.000Z",
     });
   }
 
