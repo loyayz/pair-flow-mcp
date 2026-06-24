@@ -176,6 +176,10 @@ async function reconstructFromHandoff(state: PairFlowState): Promise<PairFlowSta
       try {
         const raw = await readFile(join(wfDirVar, mf), "utf-8");
         const meta = JSON.parse(raw);
+        // P1-14: restore task from first meta.json that contains it
+        if (!state.task && meta.task && meta.task.description) {
+          state.task = meta.task;
+        }
         if (meta.new_issues) {
           for (const ni of meta.new_issues) {
             if (typeof ni === "number") continue;
@@ -468,7 +472,8 @@ function inferSubPhase(metaFiles: string[]): SubPhase {
       if (base.includes(`_${sp}_`)) return sp as SubPhase;
     }
   }
-  return "coding"; // default: coding is the first sub-phase in IMPLEMENTATION
+  // P2-12: no submissions found — phase was advanced but no work started, don't assume "coding"
+  return null;
 }
 
 async function inferDevPhase(wfDir: string): Promise<number> {

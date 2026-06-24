@@ -62,7 +62,9 @@ export async function waitForTurn(
     }
 
     // Phase changed (converged, advanced from IDLE, etc.) — but not during blind_review_pending
-    if (state.phase !== initialPhase || (state.converged && !state.blind_review_pending)) {
+    // P0-3: blind_review_pending 变为 true 时也提前退出（盲审开始，等待方应参与）
+    const blindReviewStarted = !initialState.blind_review_pending && state.blind_review_pending;
+    if (state.phase !== initialPhase || (state.converged && !state.blind_review_pending) || blindReviewStarted) {
       const next = state.turn === identity
         ? { tool: "claim_turn", when: "阶段已变更且 turn=自己，获取 turn" } as const
         : { tool: "wait_for_turn", when: "阶段已变更但 turn 不是自己，继续等待" } as const;

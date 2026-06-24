@@ -56,7 +56,8 @@ export function getTemplate(state: PairFlowState, isReviewer?: boolean): string 
   const isImplementationCoding = phase === "implementation" && sub === "coding";
   const isImplementationFix = phase === "implementation" && sub === "fix";
   const isImplementationReview = phase === "implementation" && sub === "review";
-  const isBlindReview = sub === "blind_review";
+  // P0-2: 盲审模板触发 — sub_phase 可能未设，备选检查 blind_review_pending（P0-3 后 converged 在盲审期间为 false）
+  const isBlindReview = sub === "blind_review" || state.blind_review_pending;
 
   if (isBlindReview) {
     return `## 独立盲审\n\n逐节审视 spec 全文，不读对方盲审产出。\n\n| § | 节名 | 审视结论 | 理由 |\n|---|---|---|---|\n| 1 | ... | 无新问题 / 发现 Px-N | <依据> |\n\n${docUpdateSection(isReviewer)}\n\n## 收敛状态\n- 本轮新增 issue：P0：<N>，P1：<N>，P2：<N>\n- 本轮关闭 issue：<IDs>\n- 对对方上一轮产出的立场：null（盲审为发现导向）\n- 是否需要下一轮：null`;

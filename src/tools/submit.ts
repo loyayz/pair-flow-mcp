@@ -192,7 +192,9 @@ export async function submit(
           const bothEmpty = mySubmit.new_issues.length === 0 && otherSubmit.new_issues.length === 0;
           state.blind_review_pending = false;
           if (bothEmpty) {
-            // Don't set converged=true — advance required after blind review
+            // P0-3: 盲审完成且无新问题 → 收敛成立（retro-3 #18）
+            converged = true;
+            state.converged = true;
           } else {
             state.turn = other;
             state.round += 1;
@@ -204,12 +206,13 @@ export async function submit(
       } else if (state.phase === "implementation" && state.sub_phase !== "coding" && state.sub_phase !== "fix") {
         // IMPLEMENTATION convergence check
         if (otherSubmit.submitted_at && mySubmit.round === otherSubmit.round) {
-          if (mySubmit.stance === "agree" && otherSubmit.stance === "agree" && mySubmit.need_next_round === false && otherSubmit.need_next_round === false) {
+          // P0-1: IMPLEMENTATION 收敛仅依赖 review 方 stance（retro-3 #17）
+          // coding 产出方 stance=null（非审阅），不参与收敛判定
+          if (mySubmit.stance === "agree" && mySubmit.need_next_round === false) {
             const hasOpenP0 = state.issues.some((i) => i.type === "P0" && i.status === "open");
             const hasEscalated = state.issues.some((i) => i.status === "escalated");
             if (!hasOpenP0 && !hasEscalated) {
-              converged = true;
-              state.converged = true;
+              // P0-3: 盲审改为收敛前置 — 先触发盲审，盲审完成后才设 converged=true（retro-3 #18）
               state.blind_review_pending = true;
               state.pending_supervisor_review = state.peers.some((p) => p.identity === identity && p.role === "supervisor" && p.is_developer);
               if (!state.pending_supervisor_review) {
@@ -247,9 +250,7 @@ export async function submit(
           const hasOpenP0 = state.issues.some((i) => i.type === "P0" && i.status === "open");
           const hasEscalated = state.issues.some((i) => i.status === "escalated");
           if (!hasNewP0P1 && !hasOpenP0 && !hasEscalated) {
-            converged = true;
-            state.converged = true;
-            // Set blind_review_pending for blind review
+            // P0-3: 盲审改为收敛前置 — 先触发盲审，盲审完成后才设 converged=true（retro-3 #18）
             state.blind_review_pending = true;
           }
         } else {
@@ -278,7 +279,7 @@ export async function submit(
       await mkdir(blindDir, { recursive: true });
       const filename = `${identity}_blind_review.md`;
       await writeFile(join(blindDir, filename), content, "utf-8");
-      await writeFile(join(blindDir, `${filename}.meta.json`), JSON.stringify({ stance: null, need_next_round: null, new_issues: (convergeMark.new_issues ?? []).map((ni, i) => ({ id: newIssueIds[i], type: ni.type, topic: ni.topic, description: ni.description })), resolved_issue_ids: convergeMark.resolved_issue_ids ?? [] }, null, 2), "utf-8");
+      await writeFile(join(blindDir, `${filename}.meta.json`), JSON.stringify({ stance: null, need_next_round: null, task: state.task, new_issues: (convergeMark.new_issues ?? []).map((ni, i) => ({ id: newIssueIds[i], type: ni.type, topic: ni.topic, description: ni.description })), resolved_issue_ids: convergeMark.resolved_issue_ids ?? [] }, null, 2), "utf-8");
     } else {
       const phaseDir = join(HANDOFF_DIR, wfId, state.phase);
       await mkdir(phaseDir, { recursive: true });
@@ -289,7 +290,7 @@ export async function submit(
       const subTag = state.phase === "implementation" && safeSub ? `_${safeSub}` : "";
       const filename = `r${seq}${subTag}_${identity}.md`;
       await writeFile(join(phaseDir, filename), content, "utf-8");
-      await writeFile(join(phaseDir, `r${seq}${subTag}_${identity}.meta.json`), JSON.stringify({ stance: convergeMark.stance, need_next_round: convergeMark.need_next_round, new_issues: (convergeMark.new_issues ?? []).map((ni, i) => ({ id: newIssueIds[i], type: ni.type, topic: ni.topic, description: ni.description })), resolved_issue_ids: convergeMark.resolved_issue_ids ?? [] }, null, 2), "utf-8");
+      await writeFile(join(phaseDir, `r${seq}${subTag}_${identity}.meta.json`), JSON.stringify({ stance: convergeMark.stance, need_next_round: convergeMark.need_next_round, task: state.task, new_issues: (convergeMark.new_issues ?? []).map((ni, i) => ({ id: newIssueIds[i], type: ni.type, topic: ni.topic, description: ni.description })), resolved_issue_ids: convergeMark.resolved_issue_ids ?? [] }, null, 2), "utf-8");
     }
 
     // Coding → review transition: set sub_phase AFTER file write so filename gets correct sub_phase tag

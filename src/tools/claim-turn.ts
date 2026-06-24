@@ -40,7 +40,8 @@ async function handleTurn(state: PairFlowState, identity: string): Promise<CallT
     return err("phase already converged — claim_turn(turn) not allowed");
   }
   // Blind review: allow any registered peer to claim turn
-  if (state.converged && state.blind_review_pending) {
+  // P0-3: blind_review_pending 独立于 converged，盲审期间 converged=false，此处不做 converged 检查
+  if (state.blind_review_pending) {
     const isPeer = state.peers.some((p) => p.identity === identity);
     if (!isPeer) {
       return err("identity not registered");
@@ -169,6 +170,10 @@ async function handleAdvance(state: PairFlowState, identity: string, args: Recor
 
     // Multi-cycle: check planning draft for total cycles
     const totalCycles = state.workflow_id ? await extractCycleCount(state.workflow_id) : null;
+    // P1-13/P2-4: warn when totalCycles is null — cycle check skipped, may be handoff unavailable
+    if (totalCycles === null && state.workflow_id) {
+      await logEvent("advance", { identity, warning: "totalCycles is null — advancing to SUMMARY without cycle check", workflow_id: state.workflow_id });
+    }
     const currentCycle = state.dev_phase ?? 0;
 
     if (totalCycles !== null && currentCycle + 1 < totalCycles) {
