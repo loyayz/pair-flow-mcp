@@ -38,12 +38,10 @@ export async function register(
       // Idempotent update: refresh registered_at to confirm online presence
       recoveredPeer.registered_at = now;
       if (workDir) recoveredPeer.work_dir = workDir;
-      // Check all peers re-registered: each peer's registered_at must be >= the first re-register's time
-      const allReRegistered = state.peers.every((p) => {
-        const t = new Date(p.registered_at).getTime();
-        const nowMs = Date.now();
-        return (nowMs - t) < 60_000; // registered within last 60 seconds
-      });
+      // Check all peers re-registered: epoch sentinel means "not yet re-registered".
+      // crash-recovery.ts sets registered_at to epoch to force explicit re-register.
+      const EPOCH = "1970-01-01T00:00:00.000Z";
+      const allReRegistered = state.peers.every((p) => p.registered_at !== EPOCH);
       if (allReRegistered) {
         state.require_re_register = false;
       }
