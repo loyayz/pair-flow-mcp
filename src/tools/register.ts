@@ -24,9 +24,33 @@ export async function register(
     const state = await loadState();
     const now = new Date().toISOString();
 
-    // Validate phase
-    if (state.phase !== "idle") {
+    // Validate phase — allow re-registration in any phase after crash recovery
+    if (state.phase !== "idle" && !state.require_re_register) {
       return err(`register only allowed in IDLE phase, current: ${state.phase}`);
+    }
+
+    // Crash recovery re-registration: idempotent update (retro-2 §4.2)
+    if (state.require_re_register) {
+      const recoveredPeer = state.peers.find((p) => p.identity === identity);
+      if (!recoveredPeer) {
+        return err(`identity "${identity}" not found in recovered peers — recovered identities: ${state.peers.map(p => p.identity).join(", ")}`);
+      }
+      // Idempotent update: refresh registered_at to confirm online presence
+      recoveredPeer.registered_at = now;
+      if (workDir) recoveredPeer.work_dir = workDir;
+      // Check all peers re-registered: each peer's registered_at must be >= the first re-register's time
+      const allReRegistered = state.peers.every((p) => {
+        const t = new Date(p.registered_at).getTime();
+        const nowMs = Date.now();
+        return (nowMs - t) < 60_000; // registered within last 60 seconds
+      });
+      if (allReRegistered) {
+        state.require_re_register = false;
+      }
+      await saveState(state);
+      await logEvent("register", { identity, supervisor, developer, re_register: true, all_re_registered: !state.require_re_register });
+      return ok({ ok: true, identity, role: recoveredPeer.role, is_developer: recoveredPeer.is_developer, re_register: true, all_re_registered: !state.require_re_register },
+        { tool: "wait_for_turn", when: "已重新确认在线状态，等待推进" });
     }
 
     // P0-28: 校验 work_dir（第二个 peer 注册时）

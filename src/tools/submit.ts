@@ -237,11 +237,16 @@ export async function submit(
         if (otherSubmit.submitted_at) {
           state.round += 1;
           state.turn = other;
-          // Supervisor checks convergence externally
-          const bothEmpty = (mySubmit.new_issues?.length ?? 0) === 0 && (otherSubmit.new_issues?.length ?? 0) === 0;
+          // P2 issues do not block non-IMPLEMENTATION convergence (retro-2 §3.3 #5)
+          const myNewIds = new Set(mySubmit.new_issues ?? []);
+          const otherNewIds = new Set(otherSubmit.new_issues ?? []);
+          const allNewIds = new Set([...myNewIds, ...otherNewIds]);
+          const hasNewP0P1 = state.issues.some((i) =>
+            allNewIds.has(i.id) && (i.type === "P0" || i.type === "P1") && i.status === "open"
+          );
           const hasOpenP0 = state.issues.some((i) => i.type === "P0" && i.status === "open");
           const hasEscalated = state.issues.some((i) => i.status === "escalated");
-          if (bothEmpty && !hasOpenP0 && !hasEscalated) {
+          if (!hasNewP0P1 && !hasOpenP0 && !hasEscalated) {
             converged = true;
             state.converged = true;
             // Set blind_review_pending for blind review
@@ -252,8 +257,7 @@ export async function submit(
           state.turn = other;
         }
       } else {
-        // Coding → review (unconditional)
-        state.sub_phase = "review";
+        // Coding → review (turn switch; sub_phase moved after file write)
         state.turn = other;
       }
     }
@@ -288,9 +292,17 @@ export async function submit(
       await writeFile(join(phaseDir, `r${seq}${subTag}_${identity}.meta.json`), JSON.stringify({ stance: convergeMark.stance, need_next_round: convergeMark.need_next_round, new_issues: (convergeMark.new_issues ?? []).map((ni, i) => ({ id: newIssueIds[i], type: ni.type, topic: ni.topic, description: ni.description })), resolved_issue_ids: convergeMark.resolved_issue_ids ?? [] }, null, 2), "utf-8");
     }
 
-    // Safety net: coding→review when other peer is null (crash recovery edge case)
-    if (state.phase === "implementation" && !converged && state.sub_phase === "coding") {
+    // Coding → review transition: set sub_phase AFTER file write so filename gets correct sub_phase tag
+    if (state.phase === "implementation" && !converged && !blindReview && state.sub_phase === "coding") {
       state.sub_phase = "review";
+    }
+
+    // Release turn to supervisor on converge to prevent non-supervisor busy loop (retro-2 §3.2 #6)
+    if (converged && !state.blind_review_pending) {
+      const supervisor = state.peers.find((p) => p.role === "supervisor");
+      if (supervisor && state.turn !== supervisor.identity) {
+        state.turn = supervisor.identity;
+      }
     }
 
     // Reset lease after submit

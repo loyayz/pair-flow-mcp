@@ -60,9 +60,10 @@ async function handleTurn(state: PairFlowState, identity: string): Promise<CallT
   await logEvent("claim_turn", { identity, mode: "turn", lease_token: token });
   startLeaseTimer(state);
 
+  const isReviewer = state.sub_phase === "review";
   return ok({
     ok: true, lease_token: token, lease_expires_at: expires,
-    template: getTemplate(state),
+    template: getTemplate(state, isReviewer),
     rules_summary: getRulesSummary(state, "turn"),
   }, { tool: "get_state", when: "获取当前状态（issues/round/上次提交）后按 template 产出并 submit" });
 }
@@ -206,11 +207,13 @@ async function handleAdvance(state: PairFlowState, identity: string, args: Recor
 
 function getPhaseTimeoutMinutes(state: PairFlowState): number {
   const cfg = state.current_timeout.phase_config;
+  const D = 30;
+  if (!cfg) return D;
   switch (state.phase) {
-    case "requirements": return cfg.requirements;
-    case "planning": return cfg.planning;
-    case "implementation": return cfg.implementation;
-    case "summary": return cfg.summary;
-    default: return 30;
+    case "requirements": return cfg.requirements ?? D;
+    case "planning": return cfg.planning ?? D;
+    case "implementation": return cfg.implementation ?? D;
+    case "summary": return cfg.summary ?? D;
+    default: return D;
   }
 }

@@ -104,6 +104,7 @@ export interface PairFlowState {
   pending_supervisor_review: boolean;
   blind_review_pending: boolean;
   recovered: boolean;
+  require_re_register: boolean;
   current_lease: CurrentLease;
   current_timeout: CurrentTimeout;
 }
@@ -129,6 +130,7 @@ export function defaultState(phaseConfig?: PhaseConfig): PairFlowState {
     pending_supervisor_review: false,
     blind_review_pending: false,
     recovered: false,
+    require_re_register: false,
     current_lease: { token: null, holder: null, expires_at: null, grace_used: false },
     current_timeout: {
       active: false,

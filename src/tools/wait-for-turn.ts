@@ -28,6 +28,21 @@ export async function waitForTurn(
     return err("identity not registered");
   }
 
+  // Crash recovery: require re-registration (retro-2 §4.2)
+  if (initialState.require_re_register) {
+    return ok({ ok: true, turn: initialState.turn, phase: initialState.phase, round: initialState.round, waited_ms: 0, note: "recovered — re-register required" },
+      { tool: "register", when: "崩溃恢复后需要重新 register 确认在线状态" });
+  }
+
+  // Converged + non-supervisor: release turn, don't claim (retro-2 §3.2 #6)
+  if (initialState.converged && !initialState.blind_review_pending && initialState.turn === identity) {
+    const isSup = initialState.peers.some((p) => p.identity === identity && p.role === "supervisor");
+    if (!isSup) {
+      return ok({ ok: true, turn: initialState.turn, phase: initialState.phase, round: initialState.round, waited_ms: 0, note: "converged — waiting for supervisor to advance" },
+        { tool: "wait_for_turn", when: "阶段已收敛，等待监督者 advance" });
+    }
+  }
+
   const initialPhase = initialState.phase;
 
   while (Date.now() - started < TIMEOUT_MS) {

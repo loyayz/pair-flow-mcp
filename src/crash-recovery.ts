@@ -1,6 +1,6 @@
 import { readdir, readFile, mkdir, access } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { loadState, saveState, defaultState, type PairFlowState, type Phase } from "./state.js";
+import { loadState, saveState, defaultState, type PairFlowState, type Phase, type SubPhase, type Peer, type LastSubmit } from "./state.js";
 import { logEvent } from "./logger.js";
 import { startLeaseTimer } from "./lease.js";
 
@@ -24,6 +24,8 @@ export async function recoverState(): Promise<PairFlowState> {
       if (recovered) {
         wasRecovered = true;
         state = recovered;
+        state.recovered = true;
+        state.require_re_register = true;
         await saveState(state);
         await logEvent("crash_recovery", { recovered: true, from_handoff: true, workflow_id: state.workflow_id, phase: state.phase });
         return state;
@@ -215,6 +217,15 @@ async function reconstructFromHandoff(state: PairFlowState): Promise<PairFlowSta
     }
   } catch { /* */ }
 
+  // 4b. Fix raised_by for issues recovered as "unknown" (retro-1 §2.2)
+  // Use the submitter identity from meta.json filenames as the source
+  for (const issue of state.issues) {
+    if (issue.raised_by === "unknown" && issue.id) {
+      const sourceIdentity = await findIssueRaiser(wfDirVar, issue.id);
+      if (sourceIdentity) issue.raised_by = sourceIdentity;
+    }
+  }
+
   // 5. Determine round, turn, converged, blind_review_pending
   const latestPhaseDir = join(wfDirVar, state.phase);
   const latestMetaFiles = await findFiles(latestPhaseDir, ".meta.json");
@@ -267,6 +278,29 @@ async function reconstructFromHandoff(state: PairFlowState): Promise<PairFlowSta
     // Both parties submitted blind review?
     state.blind_review_pending = blindReviewCount < 2;
   }
+
+  // 5a. Ensure phase_config has defaults (retro-1 §2.1, retro-2 §4.1)
+  if (!state.current_timeout.phase_config) {
+    state.current_timeout.phase_config = { requirements: 10, planning: 10, implementation: 60, summary: 30 };
+  }
+
+  // 5b. Recover sub_phase from filenames (retro-1 §2.2)
+  if (state.phase === "implementation") {
+    state.sub_phase = inferSubPhase(latestMetaFiles);
+  }
+
+  // 5c. Recover dev_phase from planning doc + implementation files (retro-2 §4.1)
+  if (state.phase === "implementation") {
+    state.dev_phase = await inferDevPhase(wfDirVar);
+  }
+
+  // 5d. Recover last_submit_per_turn from meta.json (retro-1 §2.2)
+  try {
+    state.last_submit_per_turn = await reconstructLastSubmit(wfDirVar, state.peers, state.phase);
+  } catch { /* keep empty if reconstruction fails */ }
+
+  // 5e. require re-register after crash recovery (retro-2 §4.2 "ghost registration")
+  state.require_re_register = true;
 
   // 6. Clear lease
   state.current_lease = { token: null, holder: null, expires_at: null, grace_used: false };
@@ -390,6 +424,144 @@ async function findLatestWorkflowId(): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+// ── Field recovery helpers (retro-1 §2.2 + retro-2 §4.1) ──
+
+async function findIssueRaiser(wfDir: string, issueId: number): Promise<string | null> {
+  try {
+    const metaFiles = await findFiles(wfDir, ".meta.json");
+    for (const mf of metaFiles) {
+      try {
+        const raw = await readFile(join(wfDir, mf), "utf-8");
+        const meta = JSON.parse(raw);
+        if (meta.new_issues) {
+          for (const ni of meta.new_issues) {
+            if (ni.id === issueId && ni.raised_by) return ni.raised_by;
+          }
+        }
+        // Also check: if this meta.json's identity raised the issue, use filename identity
+        const base = mf.includes("/") || mf.includes("\\") ? mf.replace(/^.*[/\\]/, "") : mf;
+        const idMatch = base.match(/^r\d+(?:_\w+)?_(.+)\.meta\.json$/);
+        if (idMatch && meta.new_issues) {
+          let identity = idMatch[1];
+          for (const sp of ["coding", "review", "fix", "blind_review"]) {
+            if (identity.startsWith(sp + "_")) { identity = identity.slice(sp.length + 1); break; }
+          }
+          for (const ni of meta.new_issues) {
+            if (ni.id === issueId) return identity;
+          }
+        }
+      } catch { /* skip */ }
+    }
+  } catch { /* */ }
+  return null;
+}
+
+function inferSubPhase(metaFiles: string[]): SubPhase {
+  const VALID_SUB_PHASES = ["coding", "review", "fix", "blind_review"];
+  for (const mf of metaFiles) {
+    const base = mf.includes("/") || mf.includes("\\") ? mf.replace(/^.*[/\\]/, "") : mf;
+    for (const sp of VALID_SUB_PHASES) {
+      // Match r{N}_{subphase}_{identity}.meta.json
+      if (base.includes(`_${sp}_`)) return sp as SubPhase;
+    }
+  }
+  return "coding"; // default: coding is the first sub-phase in IMPLEMENTATION
+}
+
+async function inferDevPhase(wfDir: string): Promise<number> {
+  // Try planning doc first
+  try {
+    const planningDir = join(wfDir, "planning");
+    const entries = await readdir(planningDir);
+    const r1File = entries.find((e) => e.startsWith("r1_") && e.endsWith(".md") && !e.includes(".meta"));
+    if (r1File) {
+      const content = await readFile(join(planningDir, r1File), "utf-8");
+      const match = content.match(/循环总数[：:]\s*(\d+)/i);
+      if (match) {
+        const totalCycles = parseInt(match[1], 10);
+        // Count completed coding rounds in implementation/ to determine current dev_phase
+        const implCount = await countCodingRounds(wfDir);
+        return Math.min(implCount, totalCycles - 1);
+      }
+    }
+  } catch { /* planning dir missing */ }
+
+  // Fallback: count coding rounds in implementation/
+  try {
+    return await countCodingRounds(wfDir);
+  } catch {
+    return 0;
+  }
+}
+
+async function countCodingRounds(wfDir: string): Promise<number> {
+  try {
+    const implDir = join(wfDir, "implementation");
+    const metaFiles = await findFiles(implDir, ".meta.json");
+    let count = 0;
+    for (const mf of metaFiles) {
+      const base = mf.includes("/") || mf.includes("\\") ? mf.replace(/^.*[/\\]/, "") : mf;
+      if (base.match(/r\d+_coding_/)) count++;
+    }
+    return count;
+  } catch {
+    return 0;
+  }
+}
+
+async function reconstructLastSubmit(wfDir: string, peers: Peer[], phase: string): Promise<Record<string, LastSubmit>> {
+  const lsp: Record<string, LastSubmit> = {};
+  const empty: LastSubmit = { round: null, sub_phase: null, commit_hash: null, submitted_at: null, stance: null, need_next_round: null, new_issues: [] };
+
+  // Initialize all peers with empty
+  for (const p of peers) lsp[p.identity] = { ...empty };
+
+  try {
+    const phaseDir = join(wfDir, phase);
+    const metaFiles = await findFiles(phaseDir, ".meta.json");
+    for (const mf of metaFiles) {
+      const base = mf.includes("/") || mf.includes("\\") ? mf.replace(/^.*[/\\]/, "") : mf;
+      // Extract identity from filename: r{N}_{identity}.meta.json or r{N}_{subphase}_{identity}.meta.json
+      const idMatch = base.match(/^r\d+(?:_\w+)?_(.+)\.meta\.json$/);
+      if (!idMatch) continue;
+
+      let identity = idMatch[1];
+      // Strip known sub-phase prefixes
+      for (const sp of ["coding", "review", "fix", "blind_review"]) {
+        if (identity.startsWith(sp + "_")) { identity = identity.slice(sp.length + 1); break; }
+      }
+      if (!lsp[identity]) continue;
+
+      try {
+        const raw = await readFile(join(phaseDir, mf), "utf-8");
+        const meta = JSON.parse(raw);
+        // Only update if this submission is more recent than what we already have
+        if (meta.submitted_at && (!lsp[identity].submitted_at || meta.submitted_at > lsp[identity].submitted_at!)) {
+          const roundMatch = base.match(/^r(\d+)_/);
+          lsp[identity] = {
+            round: roundMatch ? parseInt(roundMatch[1], 10) : null,
+            sub_phase: meta.sub_phase ?? inferSubPhaseFromFilename(base),
+            commit_hash: meta.commit_hash ?? null,
+            submitted_at: meta.submitted_at ?? null,
+            stance: meta.stance ?? null,
+            need_next_round: meta.need_next_round ?? null,
+            new_issues: meta.new_issues?.map((ni: { id: number }) => ni.id) ?? [],
+          };
+        }
+      } catch { /* skip corrupt meta */ }
+    }
+  } catch { /* phase dir missing */ }
+
+  return lsp;
+}
+
+function inferSubPhaseFromFilename(filename: string): SubPhase {
+  for (const sp of ["coding", "review", "fix", "blind_review"]) {
+    if (filename.includes(`_${sp}_`)) return sp as SubPhase;
+  }
+  return null;
 }
 
 async function findFiles(dir: string, suffix: string): Promise<string[]> {
