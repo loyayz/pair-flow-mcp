@@ -16,3 +16,4 @@ Thumbs.db
 .pairflow-test-transport/
 .pairflow-test-handoff/
 .pairflow-test-transport-handoff/
+.tmp/
