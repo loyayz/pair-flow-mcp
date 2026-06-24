@@ -360,44 +360,33 @@ async function listPhaseDirs(wfDir: string): Promise<string[]> {
 async function findLatestWorkflowId(): Promise<string | null> {
   try {
     const entries = await readdir(HANDOFF_DIR, { withFileTypes: true });
-    const dirs = entries.filter((e) => e.isDirectory() && /^\d{14}$/.test(e.name));
+    const dirs = entries
+      .filter((e) => e.isDirectory() && /^\d{14}$/.test(e.name))
+      .map((e) => e.name);
+
     if (dirs.length === 0) return null;
 
-    // Score each incomplete workflow by content count, pick the most substantive
-    type ScoredDir = { name: string; score: number; phaseCount: number; hasBlindReview: boolean };
-    const scored: ScoredDir[] = [];
-    for (const d of dirs) {
+    // Skip completed workflows (summary/ with _final.md), then pick newest by timestamp
+    const incomplete: string[] = [];
+    for (const name of dirs) {
       try {
-        // Skip completed workflows (summary/ with _final.md)
-        const summaryDir = join(HANDOFF_DIR, d.name, "summary");
-        try {
-          const summaryEntries = await readdir(summaryDir);
-          if (summaryEntries.some((e) => e.includes("_final.md"))) continue;
-        } catch { /* no summary dir */ }
-
-        // Count meta.json files across all phases — more content = higher score
-        const allFiles = await findFiles(join(HANDOFF_DIR, d.name), ".meta.json");
-        if (allFiles.length === 0) continue; // empty workflow, skip
-
-        // Count distinct phase directories
-        const phaseDirs = new Set<string>();
-        for (const f of allFiles) {
-          const seg = f.includes("/") || f.includes("\\") ? f.replace(/[/\\].*$/, "") : "";
-          if (seg) phaseDirs.add(seg);
-        }
-        const hasBlind = allFiles.some((f) => f.includes("blind_review"));
-
-        // Score = meta.json count × 10 + phase count × 100 + blind review bonus × 1000
-        const score = allFiles.length * 10 + phaseDirs.size * 100 + (hasBlind ? 1000 : 0);
-        scored.push({ name: d.name, score, phaseCount: phaseDirs.size, hasBlindReview: hasBlind });
-      } catch { /* */ }
+        const summaryDir = join(HANDOFF_DIR, name, "summary");
+        const summaryEntries = await readdir(summaryDir);
+        if (summaryEntries.some((e) => e.includes("_final.md"))) continue;
+      } catch { /* no summary dir — incomplete */ }
+      // Verify it has at least one meta.json (not empty)
+      try {
+        const files = await findFiles(join(HANDOFF_DIR, name), ".meta.json");
+        if (files.length === 0) continue;
+      } catch { continue; }
+      incomplete.push(name);
     }
 
-    if (scored.length === 0) return null;
+    if (incomplete.length === 0) return null;
 
-    // Sort by score descending, then by name descending (newest) as tiebreaker
-    scored.sort((a, b) => b.score - a.score || b.name.localeCompare(a.name));
-    return scored[0].name;
+    // Newest first: directory names are YYYYMMDDHHmmss timestamps
+    incomplete.sort((a, b) => b.localeCompare(a));
+    return incomplete[0];
   } catch {
     return null;
   }
