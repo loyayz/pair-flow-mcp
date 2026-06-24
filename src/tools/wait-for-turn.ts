@@ -6,7 +6,7 @@ import { loadState } from "../state.js";
 import { err, ok } from "../response.js";
 
 const POLL_INTERVAL_MS = 10_000;
-const TIMEOUT_MS = 60_000;
+const TIMEOUT_MS = 600_000;
 
 export async function waitForTurn(
   extra: RequestHandlerExtra<ServerRequest, ServerNotification>
