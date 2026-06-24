@@ -15,6 +15,8 @@ export async function getState(): Promise<CallToolResult> {
     task: state.task,
     pending_supervisor_review: state.pending_supervisor_review,
     blind_review_pending: state.blind_review_pending,
+    recovered: state.recovered,
+    require_re_register: state.require_re_register,
     peers: state.peers, issues: state.issues,
     escalation_recommended: escalationRecommended,
   });
