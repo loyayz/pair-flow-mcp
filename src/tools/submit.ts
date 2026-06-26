@@ -327,10 +327,25 @@ export async function submit(
       }
     }
 
+    // P1-3: extra 携带盲审 submit 参数提示，消除 AI 手动推断负担
     const next = state.blind_review_pending && !blindReview
-      ? { tool: "claim_turn", when: "盲审待完成，claim_turn 进行独立盲审" } as const
+      ? { tool: "claim_turn", when: "盲审待完成，claim_turn 进行独立盲审", extra: { submit_params: { blind_review: true, stance: null, need_next_round: null } } } as const
       : { tool: "wait_for_turn", when: "等待对方 review" } as const;
-    return ok({ ok: true, converged, next_turn: state.turn, checklist: checklist.length > 0 ? checklist : undefined, warnings: cv.warnings.length > 0 ? cv.warnings : undefined }, next);
+    // P1-5: 返回收敛状态摘要——双方立场对比，消除 AI 对"为什么不收敛"的困惑
+    const os = other ? state.last_submit_per_turn[other] : undefined;
+    const convergence_summary = {
+      converged,
+      other_submitted: os?.submitted_at != null,
+      my_stance: convergeMark.stance,
+      other_stance: os?.stance ?? null,
+      blind_review_pending: state.blind_review_pending,
+      reason: !os?.submitted_at ? "waiting_for_other_submission"
+        : converged ? "both_agree_no_blocking_issues"
+        : state.blind_review_pending ? "blind_review_in_progress"
+        : (convergeMark.stance === "agree" && os?.stance === "agree") ? "blocked_by_issues"
+        : "stance_mismatch_or_need_another_round",
+    };
+    return ok({ ok: true, converged, next_turn: state.turn, convergence_summary, checklist: checklist.length > 0 ? checklist : undefined, warnings: cv.warnings.length > 0 ? cv.warnings : undefined }, next);
   });
 }
 

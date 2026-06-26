@@ -140,7 +140,11 @@ export async function forceConverge(
     state.current_timeout.active = false;
     stopLeaseTimer();
     await saveState(state);
-    await logEvent("force_converge", { identity, phase: state.phase });
+    // P1-2: force_converge 审计日志 — 记录上下文用于区分合理使用和流程缺陷
+    const openP0 = state.issues.filter((i) => i.type === "P0" && i.status === "open").length;
+    const openP1 = state.issues.filter((i) => i.type === "P1" && i.status === "open").length;
+    const escalated = state.issues.filter((i) => i.status === "escalated").length;
+    await logEvent("force_converge", { identity, phase: state.phase, round: state.round, sub_phase: state.sub_phase, blind_review_pending: state.blind_review_pending, converged_before: state.converged, open_issues: { P0: openP0, P1: openP1, escalated } });
     return ok({ ok: true },
       { tool: "claim_turn", when: "进入盲审" });
   });
