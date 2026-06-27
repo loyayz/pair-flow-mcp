@@ -707,7 +707,7 @@ coding ──→ review ──→ fix ──→ review ──→ ... ──→ c
 | `register` | `{ supervisor: bool, developer: bool, work_dir: string }` | `{ ok, identity, is_supervisor, is_developer, phase }` | IDLE 阶段注册。仅 IDLE 下可用。identity 已存在 → 拒绝。supervisor/developer 各唯一但可兼任。work_dir 必填，双方校验一致性。`tip` 告知身份 header 设置 + 下一步操作 |
 | `confirm_dir` | `{ work_dir: string }` | `{ work_dir, incomplete_workflows[] }` | 确认工作目录，返回未完成的工作流列表。仅监督者在 IDLE 阶段可用 |
 | `confirm_task` | `{ task_path: string }` | `{ task_path, workflow_id, phase, recovered }` | 确认任务文档路径。在任务文档同目录创建 `{文档名}.pid` 文件存储 workflow_id。若 `.pid` 已存在 → 从 handoff 恢复流程状态，返回 `recovered:true`；否则全新开始。仅监督者在 IDLE 阶段可用 |
-| `advance` | 无 | `{ ok, new_phase, turn }` | 推进到下一阶段。仅监督者可用。IDLE→REQUIREMENTS：校验 peers≥2 + task 已确认（confirm_task），turn 切给非监督者。非 IDLE：监督者审阅后确认阶段目标已达成，调用 advance 推进 |
+| `advance` | 无 | `{ ok, new_phase, turn }` | 推进到下一阶段。仅监督者可用。IDLE→REQUIREMENTS：peers≥2+task已确认，turn→非监督者。REQUIREMENTS→PLANNING：turn→评审者。PLANNING→IMPLEMENTATION：turn→开发者,sub_phase=coding。IMPLEMENTATION→SUMMARY：turn→监督者。SUMMARY→IDLE |
 | `claim_turn` | 无 | `{ ok }` | 获取当前轮次的执行权。仅在自己 turn 时可用。记录 `turn_claimed_at`。tip 按 phase+round 动态生成执行指引 |
 | `wait_for_turn` | 无 | `{ turn, phase, round, warning? }` | 长轮询等待 turn 切换。10s 间隔，600s 超时。turn=自己 → tip 调用 claim_turn；turn≠自己 → 继续 wait。turn 已切出 >30 分钟未被 claim → 返回 warning |
 | `get_state` | 无 | `{ tip }` | 返回当前执行指引。round=1 时指引读取任务文档并产出；round≥2 时指引审阅对方上一轮产出 |

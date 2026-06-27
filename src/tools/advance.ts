@@ -2,12 +2,10 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
 import { parseIdentity } from "../identity.js";
-import { loadState, saveState, isSupervisor, getOtherIdentity, initRequirementsPhase, initPlanningPhase, initImplementationPhase, initSummaryPhase, initIdleState, type PairFlowState } from "../state.js";
+import { loadState, saveState, isSupervisor, getOtherIdentity, initRequirementsPhase, initPlanningPhase, initImplementationPhase, initSummaryPhase, initIdleState } from "../state.js";
 import { logEvent } from "../logger.js";
 import { stateMutex } from "../mutex.js";
 import { err, ok } from "../response.js";
-
-import { extractCycleCount } from "../planning.js";
 
 export async function advance(
   args: Record<string, unknown>,
@@ -41,8 +39,7 @@ export async function advance(
       return ok({ ok: true, new_phase: "requirements", turn: nonSupervisor }, "下一步调用 wait_for_turn 接口（turn 已切换给对方）");
     }
 
-    // Non-IDLE phases: must be converged
-    if (!state.converged) return err("phase not converged");
+    // Non-IDLE phases: supervisor decides when to advance (no automated convergence check)
 
     if (currentPhase === "requirements") {
       const reviewer = state.peers.find((p) => !p.is_developer);
@@ -50,7 +47,7 @@ export async function advance(
       const next = initPlanningPhase(state, reviewer.identity);
       await saveState(next);
       await logEvent("advance", { identity, from: "requirements", to: "planning" });
-      return ok({ ok: true, new_phase: "planning", turn: reviewer.identity}, "下一步调用 wait_for_turn 接口（turn 已切换给对方）");
+      return ok({ ok: true, new_phase: "planning", turn: reviewer.identity }, "下一步调用 wait_for_turn 接口（turn 已切换给对方）");
     }
 
     if (currentPhase === "planning") {
@@ -59,57 +56,17 @@ export async function advance(
       const next = initImplementationPhase(state, developer.identity);
       await saveState(next);
       await logEvent("advance", { identity, from: "planning", to: "implementation", dev_phase: next.dev_phase });
-      return ok({ ok: true, new_phase: "implementation", dev_phase: next.dev_phase, sub_phase: "coding", turn: developer.identity}, "下一步调用 wait_for_turn 接口（turn 已切换给对方）");
+      return ok({ ok: true, new_phase: "implementation", sub_phase: "coding", turn: developer.identity }, "下一步调用 wait_for_turn 接口（turn 已切换给对方）");
     }
 
     if (currentPhase === "implementation") {
-      const deferredIssues = state.issues.filter((i) => i.status === "deferred" && i.phase === currentPhase);
-      if (deferredIssues.length > 0) {
-        const noReasonDeferred = deferredIssues.filter((i) =>
-          (!i.deferred_reason || i.deferred_reason.trim().length === 0) &&
-          (!i.resolution || i.resolution.trim().length === 0)
-        );
-        if (noReasonDeferred.length > 0) {
-          return err(`cannot advance: ${noReasonDeferred.length} deferred issue(s) without reason`, { deferred_issues: noReasonDeferred.map((i) => ({ id: i.id, topic: i.topic })) });
-        }
-      }
-      for (const di of deferredIssues) {
-        di.deferred_count += 1;
-        if (di.deferred_count >= 2) {
-          di.status = "escalated";
-          di.escalated_at = new Date().toISOString();
-          di.type = "P0";
-          di.deferred_count = 0;
-        }
-      }
-
-      const totalCycles = state.workflow_id ? await extractCycleCount(state.workflow_id) : null;
-      if (totalCycles === null && state.workflow_id) {
-        await logEvent("advance", { identity, warning: "totalCycles is null — advancing to SUMMARY without cycle check", workflow_id: state.workflow_id });
-      }
-      const currentCycle = state.dev_phase ?? 0;
-
-      if (totalCycles !== null && currentCycle + 1 < totalCycles) {
-        const dev = state.peers.find((p) => p.is_developer);
-        const nextDev = dev?.identity ?? identity;
-        const next = initImplementationPhase(state, nextDev);
-        await saveState(next);
-        await logEvent("advance", { identity, from: "implementation", to: "implementation", dev_phase: next.dev_phase });
-        return ok({ ok: true, new_phase: "implementation", dev_phase: next.dev_phase, sub_phase: "coding", turn: nextDev});
-      }
-
-      const nonSupervisor = getOtherIdentity(state, identity)!;
-      const next = initSummaryPhase(state, nonSupervisor);
+      const next = initSummaryPhase(state, identity);
       await saveState(next);
       await logEvent("advance", { identity, from: "implementation", to: "summary" });
-      return ok({ ok: true, new_phase: "summary", turn: nonSupervisor}, "下一步调用 wait_for_turn 接口（turn 已切换给对方）");
+      return ok({ ok: true, new_phase: "summary", turn: identity });
     }
 
     if (currentPhase === "summary") {
-      const unresolved = state.issues.filter((i) => i.status === "open" || i.status === "deferred");
-      if (unresolved.length > 0) {
-        return err(`cannot advance to IDLE: ${unresolved.length} unresolved issue(s)`, { unresolved_issues: unresolved.map((i) => ({ id: i.id, topic: i.topic, status: i.status })) });
-      }
       const next = initIdleState(state);
       await saveState(next);
       await logEvent("advance", { identity, from: "summary", to: "idle" });
