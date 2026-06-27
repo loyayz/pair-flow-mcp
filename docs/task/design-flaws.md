@@ -231,3 +231,56 @@
 | P2 | 1.2, 1.3 | dev_phase 命名 + converged 死字段 | 代码可维护性 |
 | P2 | 3.3, 3.4, 3.5 | 掉线恢复 / 身份校验 / tip 权限 | 边界场景完善 |
 | P3 | 2.3, 2.4, 4.2 | 文档完善 / task 语义错位 | 非阻塞改进 |
+
+---
+
+## 六、claude r2 审阅补充发现
+
+> 以下为 claude 在 r2 审阅中补充发现的问题，deepseek r3 审阅后同意纳入。
+
+### 6.1 crash-recovery `findFiles` Node 版本隐式依赖
+
+**问题**：`crash-recovery.ts:342` 使用 `readdir(absDir, { withFileTypes: true, recursive: true })`，其中 `recursive: true` 是 Node.js 20+ 特性，而同文件 line 345-346 使用的 `parentPath` 属性是 Node.js 22+ 特性。若部署环境 Node 版本低于 22，`parentPath` 为 `undefined`，`findFiles` 将返回空结果，导致崩溃恢复静默失败。
+
+**依据**：
+- `crash-recovery.ts:342`：`const entries = await readdir(absDir, { withFileTypes: true, recursive: true })`
+- `crash-recovery.ts:345-346`：`const pp = (e as { parentPath?: string }).parentPath`
+- `package.json` 未声明 `engines.node >= 22`
+
+**建议**：在 `package.json` 中声明 `engines.node >= 22`，或使用兼容低版本 Node 的递归 walk 实现。
+
+**提出人**：claude（r2 审阅）
+
+**双方一致同意（P2）**。
+
+---
+
+### 6.2 SUMMARY→IDLE 的 advance 无收敛检查
+
+**问题**：`advance.ts:69-73` 中 SUMMARY→IDLE 的 advance 仅执行 `initIdleState`，不做任何前置检查（如是否有 SUMMARY 阶段提交记录、是否非监督者已完成审阅）。这意味着监督者一旦进入 SUMMARY 阶段，可以立即 advance 到 IDLE 而不给另一 AI 任何产出机会。
+
+**依据**：
+- `advance.ts:69-73`：SUMMARY→IDLE 直接调用 `initIdleState`，无条件判断
+- 对比：IDLE→REQUIREMENTS 检查 `peers≥2` + `task已确认`
+
+**建议**：SUMMARY→IDLE 前至少检查 SUMMARY 阶段有提交记录。
+
+**提出人**：claude（r2 审阅）
+
+**双方一致同意（P2）**。
+
+---
+
+## 七、修订后最终优先级汇总
+
+| 优先级 | 问题编号 | 简述 | 理由 |
+|--------|---------|------|------|
+| P0 | 2.1, 2.2 | 文件命名不一致 + SUMMARY tip 缺失 | 直接影响工作流正确执行 |
+| P0 | 3.1 | meta.json 无生成规范 | 崩溃恢复核心依赖缺失 |
+| P1 | 1.1, 1.4 | SUMMARY 设计矛盾 + 兼任负载不均 | 影响结对体验 |
+| P1 | 3.2 | sub_phase 切换规则未文档化 | 设计文档不完整 |
+| P1 | 4.1 | 监督者单点瓶颈 | 可用性风险 |
+| P2 | 1.2, 1.3 | dev_phase 命名 + converged 死字段 | 代码可维护性 |
+| P2 | 3.3, 3.4, 3.5 | 掉线恢复 / 身份校验 / tip 权限 | 边界场景完善 |
+| P2 | 6.1, 6.2 | Node 版本隐式依赖 + SUMMARY→IDLE 无收敛检查 | claude r2 补充发现 |
+| P3 | 2.3, 2.4, 4.2 | 文档完善 / task 语义错位 | 非阻塞改进 |
