@@ -37,5 +37,10 @@ export function buildTip(state: PairFlowState, identity: string): string {
     return `请基于当前任务文档 ${taskPath}，审阅 ${prevInfo}。所有观点需注明提出人。双方均同意的点，请直接修改任务文档 ${taskPath}；不同意的点，请在产出文件中标注原因和建议。产出文件路径: ${outFile}，完成后调用 submit 接口，${submitParams}`;
   }
 
-  return `请审阅 ${prevInfo}，确认或提出修改意见后，产出文件路径: ${outFile}，完成后调用 submit 接口，${submitParams}`;
+  const isSupervisor = state.peers.some((p) => p.identity === identity && p.role === "supervisor");
+  const advanceHint = isSupervisor
+    ? "。若审阅后确认当前任务文档已覆盖所有关键需求、不能存在双方同意延后的未决议题，请调用 advance 接口进入下一阶段"
+    : "";
+
+  return `请审阅 ${prevInfo}，确认或提出修改意见后，产出文件路径: ${outFile}，完成后调用 submit 接口，${submitParams}${advanceHint}`;
 }

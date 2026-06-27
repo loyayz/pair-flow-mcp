@@ -105,7 +105,7 @@ describe("Claim turn + submit", () => {
     await mcpRequest("claim_turn", {}, { "x-ai-identity": "codebuddy" });
     const r = await mcpRequest("submit", {
       file_path: TEST_TASK,
-      git_commit_hash: "abc1234567",
+      git_commit_hash: "def7654321",
     }, { "x-ai-identity": "codebuddy" });
     expect(r.ok).toBe(true);
   });
