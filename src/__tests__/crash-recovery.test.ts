@@ -36,8 +36,8 @@ describe("Handoff reconstruction", () => {
     const wfId = "20260622000001";
     const wfDir = join(TEST_ROOT, HANDOFF_DIR, wfId, "requirements");
     await mkdir(wfDir, { recursive: true });
-    await writeFile(join(wfDir, "r1_alice.meta.json"), JSON.stringify({ round: 1, new_issues: [] }));
-    await writeFile(join(wfDir, "r1_bob.meta.json"), JSON.stringify({ round: 1, new_issues: [] }));
+    await writeFile(join(wfDir, "r1_alice.meta.json"), JSON.stringify({ round: 1 }));
+    await writeFile(join(wfDir, "r1_bob.meta.json"), JSON.stringify({ round: 1 }));
 
     const st = defaultState();
     const recovered = await reconstructFromHandoff(st, undefined, wfId);

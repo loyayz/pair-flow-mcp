@@ -52,7 +52,6 @@ export async function confirmTask(
           state.round = recoveredState.round;
           state.last_submit_per_turn = recoveredState.last_submit_per_turn;
           state.task = recoveredState.task;
-          state.issues = recoveredState.issues;
           state.history = recoveredState.history;
           recovered = true;
         }

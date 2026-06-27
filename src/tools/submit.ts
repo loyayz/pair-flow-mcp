@@ -53,9 +53,6 @@ export async function submit(
       sub_phase: state.sub_phase,
       commit_hash: commitHash,
       submitted_at: now,
-      stance: null,
-      need_next_round: null,
-      new_issues: [],
     };
     state.history.push({ type: "submit", timestamp: now, details: { identity, round: state.round, file_path: filePath, commit_hash: commitHash } });
 

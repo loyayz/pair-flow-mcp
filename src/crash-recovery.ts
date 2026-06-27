@@ -45,7 +45,7 @@ export async function reconstructFromHandoff(
     });
   }
 
-  // 3. Scan meta.json for issues (reuse existing logic adapted for recovery)
+  // 3. Scan meta.json for task recovery
   const wfDirVar = wfDir; // capture for closures
   try {
     const metaFiles = await findFiles(wfDirVar, ".meta.json");
@@ -57,58 +57,11 @@ export async function reconstructFromHandoff(
         if (!state.task && meta.task && meta.task.description) {
           state.task = meta.task;
         }
-        if (meta.new_issues) {
-          for (const ni of meta.new_issues) {
-            if (typeof ni === "number") continue;
-            const exists = state.issues.find((i) => i.id === ni.id);
-            if (!exists) {
-              state.issues.push({
-                id: ni.id ?? 0, type: ni.type ?? "P1", topic: ni.topic ?? "",
-                description: ni.description ?? "", raised_by: ni.raised_by ?? "unknown",
-                phase: state.phase, round: meta.round ?? state.round, status: "open",
-                positions: {}, resolution: null, resolved_by: null, escalated_at: null,
-                fix_review_cycles: 0, proposal: null, rationale: null,
-                deferred_reason: null, deferred_since_phase: null, deferred_count: 0,
-              });
-            }
-          }
-        }
       } catch { /* skip corrupt */ }
     }
   } catch { /* */ }
 
-  // 4. Replay journal
-  try {
-    const journalPath = join(wfDirVar, "issues-journal.jsonl");
-    const journalRaw = await readFile(journalPath, "utf-8");
-    for (const line of journalRaw.trim().split("\n")) {
-      try {
-        const entry = JSON.parse(line);
-        const issue = state.issues.find((i) => i.id === entry.id);
-        if (!issue) continue;
-        if (entry.action === "resolve") {
-          issue.status = "resolved";
-          issue.resolution = entry.resolution ?? "";
-          issue.resolved_by = "supervisor_override";
-        }
-        if (entry.action === "escalate") {
-          issue.status = "escalated";
-          issue.escalated_at = entry.timestamp ?? null;
-        }
-      } catch { /* */ }
-    }
-  } catch { /* */ }
-
-  // 4b. Fix raised_by for issues recovered as "unknown" (retro-1 §2.2)
-  // Use the submitter identity from meta.json filenames as the source
-  for (const issue of state.issues) {
-    if (issue.raised_by === "unknown" && issue.id) {
-      const sourceIdentity = await findIssueRaiser(wfDirVar, issue.id);
-      if (sourceIdentity) issue.raised_by = sourceIdentity;
-    }
-  }
-
-  // 5. Determine round, turn, converged
+  // 4. Determine round, turn, converged
   const latestPhaseDir = join(wfDirVar, state.phase);
   const latestMetaFiles = await findFiles(latestPhaseDir, ".meta.json");
   let maxRound = 1;
@@ -126,7 +79,7 @@ export async function reconstructFromHandoff(
       if (idMatch) {
         let identity = idMatch[1];
         // Strip sub-phase prefix for IMPLEMENTATION files
-        const subPhases = ["coding", "review", "fix"];
+        const subPhases = ["coding", "review"];
         for (const sp of subPhases) {
           if (identity.startsWith(sp + "_")) {
             identity = identity.slice(sp.length + 1);
@@ -147,33 +100,22 @@ export async function reconstructFromHandoff(
     state.turn = state.peers[0].identity;
   }
 
-  // 5a. Ensure phase_config has defaults (retro-1 §2.1, retro-2 §4.1)
-  if (!state.current_timeout.phase_config) {
-    state.current_timeout.phase_config = { requirements: 10, planning: 10, implementation: 60, summary: 30 };
-  }
-
-  // 5b. Recover sub_phase from filenames (retro-1 §2.2)
+  // 4a. Recover sub_phase from filenames (retro-1 §2.2)
   if (state.phase === "implementation") {
     state.sub_phase = inferSubPhase(latestMetaFiles);
   }
 
-  // 5c. Recover dev_phase from planning doc + implementation files (retro-2 §4.1)
+  // 4b. Recover dev_phase (retro-2 §4.1)
   if (state.phase === "implementation") {
     state.dev_phase = await inferDevPhase(wfDirVar);
   }
 
-  // 5d. Recover last_submit_per_turn from meta.json (retro-1 §2.2)
+  // 4c. Recover last_submit_per_turn from meta.json (retro-1 §2.2)
   try {
     state.last_submit_per_turn = await reconstructLastSubmit(wfDirVar, state.peers, state.phase);
   } catch { /* keep empty if reconstruction fails */ }
 
-  // 6. Clear lease
-  state.current_lease = { token: null, holder: null, expires_at: null, grace_used: false };
-
-  // 7. Reset timeout
-  state.current_timeout.active = false;
-
-  console.log(`[pair-flow] Reconstructed state from handoff/${wfId}: phase=${state.phase}, peers=${state.peers.length}, issues=${state.issues.length}, round=${state.round}`);
+  console.log(`[pair-flow] Reconstructed state from handoff/${wfId}: phase=${state.phase}, peers=${state.peers.length}, round=${state.round}`);
   return state;
 }
 
@@ -190,7 +132,7 @@ async function determinePhase(wfDir: string): Promise<Phase> {
 
 async function extractIdentities(wfDir: string): Promise<Set<string>> {
   const ids = new Set<string>();
-  const subPhases = ["coding", "review", "fix"];
+  const subPhases = ["coding", "review"];
   for (const phase of PHASE_PRIORITY) {
     try {
       const files = await findFiles(join(wfDir, phase), ".meta.json");
@@ -230,7 +172,7 @@ async function getFirstSubmitter(wfDir: string, phase: string): Promise<string |
       if (match) {
         let identity = match[1];
         // Strip sub-phase prefix for IMPLEMENTATION files
-        const subPhases = ["coding", "review", "fix"];
+        const subPhases = ["coding", "review"];
         for (const sp of subPhases) {
           if (identity.startsWith(sp + "_")) {
             identity = identity.slice(sp.length + 1);
@@ -289,39 +231,8 @@ async function findLatestWorkflowId(): Promise<string | null> {
 }
 
 // ── Field recovery helpers (retro-1 §2.2 + retro-2 §4.1) ──
-
-async function findIssueRaiser(wfDir: string, issueId: number): Promise<string | null> {
-  try {
-    const metaFiles = await findFiles(wfDir, ".meta.json");
-    for (const mf of metaFiles) {
-      try {
-        const raw = await readFile(join(wfDir, mf), "utf-8");
-        const meta = JSON.parse(raw);
-        if (meta.new_issues) {
-          for (const ni of meta.new_issues) {
-            if (ni.id === issueId && ni.raised_by) return ni.raised_by;
-          }
-        }
-        // Also check: if this meta.json's identity raised the issue, use filename identity
-        const base = mf.includes("/") || mf.includes("\\") ? mf.replace(/^.*[/\\]/, "") : mf;
-        const idMatch = base.match(/^r\d+(?:_\w+)?_(.+)\.meta\.json$/);
-        if (idMatch && meta.new_issues) {
-          let identity = idMatch[1];
-          for (const sp of ["coding", "review", "fix"]) {
-            if (identity.startsWith(sp + "_")) { identity = identity.slice(sp.length + 1); break; }
-          }
-          for (const ni of meta.new_issues) {
-            if (ni.id === issueId) return identity;
-          }
-        }
-      } catch { /* skip */ }
-    }
-  } catch { /* */ }
-  return null;
-}
-
 function inferSubPhase(metaFiles: string[]): SubPhase {
-  const VALID_SUB_PHASES = ["coding", "review", "fix"];
+  const VALID_SUB_PHASES = ["coding", "review"];
   for (const mf of metaFiles) {
     const base = mf.includes("/") || mf.includes("\\") ? mf.replace(/^.*[/\\]/, "") : mf;
     for (const sp of VALID_SUB_PHASES) {
@@ -376,7 +287,7 @@ async function countCodingRounds(wfDir: string): Promise<number> {
 
 async function reconstructLastSubmit(wfDir: string, peers: Peer[], phase: string): Promise<Record<string, LastSubmit>> {
   const lsp: Record<string, LastSubmit> = {};
-  const empty: LastSubmit = { round: null, sub_phase: null, commit_hash: null, submitted_at: null, stance: null, need_next_round: null, new_issues: [] };
+  const empty: LastSubmit = { round: null, sub_phase: null, commit_hash: null, submitted_at: null };
 
   // Initialize all peers with empty
   for (const p of peers) lsp[p.identity] = { ...empty };
@@ -392,7 +303,7 @@ async function reconstructLastSubmit(wfDir: string, peers: Peer[], phase: string
 
       let identity = idMatch[1];
       // Strip known sub-phase prefixes
-      for (const sp of ["coding", "review", "fix"]) {
+      for (const sp of ["coding", "review"]) {
         if (identity.startsWith(sp + "_")) { identity = identity.slice(sp.length + 1); break; }
       }
       if (!lsp[identity]) continue;
@@ -408,9 +319,6 @@ async function reconstructLastSubmit(wfDir: string, peers: Peer[], phase: string
             sub_phase: meta.sub_phase ?? inferSubPhaseFromFilename(base),
             commit_hash: meta.commit_hash ?? null,
             submitted_at: meta.submitted_at ?? null,
-            stance: meta.stance ?? null,
-            need_next_round: meta.need_next_round ?? null,
-            new_issues: meta.new_issues?.map((ni: { id: number }) => ni.id) ?? [],
           };
         }
       } catch { /* skip corrupt meta */ }
@@ -421,7 +329,7 @@ async function reconstructLastSubmit(wfDir: string, peers: Peer[], phase: string
 }
 
 function inferSubPhaseFromFilename(filename: string): SubPhase {
-  for (const sp of ["coding", "review", "fix"]) {
+  for (const sp of ["coding", "review"]) {
     if (filename.includes(`_${sp}_`)) return sp as SubPhase;
   }
   return null;

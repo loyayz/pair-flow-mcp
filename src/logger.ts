@@ -7,10 +7,7 @@ const MAX_SIZE = 10 * 1024 * 1024; // 10MB
 const MAX_FILES = 5;
 
 export type LogEvent =
-  | "register" | "claim_turn" | "submit" | "create_issue" | "resolve_issue"
-  | "defer_issue" | "escalate" | "force_converge" | "advance" | "timeout"
-  | "crash_recovery" | "phase_change" | "reset"
-  | "anomalous_reset";
+  | "register" | "submit" | "advance";
 
 export async function logEvent(event: LogEvent, details: Record<string, unknown> = {}): Promise<void> {
   await mkdir(dirname(LOG_FILE), { recursive: true });

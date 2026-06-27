@@ -8,10 +8,6 @@ import { randomUUID } from "node:crypto";
 export type Phase = "idle" | "requirements" | "planning" | "implementation" | "summary";
 export type SubPhase = "coding" | "review" | null;
 export type PeerRole = "supervisor" | "peer";
-export type IssueType = "P0" | "P1" | "P2";
-export type IssueStatus = "open" | "resolved" | "escalated" | "deferred";
-export type ResolvedBy = "converged" | "supervisor_override" | "force_converge" | null;
-export type Stance = "agree" | "disagree" | "require_clarification" | null;
 
 export interface Peer {
   identity: string;
@@ -26,57 +22,12 @@ export interface LastSubmit {
   sub_phase: SubPhase;
   commit_hash: string | null;
   submitted_at: string | null;
-  stance: Stance;
-  need_next_round: boolean | null;
-  new_issues: number[];
-}
-
-export interface Issue {
-  id: number;
-  type: IssueType;
-  topic: string;
-  description: string;
-  raised_by: string;
-  phase: string;
-  round: number;
-  status: IssueStatus;
-  positions: Record<string, string>;
-  resolution: string | null;
-  resolved_by: ResolvedBy;
-  escalated_at: string | null;
-  fix_review_cycles: number;
-  proposal: string | null;
-  rationale: string | null;
-  deferred_reason: string | null;
-  deferred_since_phase: string | null;
-  deferred_count: number;
 }
 
 export interface HistoryEntry {
-  type: "phase_change" | "turn_change" | "submit" | "converge" | "force_converge" | "advance";
+  type: "phase_change" | "submit";
   timestamp: string;
   details: Record<string, unknown>;
-}
-
-export interface CurrentLease {
-  token: string | null;
-  holder: string | null;
-  expires_at: string | null;
-  grace_used: boolean;
-}
-
-export interface PhaseConfig {
-  requirements: number;
-  planning: number;
-  implementation: number;
-  summary: number;
-}
-
-export interface CurrentTimeout {
-  active: boolean;
-  started: string | null;
-  expires: string | null;
-  phase_config: PhaseConfig;
 }
 
 export interface Task {
@@ -89,7 +40,6 @@ export interface Task {
 export interface PairFlowState {
   schema_version: number;
   workflow_id: string | null;
-  next_issue_id: number;
   phase: Phase;
   sub_phase: SubPhase;
   dev_phase: number | null;
@@ -101,19 +51,15 @@ export interface PairFlowState {
   task: Task | null;
   peers: Peer[];
   last_submit_per_turn: Record<string, LastSubmit>;
-  issues: Issue[];
   history: HistoryEntry[];
-  current_lease: CurrentLease;
-  current_timeout: CurrentTimeout;
 }
 
 // ── Default state ──
 
-export function defaultState(phaseConfig?: PhaseConfig): PairFlowState {
+export function defaultState(): PairFlowState {
   return {
     schema_version: 1,
     workflow_id: null,
-    next_issue_id: 1,
     phase: "idle",
     sub_phase: null,
     dev_phase: null,
@@ -125,15 +71,7 @@ export function defaultState(phaseConfig?: PhaseConfig): PairFlowState {
     task: null,
     peers: [],
     last_submit_per_turn: {},
-    issues: [],
     history: [],
-    current_lease: { token: null, holder: null, expires_at: null, grace_used: false },
-    current_timeout: {
-      active: false,
-      started: null,
-      expires: null,
-      phase_config: phaseConfig ?? { requirements: 10, planning: 10, implementation: 60, summary: 30 },
-    },
   };
 }
 
@@ -173,7 +111,7 @@ export async function saveState(state: PairFlowState): Promise<void> {
 
 export function initRequirementsPhase(state: PairFlowState, nonSupervisorId: string, task: Task): PairFlowState {
   const now = new Date().toISOString();
-  const emptyLastSubmit: LastSubmit = { round: null, sub_phase: null, commit_hash: null, submitted_at: null, stance: null, need_next_round: null, new_issues: [] };
+  const emptyLastSubmit: LastSubmit = { round: null, sub_phase: null, commit_hash: null, submitted_at: null };
   const lsp: Record<string, LastSubmit> = {};
   for (const p of state.peers) {
     lsp[p.identity] = { ...emptyLastSubmit };
@@ -188,17 +126,14 @@ export function initRequirementsPhase(state: PairFlowState, nonSupervisorId: str
     turn_switched_at: now,
     turn_claimed_at: null,
     converged: false,
-    issues: [],
     last_submit_per_turn: lsp,
-    current_lease: { token: null, holder: null, expires_at: null, grace_used: false },
-    current_timeout: { ...state.current_timeout, active: true, started: now, expires: addMinutes(now, state.current_timeout.phase_config.requirements) },
     history: [...state.history, { type: "phase_change", timestamp: now, details: { from: "idle", to: "requirements", round: 1, turn: nonSupervisorId } }],
   };
 }
 
 export function initPlanningPhase(state: PairFlowState, reviewerId: string): PairFlowState {
   const now = new Date().toISOString();
-  const emptyLastSubmit: LastSubmit = { round: null, sub_phase: null, commit_hash: null, submitted_at: null, stance: null, need_next_round: null, new_issues: [] };
+  const emptyLastSubmit: LastSubmit = { round: null, sub_phase: null, commit_hash: null, submitted_at: null };
   const lsp: Record<string, LastSubmit> = {};
   for (const p of state.peers) {
     lsp[p.identity] = { ...emptyLastSubmit };
@@ -210,17 +145,14 @@ export function initPlanningPhase(state: PairFlowState, reviewerId: string): Pai
     round: 1,
     turn: reviewerId,
     converged: false,
-    issues: [],
     last_submit_per_turn: lsp,
-    current_lease: { token: null, holder: null, expires_at: null, grace_used: false },
-    current_timeout: { ...state.current_timeout, active: true, started: now, expires: addMinutes(now, state.current_timeout.phase_config.planning) },
     history: [...state.history, { type: "phase_change", timestamp: now, details: { from: state.phase, to: "planning", round: 1, turn: reviewerId } }],
   };
 }
 
 export function initImplementationPhase(state: PairFlowState, developerId: string): PairFlowState {
   const now = new Date().toISOString();
-  const emptyLastSubmit: LastSubmit = { round: null, sub_phase: null, commit_hash: null, submitted_at: null, stance: null, need_next_round: null, new_issues: [] };
+  const emptyLastSubmit: LastSubmit = { round: null, sub_phase: null, commit_hash: null, submitted_at: null };
   const lsp: Record<string, LastSubmit> = {};
   for (const p of state.peers) {
     lsp[p.identity] = { ...emptyLastSubmit };
@@ -233,17 +165,14 @@ export function initImplementationPhase(state: PairFlowState, developerId: strin
     round: 1,
     turn: developerId,
     converged: false,
-    issues: state.issues.filter((i) => i.status !== "open"), // preserve escalated/deferred/resolved across phases
     last_submit_per_turn: lsp,
-    current_lease: { token: null, holder: null, expires_at: null, grace_used: false },
-    current_timeout: { ...state.current_timeout, active: true, started: now, expires: addMinutes(now, state.current_timeout.phase_config.implementation) },
     history: [...state.history, { type: "phase_change", timestamp: now, details: { from: state.phase, to: "implementation", round: 1, turn: developerId, dev_phase: (state.dev_phase ?? -1) + 1 } }],
   };
 }
 
-export function initSummaryPhase(state: PairFlowState, nonSupervisorId: string): PairFlowState {
+export function initSummaryPhase(state: PairFlowState, supervisorId: string): PairFlowState {
   const now = new Date().toISOString();
-  const emptyLastSubmit: LastSubmit = { round: null, sub_phase: null, commit_hash: null, submitted_at: null, stance: null, need_next_round: null, new_issues: [] };
+  const emptyLastSubmit: LastSubmit = { round: null, sub_phase: null, commit_hash: null, submitted_at: null };
   const lsp: Record<string, LastSubmit> = {};
   for (const p of state.peers) {
     lsp[p.identity] = { ...emptyLastSubmit };
@@ -253,22 +182,18 @@ export function initSummaryPhase(state: PairFlowState, nonSupervisorId: string):
     phase: "summary",
     sub_phase: null,
     round: 1,
-    turn: nonSupervisorId,
+    turn: supervisorId,
     turn_switched_at: now,
     turn_claimed_at: null,
     converged: false,
-    issues: state.issues.filter((i) => i.status !== "open"), // preserve escalated/deferred/resolved across phases
     last_submit_per_turn: lsp,
-    current_lease: { token: null, holder: null, expires_at: null, grace_used: false },
-    current_timeout: { ...state.current_timeout, active: true, started: now, expires: addMinutes(now, state.current_timeout.phase_config.summary) },
-    history: [...state.history, { type: "phase_change", timestamp: now, details: { from: state.phase, to: "summary", round: 1, turn: nonSupervisorId } }],
+    history: [...state.history, { type: "phase_change", timestamp: now, details: { from: state.phase, to: "summary", round: 1, turn: supervisorId } }],
   };
 }
 
 export function initIdleState(state: PairFlowState): PairFlowState {
   return {
-    ...defaultState(state.current_timeout.phase_config),
-    next_issue_id: state.next_issue_id,
+    ...defaultState(),
     history: [],
   };
 }
@@ -279,13 +204,6 @@ export function formatWorkflowId(iso: string): string {
   // yyyyMMddHHmmss from ISO string
   return iso.replace(/[-:T]/g, "").slice(0, 14);
 }
-
-function addMinutes(iso: string, minutes: number): string {
-  const d = new Date(iso);
-  d.setMinutes(d.getMinutes() + minutes);
-  return d.toISOString();
-}
-
 export function isCurrentHolder(state: PairFlowState, identity: string): boolean {
   return state.turn === identity;
 }
@@ -301,16 +219,4 @@ export function getOtherIdentity(state: PairFlowState, identity: string): string
 
 export function getPeerByIdentity(state: PairFlowState, identity: string): Peer | undefined {
   return state.peers.find((p) => p.identity === identity);
-}
-
-export interface ConvergeMark {
-  stance: Stance;
-  need_next_round: boolean | null;
-  new_issues?: {
-    type: IssueType;
-    topic: string;
-    description: string;
-  }[];
-  resolved_issue_ids?: number[];
-  issue_stances?: Record<string, { stance: string; argument?: string }>;
 }
