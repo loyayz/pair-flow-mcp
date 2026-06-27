@@ -108,3 +108,29 @@
 2. register.ts + advance.ts + submit.ts + claim-turn.ts + wait-for-turn.ts + get-state.ts（P0 身份边界批量修改）
 3. state.ts（P2 结构扩展）
 4. 测试更新（伴随每一步）
+
+---
+
+## deepseek r2 补充建议（已采纳）
+
+### 1. tip 模板集中管理
+
+**提出人：deepseek**
+
+将各工具 tip 模板集中到 `src/tips.ts` 常量文件，避免散落在工具函数中难以统一维护和测试。
+
+### 2. wait_for_turn 超时场景需身份边界
+
+**提出人：deepseek**
+
+等待超时(600s)返回也应包含身份边界 tip：
+```
+等待超时(600s)。当前身份: {identity}，turn 仍在 {turn}(对方)。
+若为监督者可调用 advance 跳过当前轮次。
+```
+
+### 3. submit tip 分角色用 if-else 实现
+
+**提出人：deepseek**
+
+计划模板用了 `{身份判断: ...}` 占位符，实现时直接用 `role` 和 `is_developer` 做 if-else 分支，不在模板中留动态占位。
