@@ -34,7 +34,7 @@ export async function confirmTask(
     if (!isSupervisor(state, identity)) return err("only supervisor can confirm task");
     if (state.phase !== "idle") return err("confirm_task only allowed in IDLE phase");
 
-    state.task = { description: resolved, spec_file: resolved };
+    state.task = { description: `任务文档: ${taskPath}`, spec_file: resolved };
 
     const pidFile = `${resolved}.pid`;
     let recovered = false;
@@ -54,6 +54,18 @@ export async function confirmTask(
           state.task = recoveredState.task;
           state.history = recoveredState.history;
           recovered = true;
+
+          // P2-4: Validate recovered turn holder is registered. If not, fall back to first peer.
+          const currentPeerIds = new Set(state.peers.map((p) => p.identity));
+          if (!currentPeerIds.has(state.turn)) {
+            state.turn = state.peers[0]?.identity ?? "idle";
+          }
+          // Clean last_submit_per_turn entries for unregistered identities
+          for (const key of Object.keys(state.last_submit_per_turn)) {
+            if (!currentPeerIds.has(key)) {
+              delete state.last_submit_per_turn[key];
+            }
+          }
         }
       }
     } catch {

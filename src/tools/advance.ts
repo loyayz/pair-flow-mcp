@@ -55,7 +55,7 @@ export async function advance(
       if (!developer) return err("no developer (is_developer=true) registered");
       const next = initImplementationPhase(state, developer.identity);
       await saveState(next);
-      await logEvent("advance", { identity, from: "planning", to: "implementation", dev_phase: next.dev_phase });
+      await logEvent("advance", { identity, from: "planning", to: "implementation", dev_cycle: next.dev_cycle });
       return ok({ ok: true, new_phase: "implementation", sub_phase: "coding", turn: developer.identity }, "下一步调用 wait_for_turn 接口（turn 已切换给对方）");
     }
 
@@ -67,6 +67,11 @@ export async function advance(
     }
 
     if (currentPhase === "summary") {
+      // P2-7: Require at least one submission in SUMMARY before advancing to IDLE
+      const summarySubmissions = Object.values(state.last_submit_per_turn).filter((s) => s.commit_hash);
+      if (summarySubmissions.length === 0) {
+        return err("no summary submissions yet — at least one peer must submit before advancing to IDLE");
+      }
       const next = initIdleState(state);
       await saveState(next);
       await logEvent("advance", { identity, from: "summary", to: "idle" });

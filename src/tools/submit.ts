@@ -1,3 +1,5 @@
+import { writeFile, mkdir } from "node:fs/promises";
+import { join, dirname } from "node:path";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
@@ -6,6 +8,8 @@ import { loadState, saveState, isCurrentHolder, getOtherIdentity } from "../stat
 import { logEvent } from "../logger.js";
 import { stateMutex } from "../mutex.js";
 import { err, ok } from "../response.js";
+
+const HANDOFF_DIR = process.env.HANDOFF_DIR || "handoff";
 
 export async function submit(
   args: Record<string, unknown>,
@@ -45,6 +49,8 @@ export async function submit(
     }
 
     const originalTurn = state.turn;
+    const originalRound = state.round;
+    const originalSubPhase = state.sub_phase;
 
     // Record submission
     const now = new Date().toISOString();
@@ -75,9 +81,45 @@ export async function submit(
     await saveState(state);
     await logEvent("submit", { identity, round: state.round - 1, file_path: filePath, commit_hash: commitHash });
 
-    const tip = state.phase === "summary"
+    // P0-3: Auto-generate meta.json for crash recovery
+    await writeMetaJson(state.workflow_id!, state.phase, originalTurn, originalRound, commitHash, originalSubPhase, state.task);
+
+    // P2-5: Differentiate tip by next turn holder's role
+    const nextIsSupervisor = state.peers.some((p) => p.identity === state.turn && p.role === "supervisor");
+    const tip = state.phase === "summary" && nextIsSupervisor
       ? "请调用 advance 接口结束当前工作流"
-      : "下一步调用 wait_for_turn 接口";
+      : state.phase === "summary"
+        ? "下一步调用 wait_for_turn 接口（监督者将调用 advance 结束工作流）"
+        : nextIsSupervisor
+          ? "若审阅后确认当前阶段目标已达成，可调用 advance 接口进入下一阶段"
+          : "下一步调用 wait_for_turn 接口";
     return ok({ ok: true, next_turn: state.turn }, tip);
   });
+}
+
+// P0-3: Auto-generate meta.json alongside each submission for crash recovery
+async function writeMetaJson(
+  workflowId: string,
+  phase: string,
+  identity: string,
+  round: number,
+  commitHash: string,
+  subPhase: string | null,
+  task: unknown,
+): Promise<void> {
+  try {
+    const prefix = phase === "implementation" && subPhase
+      ? `r${round}_${subPhase}_${identity}`
+      : `r${round}_${identity}`;
+    const metaPath = join(HANDOFF_DIR, workflowId, phase, `${prefix}.meta.json`);
+    await mkdir(dirname(metaPath), { recursive: true });
+    await writeFile(metaPath, JSON.stringify({
+      submitted_at: new Date().toISOString(),
+      commit_hash: commitHash,
+      sub_phase: subPhase,
+      task,
+    }, null, 2), "utf-8");
+  } catch {
+    // meta.json is best-effort; don't fail submit if it can't be written
+  }
 }

@@ -1,5 +1,5 @@
 import { readdir, readFile, mkdir, access } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join, resolve, relative } from "node:path";
 import { loadState, saveState, defaultState, type PairFlowState, type Phase, type SubPhase, type Peer, type LastSubmit } from "./state.js";
 import { logEvent } from "./logger.js";
 
@@ -105,9 +105,9 @@ export async function reconstructFromHandoff(
     state.sub_phase = inferSubPhase(latestMetaFiles);
   }
 
-  // 4b. Recover dev_phase (retro-2 §4.1)
+  // 4b. Recover dev_cycle (retro-2 §4.1)
   if (state.phase === "implementation") {
-    state.dev_phase = await inferDevPhase(wfDirVar);
+    state.dev_cycle = await inferDevPhase(wfDirVar);
   }
 
   // 4c. Recover last_submit_per_turn from meta.json (retro-1 §2.2)
@@ -255,7 +255,7 @@ async function inferDevPhase(wfDir: string): Promise<number> {
       const match = content.match(/循环总数[：:]\s*(\d+)/i);
       if (match) {
         const totalCycles = parseInt(match[1], 10);
-        // Count completed coding rounds in implementation/ to determine current dev_phase
+        // Count completed coding rounds in implementation/ to determine current dev_cycle
         const implCount = await countCodingRounds(wfDir);
         return Math.min(implCount, totalCycles - 1);
       }
@@ -342,11 +342,14 @@ async function findFiles(dir: string, suffix: string): Promise<string[]> {
     const entries = await readdir(absDir, { withFileTypes: true, recursive: true });
     for (const e of entries) {
       if (e.isFile() && e.name.endsWith(suffix)) {
-        const pp = (e as { parentPath?: string }).parentPath;
+        // P2-6: parentPath requires Node 22+; use relative() fallback for lower versions
+        const pp: string | undefined = (e as { parentPath?: string }).parentPath;
         if (pp) {
-          // parentPath is absolute on Node 24; make it relative to search dir
           const relDir = pp.startsWith(absDir) ? pp.slice(absDir.length).replace(/^[\\/]/, "") : pp;
           results.push(relDir ? join(relDir, e.name) : e.name);
+        } else if ((e as { path?: string }).path) {
+          const relPath = relative(absDir, (e as { path: string }).path);
+          results.push(relPath);
         } else {
           results.push(e.name);
         }

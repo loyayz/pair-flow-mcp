@@ -42,12 +42,11 @@ export interface PairFlowState {
   workflow_id: string | null;
   phase: Phase;
   sub_phase: SubPhase;
-  dev_phase: number | null;
+  dev_cycle: number | null;
   round: number;
   turn: string;
   turn_switched_at: string | null;
   turn_claimed_at: string | null;
-  converged: boolean;
   task: Task | null;
   peers: Peer[];
   last_submit_per_turn: Record<string, LastSubmit>;
@@ -62,12 +61,11 @@ export function defaultState(): PairFlowState {
     workflow_id: null,
     phase: "idle",
     sub_phase: null,
-    dev_phase: null,
+    dev_cycle: null,
     round: 1,
     turn: "idle",
     turn_switched_at: null,
     turn_claimed_at: null,
-    converged: false,
     task: null,
     peers: [],
     last_submit_per_turn: {},
@@ -125,7 +123,6 @@ export function initRequirementsPhase(state: PairFlowState, nonSupervisorId: str
     turn: nonSupervisorId,
     turn_switched_at: now,
     turn_claimed_at: null,
-    converged: false,
     last_submit_per_turn: lsp,
     history: [...state.history, { type: "phase_change", timestamp: now, details: { from: "idle", to: "requirements", round: 1, turn: nonSupervisorId } }],
   };
@@ -144,7 +141,6 @@ export function initPlanningPhase(state: PairFlowState, reviewerId: string): Pai
     sub_phase: null,
     round: 1,
     turn: reviewerId,
-    converged: false,
     last_submit_per_turn: lsp,
     history: [...state.history, { type: "phase_change", timestamp: now, details: { from: state.phase, to: "planning", round: 1, turn: reviewerId } }],
   };
@@ -161,12 +157,11 @@ export function initImplementationPhase(state: PairFlowState, developerId: strin
     ...state,
     phase: "implementation",
     sub_phase: "coding",
-    dev_phase: (state.dev_phase ?? -1) + 1,
+    dev_cycle: (state.dev_cycle ?? -1) + 1,
     round: 1,
     turn: developerId,
-    converged: false,
     last_submit_per_turn: lsp,
-    history: [...state.history, { type: "phase_change", timestamp: now, details: { from: state.phase, to: "implementation", round: 1, turn: developerId, dev_phase: (state.dev_phase ?? -1) + 1 } }],
+    history: [...state.history, { type: "phase_change", timestamp: now, details: { from: state.phase, to: "implementation", round: 1, turn: developerId, dev_cycle: (state.dev_cycle ?? -1) + 1 } }],
   };
 }
 
@@ -185,7 +180,6 @@ export function initSummaryPhase(state: PairFlowState, supervisorId: string): Pa
     turn: supervisorId,
     turn_switched_at: now,
     turn_claimed_at: null,
-    converged: false,
     last_submit_per_turn: lsp,
     history: [...state.history, { type: "phase_change", timestamp: now, details: { from: state.phase, to: "summary", round: 1, turn: supervisorId } }],
   };

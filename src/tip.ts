@@ -13,7 +13,13 @@ export function buildTip(state: PairFlowState, identity: string): string {
   const wfId = safe(state.workflow_id);
   const phase = safe(state.phase);
   const ident = safe(identity);
-  const outFile = join(HANDOFF_DIR, wfId, phase, `r${state.round}_${ident}.md`);
+
+  // P0-1: IMPLEMENTATION phase 文件名含 sub_phase 前缀，对齐 §3 目录结构
+  const filePrefix = state.phase === "implementation" && state.sub_phase
+    ? `r${state.round}_${state.sub_phase}_${ident}`
+    : `r${state.round}_${ident}`;
+  const outFile = join(HANDOFF_DIR, wfId, phase, `${filePrefix}.md`);
+
   const submitParams = "产出文档后请先 git commit，再调用 submit 接口，参数 file_path 为产出文件路径、git_commit_hash 为当前仓库 HEAD 的 commit hash";
 
   if (state.round === 1) {
@@ -27,7 +33,7 @@ export function buildTip(state: PairFlowState, identity: string): string {
       return `请根据实施计划进行代码实现。实现后先自行 code review，修改至自己认为没有问题，再产出文档。产出文件路径: ${outFile}。${submitParams}`;
     }
     if (state.phase === "summary") {
-      return `请产出一份阶段总结报告，包含本阶段的关键决策、遗留问题和后续建议。产出文件路径: ${outFile}。${submitParams}`;
+      return `请产出一份阶段总结草稿（将由对方审阅后形成最终报告），包含本阶段的关键决策、遗留问题和后续建议。产出文件路径: ${outFile}。${submitParams}`;
     }
     return `[错误] 未知的阶段/子阶段组合: phase=${state.phase}, sub_phase=${state.sub_phase}, round=1。请联系开发者排查。`;
   }
@@ -35,8 +41,18 @@ export function buildTip(state: PairFlowState, identity: string): string {
   const other = state.peers.find((p) => p.identity !== identity);
   const otherSubmit = other ? state.last_submit_per_turn[other.identity] : null;
   const otherIdent = other ? safe(other.identity) : "unknown";
+
+  // P0-1: IMPLEMENTATION phase 文件名含 sub_phase 前缀
+  function implFile(round: number, id: string, sp: string | null): string {
+    if (state.phase === "implementation" && sp) {
+      return join(HANDOFF_DIR, wfId, phase, `r${round}_${sp}_${id}.md`);
+    }
+    return join(HANDOFF_DIR, wfId, phase, `r${round}_${id}.md`);
+  }
+  // prevFile: 对方上一轮使用相反的 sub_phase（coding↔review 交替）
+  const prevSubPhase = state.sub_phase === "coding" ? "review" : state.sub_phase === "review" ? "coding" : null;
   const prevFile = otherSubmit?.commit_hash
-    ? join(HANDOFF_DIR, wfId, phase, `r${state.round - 1}_${otherIdent}.md`)
+    ? implFile(state.round - 1, otherIdent, prevSubPhase)
     : null;
   const prevInfo = prevFile
     ? `${prevFile}（对方 commit: ${otherSubmit!.commit_hash}）`
@@ -61,7 +77,7 @@ export function buildTip(state: PairFlowState, identity: string): string {
   if (state.phase === "implementation" && state.sub_phase === "review") {
     const planFile = join(HANDOFF_DIR, wfId, "planning", `r1_${otherIdent}.md`);
     if (state.round > 2) {
-      const myPrevReview = join(HANDOFF_DIR, wfId, "implementation", `r${state.round - 2}_${ident}.md`);
+      const myPrevReview = implFile(state.round - 2, ident, "review");
       return `请结合实施计划 ${planFile}、上一轮你的评审文档 ${myPrevReview}，审阅对方的代码产出 ${prevInfo}。检查是否按计划实现、上一轮问题是否已解决、代码正确性和风格。产出文件路径: ${outFile}。${submitParams}${advanceHint}`;
     }
     return `请结合实施计划 ${planFile}，审阅对方的代码产出 ${prevInfo}。检查是否按计划实现、代码正确性和风格。产出文件路径: ${outFile}。${submitParams}${advanceHint}`;
@@ -69,6 +85,14 @@ export function buildTip(state: PairFlowState, identity: string): string {
 
   if (state.phase === "implementation" && state.sub_phase === "coding") {
     return `请根据上一轮的评审意见修改代码。修改后先自行 code review，确认问题已解决，再产出文档。产出文件路径: ${outFile}。${submitParams}`;
+  }
+
+  // P0-2 + P1-1: SUMMARY round ≥ 2 — r2 审阅草稿，r3+ 交替修订
+  if (state.phase === "summary") {
+    if (state.round === 2) {
+      return `请审阅监督者的汇总草稿 ${prevInfo}，提出修改意见或补充遗漏。产出文件路径: ${outFile}。${submitParams}`;
+    }
+    return `请基于上一轮审阅意见修订汇总文档 ${prevInfo}。产出文件路径: ${outFile}。${submitParams}${advanceHint}`;
   }
 
   return `[错误] 未知的阶段/子阶段组合: phase=${state.phase}, sub_phase=${state.sub_phase}, round=${state.round}。请联系开发者排查。`;
