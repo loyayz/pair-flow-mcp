@@ -111,39 +111,6 @@ describe("Claim turn + submit", () => {
   });
 });
 
-describe("Issue CRUD", () => {
-  beforeAll(async () => { await startServer(); await setup(); }, 20000);
-  afterAll(async () => { stopServer(); await rm(TEST_TASK + ".pid", { force: true }); });
-
-  it("creates and lists", async () => {
-    const r = await mcpRequest("create_issue", { type: "P1", topic: "test", description: "desc", proposal: "fix", rationale: "§5.3" }, { "x-ai-identity": "claude" });
-    expect(r.ok).toBe(true);
-    const list = await mcpRequest("list_issues", {}) as { issues: unknown[] };
-    expect(list.issues).toBeDefined();
-  });
-  it("rejects P0 without proposal", async () => {
-    const r = await mcpRequest("create_issue", { type: "P0", topic: "no proposal", description: "desc" }, { "x-ai-identity": "claude" });
-    expect(r.ok).toBe(false);
-  });
-  it("resolve closes issue", async () => {
-    const r = await mcpRequest("create_issue", { type: "P2", topic: "to close", description: "q" }, { "x-ai-identity": "claude" }) as { ok: boolean; issue_id: number };
-    const res = await mcpRequest("resolve_issue", { issue_id: r.issue_id, resolution: "done" }, { "x-ai-identity": "claude" });
-    expect(res.ok).toBe(true);
-  });
-});
-
-describe("Force converge", () => {
-  beforeAll(async () => { await startServer(); await setup(); }, 20000);
-  afterAll(async () => { stopServer(); await rm(TEST_TASK + ".pid", { force: true }); });
-
-  it("only supervisor", async () => {
-    const r = await mcpRequest("force_converge", {}, { "x-ai-identity": "codebuddy" });
-    expect(r.ok).toBe(false);
-    const r2 = await mcpRequest("force_converge", {}, { "x-ai-identity": "claude" });
-    expect(r2.ok).toBe(true);
-  });
-});
-
 describe("Concurrent mutex", () => {
   beforeAll(startServer, 15000);
   afterAll(stopServer);

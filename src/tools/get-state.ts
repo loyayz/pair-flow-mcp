@@ -7,7 +7,6 @@ import { ok } from "../response.js";
 import { buildTip } from "../tip.js";
 
 export async function getState(
-  args: Record<string, unknown>,
   extra: RequestHandlerExtra<ServerRequest, ServerNotification>
 ): Promise<CallToolResult> {
   const identity = parseIdentity(extra.requestInfo?.headers);

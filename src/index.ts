@@ -10,11 +10,8 @@ import { register } from "./tools/register.js";
 import { claimTurn } from "./tools/claim-turn.js";
 import { advance } from "./tools/advance.js";
 import { getState } from "./tools/get-state.js";
-import { getContext } from "./tools/get-context.js";
 import { submit } from "./tools/submit.js";
-import { createIssue, resolveIssue, escalate, deferIssue, listIssues } from "./tools/issue-tools.js";
-import { getArchivedFiles, getArchivedFileContent, forceConverge } from "./tools/archive-tools.js";
-import { resetState } from "./tools/reset.js";
+import { getArchivedFiles, getArchivedFileContent } from "./tools/archive-tools.js";
 import { waitForTurn } from "./tools/wait-for-turn.js";
 import { confirmDir } from "./tools/confirm-dir.js";
 import { confirmTask } from "./tools/confirm-task.js";
@@ -38,18 +35,10 @@ function createServerWithTools() {
   mcp.registerTool("confirm_task", { description: "确认任务文档路径。仅监督者在 IDLE 阶段可用。", inputSchema: { task_path: z.string() } }, confirmTask);
   mcp.registerTool("claim_turn", { description: "获取当前轮次的执行权。仅通过 X-AI-Identity header 识别身份。", inputSchema: {} }, claimTurn);
   mcp.registerTool("advance", { description: "推进到下一阶段。仅监督者可用。", inputSchema: {} }, advance);
-  mcp.registerTool("get_state", { description: "完整状态快照。匿名可用。" }, getState);
-  mcp.registerTool("get_context", { description: "当前阶段上下文。" }, getContext);
-  mcp.registerTool("create_issue", { description: "创建 issue。P0/P1 必填 proposal+rationale，P2 可选。fix sub_phase 禁 P0。", inputSchema: { type: z.enum(["P0","P1","P2"]), topic: z.string().max(200), description: z.string(), my_position: z.string().optional(), proposal: z.string().optional(), rationale: z.string().optional() } }, createIssue);
-  mcp.registerTool("resolve_issue", { description: "关闭 issue。P0 仅监督者。", inputSchema: { issue_id: z.number(), resolution: z.string() } }, resolveIssue);
-  mcp.registerTool("defer_issue", { description: "延迟 issue 到后续阶段处理。仅 issue 创建者或监督者可操作。", inputSchema: { issue_id: z.number(), reason: z.string() } }, deferIssue);
-  mcp.registerTool("escalate", { description: "升级 P0 → escalated（仅监督者）。", inputSchema: { issue_id: z.number(), reason: z.string() } }, escalate);
-  mcp.registerTool("list_issues", { description: "列出 issue。scope=current_phase/all。", inputSchema: { status: z.string().optional(), scope: z.string().optional() } }, listIssues);
+  mcp.registerTool("get_state", { description: "返回当前执行指引（tip）。匿名可用。" }, getState);
   mcp.registerTool("get_archived_files", { description: "列出归档文件。phase/workflow_id 可选过滤。", inputSchema: { phase: z.string().optional(), workflow_id: z.string().optional() } }, getArchivedFiles);
-  mcp.registerTool("get_archived_file_content", { description: "读取归档文件内容。phase 参数可选，用于指定子目录（requirements/planning/implementation/summary）。盲审模式下拒绝对方盲审文件。", inputSchema: { filename: z.string(), phase: z.string().optional() } }, getArchivedFileContent);
-  mcp.registerTool("force_converge", { description: "强制收敛当前 dev_phase 循环（仅监督者，phase≠idle）。", inputSchema: {} }, forceConverge);
-  mcp.registerTool("reset", { description: "重置运行时状态到 IDLE，保留 handoff 归档。仅监督者，仅 IDLE 阶段可用。", inputSchema: {} }, resetState);
-  mcp.registerTool("wait_for_turn", { description: "长轮询等待 turn 切换到调用方。2s 间隔，60s 超时返回当前状态。phase 变更或 converged 时提前返回。" }, waitForTurn);
+  mcp.registerTool("get_archived_file_content", { description: "读取归档文件内容。phase 参数可选，用于指定子目录（requirements/planning/implementation/summary）。", inputSchema: { filename: z.string(), phase: z.string().optional() } }, getArchivedFileContent);
+  mcp.registerTool("wait_for_turn", { description: "长轮询等待 turn 切换到调用方。10s 间隔，600s 超时。turn=自己时返回。" }, waitForTurn);
   mcp.registerTool(
     "submit",
     {
