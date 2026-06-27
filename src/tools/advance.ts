@@ -1,3 +1,4 @@
+import { unlink } from "node:fs/promises";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
@@ -71,6 +72,10 @@ export async function advance(
       const summarySubmissions = Object.values(state.last_submit_per_turn).filter((s) => s.commit_hash);
       if (summarySubmissions.length === 0) {
         return err("no summary submissions yet — at least one peer must submit before advancing to IDLE");
+      }
+      // P2-7 supplement: Clean .pid file so next confirm_task starts fresh
+      if (state.task?.spec_file) {
+        try { await unlink(`${state.task.spec_file}.pid`); } catch { /* .pid may not exist */ }
       }
       const next = initIdleState(state);
       await saveState(next);
