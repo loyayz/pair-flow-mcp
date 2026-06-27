@@ -62,6 +62,9 @@ export async function submit(
     await saveState(state);
     await logEvent("submit", { identity, round: state.round - 1, file_path: filePath, commit_hash: commitHash });
 
-    return ok({ ok: true, next_turn: state.turn }, "下一步调用 wait_for_turn 接口");
+    const tip = state.phase === "summary"
+      ? "请调用 advance 接口结束当前工作流"
+      : "下一步调用 wait_for_turn 接口";
+    return ok({ ok: true, next_turn: state.turn }, tip);
   });
 }

@@ -182,7 +182,7 @@ project/                                         ← git 仓库根
   "next_issue_id": 1,           // 单调递增，永不重置（跨工作流保留）
   "phase": "idle | requirements | planning | implementation | summary",
   // 注：正文使用大写（IDLE/REQUIREMENTS/...）为人类可读名称，schema 中为小写
-  "sub_phase": "coding | review | fix | null",
+  "sub_phase": "coding | review | null",
   "dev_phase": null,            // IMPLEMENTATION 阶段开发里程碑序号（0 起始，每循环收敛后自增；非 IMPLEMENTATION 为 null）。循环次数在计划阶段定义
   "round": 1,
   "turn": "idle | <identity_a> | <identity_b>",

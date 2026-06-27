@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 // ── Types (§5.1 state.json schema) ──
 
 export type Phase = "idle" | "requirements" | "planning" | "implementation" | "summary";
-export type SubPhase = "coding" | "review" | "fix" | null;
+export type SubPhase = "coding" | "review" | null;
 export type PeerRole = "supervisor" | "peer";
 export type IssueType = "P0" | "P1" | "P2";
 export type IssueStatus = "open" | "resolved" | "escalated" | "deferred";
