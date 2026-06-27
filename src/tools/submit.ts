@@ -27,6 +27,15 @@ export async function submit(
     if (!state.peers.some((p) => p.identity === identity)) return err("identity not registered");
     if (!isCurrentHolder(state, identity)) return err(`not your turn — current turn: ${state.turn}`);
 
+    // IMPLEMENTATION role check: coding → developer only, review → reviewer only
+    const isDeveloper = state.peers.some((p) => p.identity === identity && p.is_developer);
+    if (state.phase === "implementation" && state.sub_phase === "coding" && !isDeveloper) {
+      return err("only the developer can submit during coding sub_phase");
+    }
+    if (state.phase === "implementation" && state.sub_phase === "review" && isDeveloper) {
+      return err("only the reviewer can submit during review sub_phase");
+    }
+
     // Reject if no new work since last submission (check all parties)
     const lastHash = Object.values(state.last_submit_per_turn)
       .filter((s) => s.commit_hash)
@@ -49,6 +58,13 @@ export async function submit(
       new_issues: [],
     };
     state.history.push({ type: "submit", timestamp: now, details: { identity, round: state.round, file_path: filePath, commit_hash: commitHash } });
+
+    // IMPLEMENTATION sub_phase toggle: coding ↔ review
+    if (state.phase === "implementation" && state.sub_phase === "coding") {
+      state.sub_phase = "review";
+    } else if (state.phase === "implementation" && state.sub_phase === "review") {
+      state.sub_phase = "coding";
+    }
 
     // Advance round and switch turn
     state.round += 1;

@@ -45,7 +45,15 @@ export async function confirmTask(
       if (raw && /^\d{14}$/.test(raw)) {
         const recoveredState = await reconstructFromHandoff(state, undefined, raw);
         if (recoveredState) {
-          Object.assign(state, recoveredState);
+          // Restore workflow progress, keep current registered peers
+          state.workflow_id = recoveredState.workflow_id;
+          state.phase = recoveredState.phase;
+          state.sub_phase = recoveredState.sub_phase;
+          state.round = recoveredState.round;
+          state.last_submit_per_turn = recoveredState.last_submit_per_turn;
+          state.task = recoveredState.task;
+          state.issues = recoveredState.issues;
+          state.history = recoveredState.history;
           recovered = true;
         }
       }

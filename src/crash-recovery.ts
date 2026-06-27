@@ -2,7 +2,6 @@ import { readdir, readFile, mkdir, access } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { loadState, saveState, defaultState, type PairFlowState, type Phase, type SubPhase, type Peer, type LastSubmit } from "./state.js";
 import { logEvent } from "./logger.js";
-import { startLeaseTimer } from "./lease.js";
 
 const HANDOFF_DIR = process.env.HANDOFF_DIR || "handoff";
 
@@ -107,24 +106,7 @@ export async function recoverState(): Promise<PairFlowState> {
     } catch { /* phase dir missing */ }
   }
 
-  // Step 5: Restart timer if active and not expired (before clearing lease)
-  if (state.current_timeout.active && state.current_timeout.expires) {
-    const expiresAt = new Date(state.current_timeout.expires).getTime();
-    if (expiresAt > Date.now()) {
-      // Timer not yet expired — restart (needs current_lease intact)
-      startLeaseTimer(state);
-    } else {
-      // Already expired — release turn immediately
-      const other = state.peers.find((p) => p.identity !== state.turn);
-      if (other) state.turn = other.identity;
-      state.current_timeout.active = false;
-    }
-  }
-
-  // Step 6: Clear lease (after timer restart — startLeaseTimer reads current_lease)
-  state.current_lease = { token: null, holder: null, expires_at: null, grace_used: false };
-
-  // Step 7: IDLE crash — peers already cleared above
+  // Step 5: IDLE crash — peers already cleared above
   state.recovered = wasRecovered;
   await saveState(state);
   await logEvent("crash_recovery", { recovered: true, workflow_id: state.workflow_id, phase: state.phase });

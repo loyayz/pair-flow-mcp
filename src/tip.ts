@@ -46,8 +46,10 @@ export function buildTip(state: PairFlowState, identity: string): string {
     if (state.phase === "requirements") {
       return `请基于当前任务文档 ${taskPath}，审阅 ${prevInfo}。所有观点需注明提出人。双方均同意的点，请直接修改任务文档 ${taskPath}；不同意的点，请在产出文件中标注原因和建议。产出文件路径: ${outFile}。${submitParams}`;
     }
-    const planner = state.peers.find((p) => !p.is_developer);
-    const planDoc = planner ? join(HANDOFF_DIR, wfId, "planning", `r1_${safe(planner.identity)}.md`) : "计划文档";
+    // Find actual r1 submitter from last_submit_per_turn (not current peers)
+    const r1Submitter = Object.entries(state.last_submit_per_turn)
+      .find(([_, s]) => s.round === 1 && s.commit_hash)?.[0];
+    const planDoc = r1Submitter ? join(HANDOFF_DIR, wfId, "planning", `r1_${safe(r1Submitter)}.md`) : "计划文档";
     return `请基于当前计划文档 ${planDoc}，审阅 ${prevInfo}。所有观点需注明提出人。双方均同意的点，请直接修改计划文档 ${planDoc}；不同意的点，请在产出文件中标注原因和建议。产出文件路径: ${outFile}。${submitParams}`;
   }
 

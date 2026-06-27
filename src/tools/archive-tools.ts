@@ -7,7 +7,6 @@ import { parseIdentity } from "../identity.js";
 import { loadState, saveState } from "../state.js";
 import { logEvent } from "../logger.js";
 import { stateMutex } from "../mutex.js";
-import { stopLeaseTimer } from "../lease.js";
 
 const HANDOFF_DIR = process.env.HANDOFF_DIR || "handoff";
 
@@ -126,7 +125,6 @@ export async function forceConverge(
     }
     state.current_lease = { token: null, holder: null, expires_at: null, grace_used: false };
     state.current_timeout.active = false;
-    stopLeaseTimer();
     await saveState(state);
     // P1-2: force_converge 审计日志 — 记录上下文用于区分合理使用和流程缺陷
     const openP0 = state.issues.filter((i) => i.type === "P0" && i.status === "open").length;
