@@ -22,6 +22,7 @@ export interface LastSubmit {
   sub_phase: SubPhase;
   commit_hash: string | null;
   submitted_at: string | null;
+  file_path: string | null;
 }
 
 export interface HistoryEntry {
@@ -31,7 +32,6 @@ export interface HistoryEntry {
 }
 
 export interface Task {
-  description: string;
   spec_file?: string;
   goals?: string[];
   context?: string;
@@ -109,7 +109,7 @@ export async function saveState(state: PairFlowState): Promise<void> {
 
 export function initRequirementsPhase(state: PairFlowState, nonSupervisorId: string, task: Task): PairFlowState {
   const now = new Date().toISOString();
-  const emptyLastSubmit: LastSubmit = { round: null, sub_phase: null, commit_hash: null, submitted_at: null };
+  const emptyLastSubmit: LastSubmit = { round: null, sub_phase: null, commit_hash: null, submitted_at: null, file_path: null };
   const lsp: Record<string, LastSubmit> = {};
   for (const p of state.peers) {
     lsp[p.identity] = { ...emptyLastSubmit };
@@ -130,7 +130,7 @@ export function initRequirementsPhase(state: PairFlowState, nonSupervisorId: str
 
 export function initPlanningPhase(state: PairFlowState, reviewerId: string): PairFlowState {
   const now = new Date().toISOString();
-  const emptyLastSubmit: LastSubmit = { round: null, sub_phase: null, commit_hash: null, submitted_at: null };
+  const emptyLastSubmit: LastSubmit = { round: null, sub_phase: null, commit_hash: null, submitted_at: null, file_path: null };
   const lsp: Record<string, LastSubmit> = {};
   for (const p of state.peers) {
     lsp[p.identity] = { ...emptyLastSubmit };
@@ -148,7 +148,7 @@ export function initPlanningPhase(state: PairFlowState, reviewerId: string): Pai
 
 export function initImplementationPhase(state: PairFlowState, developerId: string): PairFlowState {
   const now = new Date().toISOString();
-  const emptyLastSubmit: LastSubmit = { round: null, sub_phase: null, commit_hash: null, submitted_at: null };
+  const emptyLastSubmit: LastSubmit = { round: null, sub_phase: null, commit_hash: null, submitted_at: null, file_path: null };
   const lsp: Record<string, LastSubmit> = {};
   for (const p of state.peers) {
     lsp[p.identity] = { ...emptyLastSubmit };
@@ -167,7 +167,7 @@ export function initImplementationPhase(state: PairFlowState, developerId: strin
 
 export function initSummaryPhase(state: PairFlowState, supervisorId: string): PairFlowState {
   const now = new Date().toISOString();
-  const emptyLastSubmit: LastSubmit = { round: null, sub_phase: null, commit_hash: null, submitted_at: null };
+  const emptyLastSubmit: LastSubmit = { round: null, sub_phase: null, commit_hash: null, submitted_at: null, file_path: null };
   const lsp: Record<string, LastSubmit> = {};
   for (const p of state.peers) {
     lsp[p.identity] = { ...emptyLastSubmit };

@@ -42,18 +42,8 @@ export function buildTip(state: PairFlowState, identity: string): string {
   const otherSubmit = other ? state.last_submit_per_turn[other.identity] : null;
   const otherIdent = other ? safe(other.identity) : "unknown";
 
-  // P0-1: IMPLEMENTATION phase 文件名含 sub_phase 前缀
-  function implFile(round: number, id: string, sp: string | null): string {
-    if (state.phase === "implementation" && sp) {
-      return join(HANDOFF_DIR, wfId, phase, `r${round}_${sp}_${id}.md`);
-    }
-    return join(HANDOFF_DIR, wfId, phase, `r${round}_${id}.md`);
-  }
-  // prevFile: 对方上一轮使用相反的 sub_phase（coding↔review 交替）
-  const prevSubPhase = state.sub_phase === "coding" ? "review" : state.sub_phase === "review" ? "coding" : null;
-  const prevFile = otherSubmit?.commit_hash
-    ? implFile(state.round - 1, otherIdent, prevSubPhase)
-    : null;
+  // prevFile: 查 last_submit_per_turn 中对方记录的 file_path，无需反向推断命名规则
+  const prevFile = otherSubmit?.file_path ?? null;
   const prevInfo = prevFile
     ? `${prevFile}（对方 commit: ${otherSubmit!.commit_hash}）`
     : "对方上一轮产出（commit hash 缺失）";
@@ -77,7 +67,7 @@ export function buildTip(state: PairFlowState, identity: string): string {
   if (state.phase === "implementation" && state.sub_phase === "review") {
     const planFile = join(HANDOFF_DIR, wfId, "planning", `r1_${otherIdent}.md`);
     if (state.round > 2) {
-      const myPrevReview = implFile(state.round - 2, ident, "review");
+      const myPrevReview = join(HANDOFF_DIR, wfId, phase, `r${state.round - 2}_review_${ident}.md`);
       return `请结合实施计划 ${planFile}、上一轮你的评审文档 ${myPrevReview}，审阅对方的代码产出 ${prevInfo}。检查是否按计划实现、上一轮问题是否已解决、代码正确性和风格。产出文件路径: ${outFile}。${submitParams}${advanceHint}`;
     }
     return `请结合实施计划 ${planFile}，审阅对方的代码产出 ${prevInfo}。检查是否按计划实现、代码正确性和风格。产出文件路径: ${outFile}。${submitParams}${advanceHint}`;

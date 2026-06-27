@@ -54,14 +54,14 @@ export async function reconstructFromHandoff(
         const raw = await readFile(join(wfDirVar, mf), "utf-8");
         const meta = JSON.parse(raw);
         // P1-14: restore task from first meta.json that contains it
-        if (!state.task && meta.task && meta.task.description) {
+        if (!state.task && meta.task && meta.task.spec_file) {
           state.task = meta.task;
         }
       } catch { /* skip corrupt */ }
     }
   } catch { /* */ }
 
-  // 4. Determine round, turn, converged
+  // 4. Determine round, turn
   const latestPhaseDir = join(wfDirVar, state.phase);
   const latestMetaFiles = await findFiles(latestPhaseDir, ".meta.json");
   let maxRound = 1;
@@ -319,6 +319,7 @@ async function reconstructLastSubmit(wfDir: string, peers: Peer[], phase: string
             sub_phase: meta.sub_phase ?? inferSubPhaseFromFilename(base),
             commit_hash: meta.commit_hash ?? null,
             submitted_at: meta.submitted_at ?? null,
+            file_path: join(phaseDir, base.replace(/\.meta\.json$/, ".md")),
           };
         }
       } catch { /* skip corrupt meta */ }

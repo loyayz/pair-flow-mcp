@@ -34,7 +34,7 @@ export async function confirmTask(
     if (!isSupervisor(state, identity)) return err("only supervisor can confirm task");
     if (state.phase !== "idle") return err("confirm_task only allowed in IDLE phase");
 
-    state.task = { description: `任务文档: ${taskPath}`, spec_file: resolved };
+    state.task = { spec_file: resolved };
 
     const pidFile = `${resolved}.pid`;
     let recovered = false;

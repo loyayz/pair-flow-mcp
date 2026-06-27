@@ -1,5 +1,5 @@
 import { writeFile, mkdir } from "node:fs/promises";
-import { join, dirname } from "node:path";
+import { dirname } from "node:path";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
@@ -59,6 +59,7 @@ export async function submit(
       sub_phase: state.sub_phase,
       commit_hash: commitHash,
       submitted_at: now,
+      file_path: filePath,
     };
     state.history.push({ type: "submit", timestamp: now, details: { identity, round: state.round, file_path: filePath, commit_hash: commitHash } });
 
@@ -82,7 +83,7 @@ export async function submit(
     await logEvent("submit", { identity, round: state.round - 1, file_path: filePath, commit_hash: commitHash });
 
     // P0-3: Auto-generate meta.json for crash recovery
-    await writeMetaJson(state.workflow_id!, state.phase, originalTurn, originalRound, commitHash, originalSubPhase, state.task);
+    await writeMetaJson(filePath, commitHash, originalSubPhase, state.task);
 
     // P2-5: Differentiate tip by next turn holder's role
     const nextIsSupervisor = state.peers.some((p) => p.identity === state.turn && p.role === "supervisor");
@@ -97,21 +98,16 @@ export async function submit(
   });
 }
 
-// P0-3: Auto-generate meta.json alongside each submission for crash recovery
+// P0-3: Auto-generate meta.json alongside each submission for crash recovery.
+// Derives .meta.json path from the submitted file path — no redundant naming logic.
 async function writeMetaJson(
-  workflowId: string,
-  phase: string,
-  identity: string,
-  round: number,
+  filePath: string,
   commitHash: string,
   subPhase: string | null,
   task: unknown,
 ): Promise<void> {
   try {
-    const prefix = phase === "implementation" && subPhase
-      ? `r${round}_${subPhase}_${identity}`
-      : `r${round}_${identity}`;
-    const metaPath = join(HANDOFF_DIR, workflowId, phase, `${prefix}.meta.json`);
+    const metaPath = filePath.replace(/\.md$/, ".meta.json");
     await mkdir(dirname(metaPath), { recursive: true });
     await writeFile(metaPath, JSON.stringify({
       submitted_at: new Date().toISOString(),
