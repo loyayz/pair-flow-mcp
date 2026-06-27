@@ -1,6 +1,6 @@
 # PairFlow 设计缺陷修复 — 实施计划
 
-> 计划人：claude
+> 计划人：claude（r1）+ deepseek（r2 审阅）
 > 日期：2026-06-27
 > 需求来源：`docs/task/design-flaws.md`（16 项设计缺陷 + 2 项 v2 backlog）
 
@@ -49,19 +49,28 @@
 
 ---
 
-### P0-3: 3.1 — meta.json 生成规范
+### P0-3: 3.1 — meta.json 生成规范（修订：采用方案 B）
 
 **现状**：tip 不指引 AI 生成 meta.json，崩溃恢复依赖它。
 
-**方案**：
-- 在 tip.ts 的 `submitParams` 常量中追加 meta.json 生成指引：
+**方案**（deepseek r2 建议采纳）：
+- **方案 B（首选）**：`submit` 成功后自动在 handoff 对应目录写入 meta.json。meta.json 内容完全可从 submit 参数和 state 派生
+  ```typescript
+  // submit.ts 中在 saveState 之后：
+  const metaPath = join(HANDOFF_DIR, state.workflow_id!, state.phase,
+    `r${originalRound}_${identity}.meta.json`);
+  await writeFile(metaPath, JSON.stringify({
+    submitted_at: now,
+    commit_hash: commitHash,
+    sub_phase: originalSubPhase, // 记录切换前的 sub_phase
+    task: state.task,
+  }, null, 2), "utf-8");
   ```
-  "同时请创建一个 .meta.json 文件，包含以下字段：{"submitted_at": "ISO8601", "commit_hash": "<同 git_commit_hash>", "sub_phase": "<当前 sub_phase 或 null>", "task": {"description": "<任务简要描述>"}}"
-  ```
-- **备选方案（更可靠）**：新增 MCP 工具 `create_meta` 或在 `submit` 中自动生成 meta.json，而非依赖 AI 手动创建
+- 注意 `sub_phase` 的时序：submit 中 sub_phase 切换发生在记录 `last_submit_per_turn` 之后，meta.json 应记录切换**前**的 sub_phase
+- 同时在 tip 中保留方案 A 指引作为双重保险
 
-**影响文件**：`src/tip.ts`（方案 A）或 `src/tools/submit.ts`（方案 B）
-**风险**：方案 B 更可靠但涉及 submit 行为变更，需确认不破坏现有流程。
+**影响文件**：`src/tools/submit.ts`
+**风险**：低。meta.json 写入失败不影响主流程（catch 静默处理）。
 
 ---
 
@@ -71,16 +80,19 @@
 
 **现状**：§10 turn=监督者（r1），§3 目录暗示监督者在 r2 产出最终文档。
 
-**方案**：
-- **推荐方案**：保持 §10（监督者 r1 产出草稿），修改 §3 目录：
+**方案**（deepseek r2 补充 r3+ 流程）：
+- 保持 §10（监督者 r1 产出草稿），修改 §3 目录：
   ```
   summary/
   ├── r1_{supervisor}.md          ← 监督者产出草稿
   ├── r1_{supervisor}.meta.json
-  ├── r2_{identity}.md            ← 对方审阅
-  └── r2_{identity}.meta.json
+  ├── r2_{identity}.md            ← 对方审阅草稿
+  ├── r2_{identity}.meta.json
+  ├── r3_{supervisor}.md          ← 监督者修订（r3+ 交替审阅）
+  └── ...
   ```
-- 同时在 §3 添加注释说明：监督者 r1 产出草稿 → 对方 r2 审阅 → 监督者 r3 以后产出最终版
+- 明确多轮流程：r1 监督者草稿 → r2 非监督者审阅 → r3+ 交替修订 → 监督者 advance→IDLE
+- tip.ts 中 summary round≥2 分支区分：r2 审阅草稿 vs r3+ 交替修订
 - 同步修改 tip.ts 中 summary 阶段的 tip（与 P0-2 联动）
 
 **影响文件**：设计文档 §3 + `src/tip.ts`
@@ -88,24 +100,16 @@
 
 ---
 
-### P1-2: 1.4 — 兼任场景工作负载均衡
+### P1-2: 1.4 — 兼任场景工作负载均衡（修订：降级为 v2 backlog）
 
 **现状**：supervisor+developer 兼任时，非监督者需连续承担 REQUIREMENTS + PLANNING。
 
-**方案**：
-- REQUIREMENTS→PLANNING 的 turn 分配从 `is_developer=false` 改为交替策略：
-  ```
-  // requirements 阶段的 r1 提交者继续做 planning r1（谁分析需求谁做计划）
-  const reqSubmitter = Object.entries(state.last_submit_per_turn)
-    .find(([_, s]) => s.round >= 1)?.[0];
-  const planner = reqSubmitter && state.peers.find(p => p.identity === reqSubmitter)
-    ? reqSubmitter
-    : state.peers.find(p => !p.is_developer)?.identity;
-  ```
-- 或更简单的方案：PLANNING turn 仍给 `is_developer=false`，但确保兼任场景下双方至少各承担一个阶段
+**方案**（deepseek r2 建议采纳）：
+- **不修改**。承认这是 v1 兼任的固有 trade-off。设计 §1 的"交替产出与评审"针对标准角色分配（supervisor≠developer），兼任是优化配置——用户若在意负载均衡可拆分为两个身份
+- 降级为 **v2 backlog**：若 v2 引入更灵活的角色分配模型，届时一并解决
 
-**影响文件**：`src/tools/advance.ts`（REQUIREMENTS→PLANNING 分支）
-**风险**：中。需要确认与现有 round 计算、last_submit_per_turn 的兼容性。
+**影响文件**：无（v1 不做修改）
+**风险**：无。
 
 ---
 
@@ -122,19 +126,14 @@
 
 ---
 
-### P1-4: 4.1 — 监督者单点瓶颈（降级方案）
+### P1-4: 4.1 — 监督者单点瓶颈（降级方案，修订：超时 30min + 复用 turn_claimed_at）
 
 **现状**：监督者掉线后工作流永久卡死。
 
-**方案**：
-- 新增超时降级机制：监督者超过 N 分钟（建议 60 分钟）未 claim_turn 时，非监督者可调用 `force_advance` 或系统自动将 supervisor 角色转移给另一方
-- **v1 最小可行方案**：新增 `supervisor_timeout` 工具，非监督者可在监督者超时后申请接管监督者角色
-  ```
-  // state.json 新增字段
-  "supervisor_last_action_at": "ISO8601"  // 监督者最后一次操作时间
-  ```
-- advance/confirm_dir/confirm_task 执行时更新此时间戳
-- 新增 `takeover` 工具：非监督者在监督者超时后可调用，将自身 role 改为 supervisor
+**方案**（deepseek r2 建议采纳）：
+- 超时阈值设为 **30 分钟**，与 wait_for_turn 掉线检测阈值一致
+- **复用 `turn_claimed_at`**（而非新增 `supervisor_last_action_at`）：监督者的 advance/confirm_dir/confirm_task 操作更新 `turn_claimed_at`，减少 schema 膨胀
+- 新增 `takeover` 工具：非监督者在监督者 `turn_claimed_at` > 30 分钟后可调用，将自身 role 改为 supervisor
 
 **影响文件**：`src/state.ts` + `src/tools/advance.ts` + 新增 `src/tools/takeover.ts`
 **风险**：中。涉及角色变更，需仔细设计状态转换。
@@ -156,14 +155,14 @@
 
 ---
 
-### P2-2: 1.3 — 删除或激活 `converged` 字段
+### P2-2: 1.3 — 删除 `converged` 死字段（修订：确定删除）
 
-**方案**：
-- 推荐：删除 converged 字段（state.json schema、defaultState、各 init*Phase、设计文档 §5.1）
-  - §6 改为："监督者手动判定。各阶段交替审阅后，监督者确认阶段目标已达成，调用 advance 推进。"
-- 备选：激活 converged，在 advance 各 phase 转换前检查 `converged === true`，新增 `set_converged` 工具
+**方案**（deepseek r2 强烈推荐）：
+- **确定删除** converged 字段（state.json schema、defaultState、各 init*Phase、设计文档 §5.1）
+- 理由：该字段从 v1 起从未使用；§6 手动收敛模型已足够（监督者 advance = 收敛确认）；激活方案引入不必要的复杂度
+- §6 保持原文："监督者手动判定。各阶段交替审阅后，监督者确认阶段目标已达成，调用 advance 推进。"
 
-**影响文件**：`src/state.ts`、`src/tools/advance.ts`、设计文档 §5.1 + §6
+**影响文件**：`src/state.ts`、设计文档 §5.1 + §6
 **风险**：低。删除死字段无副作用。
 
 ---
@@ -205,14 +204,16 @@
 
 ---
 
-### P2-6: 6.1 — Node 版本依赖声明
+### P2-6: 6.1 — Node 版本依赖声明（修订：代码兼容 + engines 声明）
 
-**方案**：
-- `package.json` 添加 `"engines": { "node": ">=22" }`
-- **备选**：将 crash-recovery.ts 的 `findFiles` 改为不使用 `parentPath`，改用 path.relative 计算相对路径，消除对 Node 22+ 的依赖
+**方案**（deepseek r2 建议采纳）：
+- **代码兼容为首选**：将 `findFiles` 放弃 `recursive: true`，改为手动递归 walk，同时兼容 Node 18+
+  - 移除 `parentPath` 依赖，使用 `path.relative` 或 `path.join` 计算相对路径
+- `package.json` 添加 `"engines": { "node": ">=18" }` 作为文档记录
+- 理由：Node 22 在 Windows 上仍有兼容性问题；当前项目未使用任何 Node 22 独有特性
 
-**影响文件**：`package.json` + `src/crash-recovery.ts`（备选）
-**风险**：低。
+**影响文件**：`src/crash-recovery.ts` + `package.json`
+**风险**：低。手动递归 walk 是成熟模式。
 
 ---
 
@@ -263,25 +264,48 @@
 
 ---
 
-## 实施依赖图
+## 测试策略（deepseek r2 补充）
+
+| 测试对象 | 测试类型 | 验证要点 |
+|----------|----------|----------|
+| P0-1 tip.ts | 单元测试 | 各 phase/round/sub_phase 组合输出正确文件路径（含 implementation 的 coding_/review_ 前缀） |
+| P0-2 tip.ts | 单元测试 | SUMMARY round≥2 返回正确指引而非兜底错误 |
+| P0-3 submit.ts | 单元测试 | submit 成功后 handoff 目录下生成正确的 meta.json（含 sub_phase 时序校验） |
+| P2-4 confirm-task.ts | 单元测试 | 恢复后 turn holder 不在 peers 中时正确重置 |
+| P2-7 advance.ts | 单元测试 | SUMMARY→IDLE 在无提交记录时拒绝 |
+| P1-4 takeover.ts | 单元测试 | 超时判断逻辑 + 角色转换正确性 |
+
+## `.pid` 文件清理（deepseek r2 补充）
+
+**问题**：工作流完结（SUMMARY→IDLE）后 `.pid` 文件是否应清理？当前未处理。
+
+**方案**：在 `advance.ts` SUMMARY→IDLE 分支或 `initIdleState` 中，删除任务文档对应的 `.pid` 文件。工作流完结意味着任务已完成，保留 `.pid` 会导致下次 confirm_task 误判为恢复任务。
+
+**影响文件**：`src/tools/advance.ts` 或 `src/state.ts`（`initIdleState`）
+**风险**：低。
+
+---
+
+## 实施依赖图（deepseek r2 修订）
 
 ```
-P0-1 (命名) ──→ P0-2 (tip) ──→ P1-1 (SUMMARY对齐)
-                                     │
-P0-3 (meta.json)                     │
-                                     ▼
-P2-2 (converged) ←── P2-1 (dev_cycle) ──→ P2-7 (SUMMARY收敛)
-
-P1-2 (兼任)     P1-4 (监督者降级) ──→ P2-3 (掉线恢复) ──→ P2-5 (tip差异)
-
-P2-4 (身份校验)  P2-6 (Node版本)    P3-1/2/3 (文档)
+P0-1 + P0-2 + P1-1  ──→  tip.ts 集中修改（文件命名 + SUMMARY tip + turn 对齐）
+P0-3                   ──→  submit.ts 自动生成 meta.json（独立）
+P2-1 (dev_cycle)       ──→  独立，纯重命名
+P2-2 (converged 删除)   ──→  独立，state.ts 字段清理
+P2-7 (SUMMARY 收敛)     ──→  独立，advance.ts 单文件
+P1-4 + P2-3 + P2-5      ──→  turn 分配 + 掉线恢复 + tip 差异化（相关组）
+P2-4 + P2-6 + P3-1/2/3 ──→  校验 + 文档组
+P1-3                   ──→  独立，随时可做
+.pid 清理               ──→  与 P2-7 一起（均在 SUMMARY→IDLE 路径）
+测试                    ──→  与对应实现同步编写
 ```
 
-## 建议修复顺序
+## 建议修复顺序（修订）
 
-1. **P0-1 + P0-2 + P1-1**：tip.ts 集中修改（文件命名 + SUMMARY tip + turn 对齐），一次性解决 SUMMARY 连锁问题
-2. **P0-3**：meta.json 生成规范（可与第 1 步并行）
-3. **P2-1 + P2-2 + P2-7**：state 字段清理（重命名 + 删除死字段 + 收敛检查）
-4. **P1-2 + P1-4 + P2-3 + P2-5**：turn 分配 + 掉线恢复（相关联的一组修改）
-5. **P2-4 + P2-6 + P3-1/2/3**：校验 + 文档 + 语义修正（收尾）
-6. **P1-3**：设计文档补充（可在任意时间完成）
+1. **P0-1 + P0-2 + P1-1**：tip.ts 集中修改，一次性解决 SUMMARY 连锁问题
+2. **P0-3**：submit.ts 自动生成 meta.json（可与第 1 步并行）
+3. **P2-1 + P2-2 + P2-7 + .pid 清理**：state 字段清理 + 收敛检查 + .pid 清理（advance.ts 集中修改）
+4. **P1-4 + P2-3 + P2-5**：掉线恢复 + tip 差异化 + 监督者降级
+5. **P2-4 + P2-6 + P3-1/2/3**：校验 + Node 兼容 + 文档
+6. **P1-3**：设计文档补充（随时可做）
