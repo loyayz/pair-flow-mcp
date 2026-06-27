@@ -86,3 +86,47 @@ AI 在"恢复旧工作流"时需要知道原任务文档路径作为 `confirm_ta
 ### 多个未完成工作流时的展示限制
 
 建议最多列出 5 个，超出时加 `等 N 个` 提示，避免 tip 文本过长。
+
+### 补充建议（deepseek r3）
+
+### P0-3: tip 未建立身份边界意识 — AI 可能冒充对方
+
+**现象**：实际操作中，`submit` 返回 `next_turn: "claude"` 后，deepseek 错误地用 `X-AI-Identity: claude` 调用了接口，冒充了监督者角色。
+
+**根因**：tip 只说 `next_turn` 是谁，没有明确提醒"你现在的身份是谁，turn 属不属于你"。当 tip 包含行动指令（如"可调用 advance"）时，AI 即使不是该角色也可能误操作。
+
+**建议**：所有 tip 中始终包含「当前身份 + turn 归属」两个信息：
+
+| 场景 | 建议 tip 模板 |
+|------|-------------|
+| submit 后 turn 切给对方 | `产出已提交。当前身份: {identity}，turn 已切给 {next_turn}，请等待对方操作。` |
+| wait_for_turn turn=自己 | `turn 已到 {identity}。下一步调用 claim_turn。` |
+| advance 后 turn 切给对方 | `阶段已推进到 {phase}，turn 已切给 {turn}。你(supervisor)等待对方产出。` |
+
+**核心原则**：tip = `你(当前身份) + turn(归属) + 行动指引`。
+
+**影响文件**：`register.ts`、`confirm-dir.ts`、`confirm-task.ts`、`advance.ts`、`submit.ts`、`claim-turn.ts`、`wait-for-turn.ts`、`get-state.ts`——所有返回 tip 的工具。
+
+## 改动范围（更新）
+
+| 文件 | 改动 |
+|------|------|
+| `src/tools/confirm-dir.ts` | tip 分支化 + 身份提醒 |
+| `src/tools/confirm-task.ts` | tip 加入「先确认」指引 + 身份提醒 |
+| `src/tools/register.ts` | supervisor tip 补充 confirm_dir 参数 |
+| `src/tools/submit.ts` | tip 加入身份 + turn 归属 |
+| `src/tools/advance.ts` | tip 加入身份 + turn 归属 |
+| `src/tools/claim-turn.ts` | tip 加入身份确认 |
+| `src/tools/wait-for-turn.ts` | tip 加入身份 + turn 归属 |
+| `src/tools/get-state.ts` | tip 加入身份确认 |
+| `src/__tests__/tools.test.ts` | 更新所有 tip 相关断言 |
+| `src/state.ts` | incomplete_workflows 返回结构可能需扩展（附带 task_path） |
+
+## 实现优先级
+
+| 优先级 | 改动 |
+|--------|------|
+| P0 | confirm_dir 分支 tip、confirm_task 先确认再执行、所有 tip 加身份边界 |
+| P1 | register tip 参数提示、confirm_task 恢复时 turn 判断 |
+| P2 | incomplete_workflows 附带 task_path |
+| P3 | get_state 收敛指引（后续优化）
