@@ -23,8 +23,6 @@ export async function recoverState(): Promise<PairFlowState> {
       if (recovered) {
         wasRecovered = true;
         state = recovered;
-        state.recovered = true;
-        state.require_re_register = true;
         await saveState(state);
         await logEvent("crash_recovery", { recovered: true, from_handoff: true, workflow_id: state.workflow_id, phase: state.phase });
         return state;
@@ -107,7 +105,6 @@ export async function recoverState(): Promise<PairFlowState> {
   }
 
   // Step 5: IDLE crash — peers already cleared above
-  state.recovered = wasRecovered;
   await saveState(state);
   await logEvent("crash_recovery", { recovered: true, workflow_id: state.workflow_id, phase: state.phase });
   return state;
@@ -274,9 +271,6 @@ export async function reconstructFromHandoff(
   try {
     state.last_submit_per_turn = await reconstructLastSubmit(wfDirVar, state.peers, state.phase);
   } catch { /* keep empty if reconstruction fails */ }
-
-  // 5e. require re-register after crash recovery (retro-2 §4.2 "ghost registration")
-  state.require_re_register = true;
 
   // 6. Clear lease
   state.current_lease = { token: null, holder: null, expires_at: null, grace_used: false };

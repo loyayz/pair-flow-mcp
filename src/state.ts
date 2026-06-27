@@ -103,9 +103,6 @@ export interface PairFlowState {
   last_submit_per_turn: Record<string, LastSubmit>;
   issues: Issue[];
   history: HistoryEntry[];
-  pending_supervisor_review: boolean;
-  recovered: boolean;
-  require_re_register: boolean;
   current_lease: CurrentLease;
   current_timeout: CurrentTimeout;
 }
@@ -130,9 +127,6 @@ export function defaultState(phaseConfig?: PhaseConfig): PairFlowState {
     last_submit_per_turn: {},
     issues: [],
     history: [],
-    pending_supervisor_review: false,
-    recovered: false,
-    require_re_register: false,
     current_lease: { token: null, holder: null, expires_at: null, grace_used: false },
     current_timeout: {
       active: false,
