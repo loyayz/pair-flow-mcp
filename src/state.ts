@@ -107,7 +107,7 @@ export async function saveState(state: PairFlowState): Promise<void> {
   await rename(tmp, STATE_FILE);
 }
 
-// ── Phase initialization (§12) ──
+// ── Phase initialization (§10) ──
 
 export function initRequirementsPhase(state: PairFlowState, nonSupervisorId: string, task: Task): PairFlowState {
   const now = new Date().toISOString();
