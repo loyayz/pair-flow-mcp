@@ -1,4 +1,5 @@
 import { unlink } from "node:fs/promises";
+import { resolve } from "node:path";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
@@ -75,7 +76,12 @@ export async function advance(
       }
       // P2-7 supplement: Clean .pid file so next confirm_task starts fresh
       if (state.task?.spec_file) {
-        try { await unlink(`${state.task.spec_file}.pid`); } catch { /* .pid may not exist */ }
+        const pidPath = resolve(`${state.task.spec_file}.pid`);
+        const projectRoot = resolve(".");
+        // Guard: .pid must live under the project root (prevent path traversal via crafted spec_file)
+        if (pidPath.startsWith(projectRoot)) {
+          try { await unlink(pidPath); } catch { /* .pid may not exist */ }
+        }
       }
       const next = initIdleState(state);
       await saveState(next);
