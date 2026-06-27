@@ -247,9 +247,9 @@
 - `crash-recovery.ts:345-346`：`const pp = (e as { parentPath?: string }).parentPath`
 - `package.json` 未声明 `engines.node >= 22`
 
-**建议**：在 `package.json` 中声明 `engines.node >= 22`，或使用兼容低版本 Node 的递归 walk 实现。
+**建议**：在 `package.json` 中声明 `engines.node >= 22`，或使用兼容低版本 Node 的递归 walk 实现。当前 `package.json` 未声明 `engines` 字段（deepseek r3 补充确认）。
 
-**提出人**：claude（r2 审阅）
+**提出人**：claude（r2 审阅），deepseek（r3 复核）
 
 **双方一致同意（P2）**。
 
@@ -263,7 +263,7 @@
 - `advance.ts:69-73`：SUMMARY→IDLE 直接调用 `initIdleState`，无条件判断
 - 对比：IDLE→REQUIREMENTS 检查 `peers≥2` + `task已确认`
 
-**建议**：SUMMARY→IDLE 前至少检查 SUMMARY 阶段有提交记录。
+**建议**：SUMMARY→IDLE 前至少检查 SUMMARY 阶段有提交记录。此外，此问题与 1.1（SUMMARY turn 分配矛盾）和 2.2（SUMMARY round≥2 tip 缺失）形成连锁——SUMMARY 阶段的多个设计缺陷会叠加影响，建议作为 SUMMARY 阶段整体改造一起处理（deepseek r3 补充）。
 
 **提出人**：claude（r2 审阅）
 
