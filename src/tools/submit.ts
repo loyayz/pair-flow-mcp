@@ -85,15 +85,18 @@ export async function submit(
     // P0-3: Auto-generate meta.json for crash recovery
     await writeMetaJson(filePath, commitHash, originalSubPhase, state.task);
 
-    // P2-5: Differentiate tip by next turn holder's role
-    const nextIsSupervisor = state.peers.some((p) => p.identity === state.turn && p.role === "supervisor");
-    const tip = state.phase === "summary" && nextIsSupervisor
-      ? "请调用 advance 接口结束当前工作流"
+    const peer = state.peers.find((p) => p.identity === identity);
+    const roleLabel = peer?.role === "supervisor" ? "supervisor" : (peer?.is_developer ? "developer" : "reviewer");
+    const nextPeer = state.peers.find((p) => p.identity === state.turn);
+    const nextRoleLabel = nextPeer?.role === "supervisor" ? "supervisor" : (nextPeer?.is_developer ? "developer" : "reviewer");
+    const identityInfo = `当前身份: ${identity}(${roleLabel})。turn 已切给 ${state.turn}(${nextRoleLabel}，对方)`;
+    const tip = state.phase === "summary" && nextPeer?.role === "supervisor"
+      ? `${identityInfo}。请调用 advance 接口结束当前工作流`
       : state.phase === "summary"
-        ? "下一步调用 wait_for_turn 接口（监督者将调用 advance 结束工作流）"
-        : nextIsSupervisor
-          ? "若审阅后确认当前阶段目标已达成，可调用 advance 接口进入下一阶段"
-          : "下一步调用 wait_for_turn 接口";
+        ? `${identityInfo}。请等待监督者调用 advance 结束工作流。调用 wait_for_turn 接口`
+        : nextPeer?.role === "supervisor"
+          ? `${identityInfo}。若审阅后确认当前阶段目标已达成，可调用 advance 接口进入下一阶段`
+          : `${identityInfo}。请等待对方操作。调用 wait_for_turn 接口`;
     return ok({ ok: true, next_turn: state.turn }, tip);
   });
 }

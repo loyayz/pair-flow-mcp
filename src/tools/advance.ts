@@ -38,7 +38,7 @@ export async function advance(
       const next = initRequirementsPhase(state, nonSupervisor, state.task);
       await saveState(next);
       await logEvent("advance", { identity, from: "idle", to: "requirements", task: state.task.spec_file });
-      return ok({ ok: true, new_phase: "requirements", turn: nonSupervisor }, "下一步调用 wait_for_turn 接口（turn 已切换给对方）");
+      return ok({ ok: true, new_phase: "requirements", turn: nonSupervisor }, `阶段已推进到 requirements，turn 已切给 ${nonSupervisor}(对方)。当前身份: ${identity}(supervisor)。请等待对方产出需求分析。调用 wait_for_turn 接口。`);
     }
 
     // Non-IDLE phases: supervisor decides when to advance (no automated convergence check)
@@ -49,7 +49,7 @@ export async function advance(
       const next = initPlanningPhase(state, reviewer.identity);
       await saveState(next);
       await logEvent("advance", { identity, from: "requirements", to: "planning" });
-      return ok({ ok: true, new_phase: "planning", turn: reviewer.identity }, "下一步调用 wait_for_turn 接口（turn 已切换给对方）");
+      return ok({ ok: true, new_phase: "planning", turn: reviewer.identity }, `阶段已推进到 planning，turn 已切给 ${reviewer.identity}(对方)。当前身份: ${identity}(supervisor)。请等待对方产出实施计划。调用 wait_for_turn 接口。`);
     }
 
     if (currentPhase === "planning") {
@@ -58,14 +58,14 @@ export async function advance(
       const next = initImplementationPhase(state, developer.identity);
       await saveState(next);
       await logEvent("advance", { identity, from: "planning", to: "implementation", dev_cycle: next.dev_cycle });
-      return ok({ ok: true, new_phase: "implementation", sub_phase: "coding", turn: developer.identity }, "下一步调用 wait_for_turn 接口（turn 已切换给对方）");
+      return ok({ ok: true, new_phase: "implementation", sub_phase: "coding", turn: developer.identity }, `阶段已推进到 implementation(coding)，turn 已切给 ${developer.identity}(对方)。当前身份: ${identity}(supervisor)。请等待对方产出代码。调用 wait_for_turn 接口。`);
     }
 
     if (currentPhase === "implementation") {
       const next = initSummaryPhase(state, identity);
       await saveState(next);
       await logEvent("advance", { identity, from: "implementation", to: "summary" });
-      return ok({ ok: true, new_phase: "summary", turn: identity });
+      return ok({ ok: true, new_phase: "summary", turn: identity }, `阶段已推进到 summary，turn 归属: ${identity}(你)。当前身份: ${identity}(supervisor)。请产出汇总草稿。调用 claim_turn 获取执行权。`);
     }
 
     if (currentPhase === "summary") {
@@ -87,7 +87,7 @@ export async function advance(
       const next = initIdleState(state);
       await saveState(next);
       await logEvent("advance", { identity, from: "summary", to: "idle" });
-      return ok({ ok: true, new_phase: "idle" });
+      return ok({ ok: true, new_phase: "idle" }, `工作流已结束，阶段: idle。当前身份: ${identity}(supervisor)。`);
     }
 
     return err(`unknown phase: ${currentPhase}`);

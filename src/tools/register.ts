@@ -59,9 +59,10 @@ export async function register(
     await logEvent("register", { identity, supervisor, developer, work_dir: workDir });
 
     const prefix = `Set X-AI-Identity: ${identity} header on all subsequent requests`;
+    const identityInfo = `当前身份: ${identity}(${supervisor ? "supervisor" : developer ? "developer" : "reviewer"})`;
     const tip = supervisor
-      ? `${prefix}。下一步调用 confirm_dir 确认工作目录 ${workDir}`
-      : `${prefix}。下一步调用 wait_for_turn 接口`;
+      ? `${prefix}。${identityInfo}。下一步调用 confirm_dir 接口，参数 work_dir="${workDir}"`
+      : `${prefix}。${identityInfo}。下一步调用 wait_for_turn 接口，等待 supervisor 推进`;
 
     return ok({
       ok: true, identity, is_supervisor: supervisor, is_developer: developer,

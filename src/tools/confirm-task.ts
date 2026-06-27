@@ -76,10 +76,26 @@ export async function confirmTask(
 
     await saveState(state);
 
-    const tip = recovered
-      ? `任务已恢复，当前阶段: ${state.phase}。下一步调用 wait_for_turn 接口`
-      : "下一步调用 advance 接口进入需求阶段";
+    const identityInfo = `当前身份: ${identity}(supervisor)`;
 
+    if (recovered) {
+      const turnIsSelf = state.turn === identity;
+      const turnInfo = turnIsSelf
+        ? `turn 归属: ${state.turn}(你)`
+        : `turn 归属: ${state.turn}(对方)`;
+      const action = turnIsSelf
+        ? "请向用户复述以上恢复状态，确认后调用 claim_turn 获取执行权"
+        : "请等待对方操作，调用 wait_for_turn 接口";
+      const tip = `已恢复工作流 ${state.workflow_id}，当前阶段: ${state.phase}，轮次: ${state.round}。${identityInfo}。${turnInfo}。${action}。`;
+      return ok({
+        task_path: resolved,
+        workflow_id: state.workflow_id,
+        phase: state.phase,
+        recovered,
+      }, tip);
+    }
+
+    const tip = `已确认任务文档: ${resolved}，工作流 ID: ${state.workflow_id}。${identityInfo}。请向用户复述以上信息并说明即将进入需求阶段、由对方(developer)先产出。待用户确认后调用 advance 接口。`;
     return ok({
       task_path: resolved,
       workflow_id: state.workflow_id,
