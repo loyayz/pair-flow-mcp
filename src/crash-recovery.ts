@@ -135,11 +135,14 @@ export async function recoverState(): Promise<PairFlowState> {
 
 const PHASE_PRIORITY: Phase[] = ["implementation", "planning", "requirements", "summary"];
 
-async function reconstructFromHandoff(state: PairFlowState): Promise<PairFlowState | null> {
-  const wfId = await findLatestWorkflowId();
-  if (!wfId) return null; // no handoff work to recover
-
-  const wfDir = join(HANDOFF_DIR, wfId);
+export async function reconstructFromHandoff(
+  state: PairFlowState,
+  givenWfDir?: string,
+  givenWfId?: string
+): Promise<PairFlowState | null> {
+  const wfId = givenWfId ?? await findLatestWorkflowId();
+  if (!wfId) return null;
+  const wfDir = givenWfDir ?? join(HANDOFF_DIR, wfId);
   state.workflow_id = wfId;
 
   // 1. Determine phase
@@ -231,13 +234,11 @@ async function reconstructFromHandoff(state: PairFlowState): Promise<PairFlowSta
     }
   }
 
-  // 5. Determine round, turn, converged, blind_review_pending
+  // 5. Determine round, turn, converged
   const latestPhaseDir = join(wfDirVar, state.phase);
   const latestMetaFiles = await findFiles(latestPhaseDir, ".meta.json");
   let maxRound = 1;
   let lastSubmitter = "";
-  let hasBlindReview = false;
-  let blindReviewCount = 0;
 
   for (const mf of latestMetaFiles) {
     const base = mf.includes("/") || mf.includes("\\") ? mf.replace(/^.*[/\\]/, "") : mf;
@@ -251,7 +252,7 @@ async function reconstructFromHandoff(state: PairFlowState): Promise<PairFlowSta
       if (idMatch) {
         let identity = idMatch[1];
         // Strip sub-phase prefix for IMPLEMENTATION files
-        const subPhases = ["coding", "review", "fix", "blind_review"];
+        const subPhases = ["coding", "review", "fix"];
         for (const sp of subPhases) {
           if (identity.startsWith(sp + "_")) {
             identity = identity.slice(sp.length + 1);
@@ -260,11 +261,6 @@ async function reconstructFromHandoff(state: PairFlowState): Promise<PairFlowSta
         }
         lastSubmitter = identity;
       }
-    }
-    // Detect blind review
-    if (base.includes("blind_review")) {
-      hasBlindReview = true;
-      blindReviewCount++;
     }
   }
 
@@ -275,13 +271,6 @@ async function reconstructFromHandoff(state: PairFlowState): Promise<PairFlowSta
     state.turn = other?.identity ?? lastSubmitter;
   } else if (state.peers.length > 0) {
     state.turn = state.peers[0].identity;
-  }
-
-  // Converged if blind reviews exist in the latest phase
-  if (hasBlindReview) {
-    state.converged = true;
-    // Both parties submitted blind review?
-    state.blind_review_pending = blindReviewCount < 2;
   }
 
   // 5a. Ensure phase_config has defaults (retro-1 §2.1, retro-2 §4.1)
@@ -330,7 +319,7 @@ async function determinePhase(wfDir: string): Promise<Phase> {
 
 async function extractIdentities(wfDir: string): Promise<Set<string>> {
   const ids = new Set<string>();
-  const subPhases = ["coding", "review", "fix", "blind_review"];
+  const subPhases = ["coding", "review", "fix"];
   for (const phase of PHASE_PRIORITY) {
     try {
       const files = await findFiles(join(wfDir, phase), ".meta.json");
@@ -354,9 +343,6 @@ async function extractIdentities(wfDir: string): Promise<Set<string>> {
           ids.add(identity);
           continue;
         }
-        // {identity}_blind_review.md.meta.json
-        const blindMatch = base.match(/^(.+)_blind_review\.md\.meta\.json$/);
-        if (blindMatch) { ids.add(blindMatch[1]); }
       }
     } catch { /* */ }
   }
@@ -373,7 +359,7 @@ async function getFirstSubmitter(wfDir: string, phase: string): Promise<string |
       if (match) {
         let identity = match[1];
         // Strip sub-phase prefix for IMPLEMENTATION files
-        const subPhases = ["coding", "review", "fix", "blind_review"];
+        const subPhases = ["coding", "review", "fix"];
         for (const sp of subPhases) {
           if (identity.startsWith(sp + "_")) {
             identity = identity.slice(sp.length + 1);
@@ -450,7 +436,7 @@ async function findIssueRaiser(wfDir: string, issueId: number): Promise<string |
         const idMatch = base.match(/^r\d+(?:_\w+)?_(.+)\.meta\.json$/);
         if (idMatch && meta.new_issues) {
           let identity = idMatch[1];
-          for (const sp of ["coding", "review", "fix", "blind_review"]) {
+          for (const sp of ["coding", "review", "fix"]) {
             if (identity.startsWith(sp + "_")) { identity = identity.slice(sp.length + 1); break; }
           }
           for (const ni of meta.new_issues) {
@@ -464,7 +450,7 @@ async function findIssueRaiser(wfDir: string, issueId: number): Promise<string |
 }
 
 function inferSubPhase(metaFiles: string[]): SubPhase {
-  const VALID_SUB_PHASES = ["coding", "review", "fix", "blind_review"];
+  const VALID_SUB_PHASES = ["coding", "review", "fix"];
   for (const mf of metaFiles) {
     const base = mf.includes("/") || mf.includes("\\") ? mf.replace(/^.*[/\\]/, "") : mf;
     for (const sp of VALID_SUB_PHASES) {
@@ -535,7 +521,7 @@ async function reconstructLastSubmit(wfDir: string, peers: Peer[], phase: string
 
       let identity = idMatch[1];
       // Strip known sub-phase prefixes
-      for (const sp of ["coding", "review", "fix", "blind_review"]) {
+      for (const sp of ["coding", "review", "fix"]) {
         if (identity.startsWith(sp + "_")) { identity = identity.slice(sp.length + 1); break; }
       }
       if (!lsp[identity]) continue;
@@ -564,7 +550,7 @@ async function reconstructLastSubmit(wfDir: string, peers: Peer[], phase: string
 }
 
 function inferSubPhaseFromFilename(filename: string): SubPhase {
-  for (const sp of ["coding", "review", "fix", "blind_review"]) {
+  for (const sp of ["coding", "review", "fix"]) {
     if (filename.includes(`_${sp}_`)) return sp as SubPhase;
   }
   return null;

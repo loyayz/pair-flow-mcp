@@ -31,6 +31,6 @@ export async function resetState(
     await logEvent("reset", { identity, previous_workflow_id: state.workflow_id });
 
     return ok({ ok: true, message: "state reset — runtime cleared, handoff archives preserved" },
-      { tool: "register", when: "重新注册身份和角色" });
+      "下一步调用 register 接口");
   });
 }

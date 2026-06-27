@@ -60,16 +60,6 @@ export async function getArchivedFileContent(
 
   const state = await loadState();
 
-  // Blind review access control: deny access to other party's blind review files
-  const isBlindFile = filename.includes("_blind_review");
-  if (isBlindFile && state.blind_review_pending) {
-    // Check if this file belongs to the other party
-    const other = state.peers.find((p) => p.identity !== identity);
-    if (other && filename.includes(other.identity)) {
-      return err("access denied: cannot read other party's blind review during blind review phase");
-    }
-  }
-
   const wfId = state.workflow_id;
   if (!wfId) return err("no active workflow");
 
@@ -122,7 +112,6 @@ export async function forceConverge(
     // Multi-cycle aware: if implementation, just converge current cycle & advance dev_phase
     if (state.phase === "implementation" && state.dev_phase !== null) {
       state.converged = true;
-      state.blind_review_pending = false;
       // We'd check for remaining cycles here, but for now advance dev_phase + reset
       state.dev_phase += 1;
       state.round = 1;
@@ -134,7 +123,6 @@ export async function forceConverge(
       state.last_submit_per_turn = emptyLsp;
     } else {
       state.converged = true;
-      state.blind_review_pending = false;
     }
     state.current_lease = { token: null, holder: null, expires_at: null, grace_used: false };
     state.current_timeout.active = false;
@@ -144,8 +132,8 @@ export async function forceConverge(
     const openP0 = state.issues.filter((i) => i.type === "P0" && i.status === "open").length;
     const openP1 = state.issues.filter((i) => i.type === "P1" && i.status === "open").length;
     const escalated = state.issues.filter((i) => i.status === "escalated").length;
-    await logEvent("force_converge", { identity, phase: state.phase, round: state.round, sub_phase: state.sub_phase, blind_review_pending: state.blind_review_pending, converged_before: state.converged, open_issues: { P0: openP0, P1: openP1, escalated } });
+    await logEvent("force_converge", { identity, phase: state.phase, round: state.round, sub_phase: state.sub_phase, converged_before: state.converged, open_issues: { P0: openP0, P1: openP1, escalated } });
     return ok({ ok: true },
-      { tool: "claim_turn", when: "进入盲审" });
+      "下一步调用 claim_turn 接口");
   });
 }

@@ -1,14 +1,14 @@
-import { readdir } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 import { acquireLock, releaseLock } from "./lock.js";
-import { initializeRecovery } from "./crash-recovery.js";
 import { ping } from "./tools/ping.js";
 import { whoAmI } from "./tools/who-am-i.js";
 import { register } from "./tools/register.js";
 import { claimTurn } from "./tools/claim-turn.js";
+import { advance } from "./tools/advance.js";
 import { getState } from "./tools/get-state.js";
 import { getContext } from "./tools/get-context.js";
 import { submit } from "./tools/submit.js";
@@ -16,6 +16,8 @@ import { createIssue, resolveIssue, escalate, deferIssue, listIssues } from "./t
 import { getArchivedFiles, getArchivedFileContent, forceConverge } from "./tools/archive-tools.js";
 import { resetState } from "./tools/reset.js";
 import { waitForTurn } from "./tools/wait-for-turn.js";
+import { confirmDir } from "./tools/confirm-dir.js";
+import { confirmTask } from "./tools/confirm-task.js";
 
 const PORT = parseInt(process.env.PORT || "3100", 10);
 
@@ -31,11 +33,11 @@ function createServerWithTools() {
 
   mcp.registerTool("ping", { description: "连通性检查。匿名可用。" }, ping);
   mcp.registerTool("who_am_i", { description: "身份确认 + 注册信息。解析 X-AI-Identity header。" }, whoAmI);
-  mcp.registerTool("register", { description: "IDLE 阶段注册身份和角色。仅通过 X-AI-Identity header 识别身份（不可通过 args 传递）。work_dir 用于双方校验同一仓库。", inputSchema: { supervisor: z.boolean(), developer: z.boolean(), work_dir: z.string().optional() } }, register);
-  mcp.registerTool("claim_turn", {
-    description: "获取 turn 或推进 phase。仅通过 X-AI-Identity header 识别身份。advance 模式 IDLE→REQUIREMENTS 时 task 必填。",
-    inputSchema: { mode: z.enum(["turn", "advance"]), timeouts: z.object({ requirements: z.number(), planning: z.number(), implementation: z.number(), summary: z.number() }).optional(), task: z.object({ description: z.string(), spec_file: z.string().optional(), goals: z.array(z.string()).optional(), context: z.string().optional() }).optional() },
-  }, claimTurn);
+  mcp.registerTool("register", { description: "IDLE 阶段注册身份和角色。仅通过 X-AI-Identity header 识别身份。supervisor/developer 各唯一但可兼任。work_dir 必填，双方校验一致性。", inputSchema: { supervisor: z.boolean(), developer: z.boolean(), work_dir: z.string() } }, register);
+  mcp.registerTool("confirm_dir", { description: "确认工作目录，返回未完成的工作流列表。仅监督者在 IDLE 阶段可用。", inputSchema: { work_dir: z.string() } }, confirmDir);
+  mcp.registerTool("confirm_task", { description: "确认任务文档路径。仅监督者在 IDLE 阶段可用。", inputSchema: { task_path: z.string() } }, confirmTask);
+  mcp.registerTool("claim_turn", { description: "获取当前轮次的执行权。仅通过 X-AI-Identity header 识别身份。", inputSchema: {} }, claimTurn);
+  mcp.registerTool("advance", { description: "推进到下一阶段。仅监督者可用。", inputSchema: {} }, advance);
   mcp.registerTool("get_state", { description: "完整状态快照。匿名可用。" }, getState);
   mcp.registerTool("get_context", { description: "当前阶段上下文。" }, getContext);
   mcp.registerTool("create_issue", { description: "创建 issue。P0/P1 必填 proposal+rationale，P2 可选。fix sub_phase 禁 P0。", inputSchema: { type: z.enum(["P0","P1","P2"]), topic: z.string().max(200), description: z.string(), my_position: z.string().optional(), proposal: z.string().optional(), rationale: z.string().optional() } }, createIssue);
@@ -51,21 +53,10 @@ function createServerWithTools() {
   mcp.registerTool(
     "submit",
     {
-      description: "提交产出。converge_mark + commit_hash + handoff 落盘。500KB 上限。",
+      description: "提交产出。",
       inputSchema: {
-        content: z.string(),
-        converge_mark: z.object({
-          stance: z.string().nullable(),
-          need_next_round: z.boolean().nullable(),
-          new_issues: z.array(z.object({
-            type: z.string(),
-            topic: z.string().max(200),
-            description: z.string(),
-          })).optional(),
-          resolved_issue_ids: z.array(z.number()).optional(),
-        }),
-        commit_hash: z.string(),
-        blind_review: z.boolean().optional(),
+        file_path: z.string(),
+        git_commit_hash: z.string(),
       },
     },
     submit
@@ -116,14 +107,11 @@ const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse
 
 httpServer.listen(PORT, async () => {
   try {
+    // Clean previous runtime state — fresh start every time
+    const STATE_DIR = process.env.STATE_DIR || ".pairflow";
+    await rm(STATE_DIR, { recursive: true, force: true });
     await acquireLock();
     console.log(`[pair-flow] Lock acquired`);
-    const recovered = await initializeRecovery();
-    if (recovered.phase !== "idle") {
-      console.log(`[pair-flow] Recovered state: phase=${recovered.phase}, workflow_id=${recovered.workflow_id}`);
-    }
-    // P0-26: orphan handoff warning at startup
-    await warnOrphanHandoffs();
   } catch (err) {
     console.error(`[pair-flow] Startup failed:`, err);
     process.exit(1);
@@ -135,34 +123,6 @@ httpServer.listen(PORT, async () => {
 
 process.on("SIGTERM", async () => { await releaseLock(); process.exit(0); });
 process.on("SIGINT", async () => { await releaseLock(); process.exit(0); });
-
-// P0-26: orphan handoff warning — scan for incomplete workflows at startup
-async function warnOrphanHandoffs() {
-  const HANDOFF_DIR = process.env.HANDOFF_DIR || "handoff";
-  try {
-    const entries = await readdir(HANDOFF_DIR, { withFileTypes: true });
-    const wfDirs = entries.filter((e) => e.isDirectory() && /^\d{14}$/.test(e.name));
-    const orphans: string[] = [];
-    for (const d of wfDirs) {
-      try {
-        const summaryDir = `${HANDOFF_DIR}/${d.name}/summary`;
-        const summaryEntries = await readdir(summaryDir);
-        if (!summaryEntries.some((e) => e.includes("_final.md"))) {
-          orphans.push(d.name);
-        }
-      } catch {
-        // No summary dir — orphan
-        orphans.push(d.name);
-      }
-    }
-    if (orphans.length > 0) {
-      console.warn(`[pair-flow] ⚠ ${orphans.length} orphan handoff workflow(s) without _final.md: ${orphans.join(", ")}`);
-      console.warn(`[pair-flow] ⚠ Run 'npx tsx scripts/clean.ts --dry-run' to review or 'npx tsx scripts/clean.ts --force' to remove.`);
-    }
-  } catch {
-    // handoff dir doesn't exist yet, skip
-  }
-}
 
 // Crash handling: log + cleanup + exit. External process manager (PM2/systemd/docker)
 // is responsible for restart. crash-recovery.ts will restore state from handoff on next start.

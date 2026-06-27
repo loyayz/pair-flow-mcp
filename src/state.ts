@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 // ── Types (§5.1 state.json schema) ──
 
 export type Phase = "idle" | "requirements" | "planning" | "implementation" | "summary";
-export type SubPhase = "coding" | "review" | "fix" | "blind_review" | null;
+export type SubPhase = "coding" | "review" | "fix" | null;
 export type PeerRole = "supervisor" | "peer";
 export type IssueType = "P0" | "P1" | "P2";
 export type IssueStatus = "open" | "resolved" | "escalated" | "deferred";
@@ -53,7 +53,7 @@ export interface Issue {
 }
 
 export interface HistoryEntry {
-  type: "phase_change" | "turn_change" | "submit" | "converge" | "force_converge" | "advance" | "blind_review";
+  type: "phase_change" | "turn_change" | "submit" | "converge" | "force_converge" | "advance";
   timestamp: string;
   details: Record<string, unknown>;
 }
@@ -95,6 +95,8 @@ export interface PairFlowState {
   dev_phase: number | null;
   round: number;
   turn: string;
+  turn_switched_at: string | null;
+  turn_claimed_at: string | null;
   converged: boolean;
   task: Task | null;
   peers: Peer[];
@@ -102,7 +104,6 @@ export interface PairFlowState {
   issues: Issue[];
   history: HistoryEntry[];
   pending_supervisor_review: boolean;
-  blind_review_pending: boolean;
   recovered: boolean;
   require_re_register: boolean;
   current_lease: CurrentLease;
@@ -121,6 +122,8 @@ export function defaultState(phaseConfig?: PhaseConfig): PairFlowState {
     dev_phase: null,
     round: 1,
     turn: "idle",
+    turn_switched_at: null,
+    turn_claimed_at: null,
     converged: false,
     task: null,
     peers: [],
@@ -128,7 +131,6 @@ export function defaultState(phaseConfig?: PhaseConfig): PairFlowState {
     issues: [],
     history: [],
     pending_supervisor_review: false,
-    blind_review_pending: false,
     recovered: false,
     require_re_register: false,
     current_lease: { token: null, holder: null, expires_at: null, grace_used: false },
@@ -177,7 +179,6 @@ export async function saveState(state: PairFlowState): Promise<void> {
 
 export function initRequirementsPhase(state: PairFlowState, nonSupervisorId: string, task: Task): PairFlowState {
   const now = new Date().toISOString();
-  const workflowId = formatWorkflowId(now);
   const emptyLastSubmit: LastSubmit = { round: null, sub_phase: null, commit_hash: null, submitted_at: null, stance: null, need_next_round: null, new_issues: [] };
   const lsp: Record<string, LastSubmit> = {};
   for (const p of state.peers) {
@@ -185,12 +186,13 @@ export function initRequirementsPhase(state: PairFlowState, nonSupervisorId: str
   }
   return {
     ...state,
-    workflow_id: workflowId,
     task,
     phase: "requirements",
     sub_phase: null,
     round: 1,
     turn: nonSupervisorId,
+    turn_switched_at: now,
+    turn_claimed_at: null,
     converged: false,
     issues: [],
     last_submit_per_turn: lsp,
@@ -258,6 +260,8 @@ export function initSummaryPhase(state: PairFlowState, nonSupervisorId: string):
     sub_phase: null,
     round: 1,
     turn: nonSupervisorId,
+    turn_switched_at: now,
+    turn_claimed_at: null,
     converged: false,
     issues: state.issues.filter((i) => i.status !== "open"), // preserve escalated/deferred/resolved across phases
     last_submit_per_turn: lsp,

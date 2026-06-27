@@ -1,13 +1,15 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { spawn, type ChildProcess } from "node:child_process";
-import { rm } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
 import http from "node:http";
 
 const PORT = 3199;
 const TEST_HANDOFF = resolve(".pairflow-test-handoff");
 const TEST_STATE = resolve(".pairflow-test");
+const TEST_TASK = resolve(tmpdir(), "pairflow-test-task.md");
 let server: ChildProcess;
 
 function mcpRequest(name: string, args: Record<string, unknown> = {}, headers: Record<string, string> = {}): Promise<Record<string, unknown>> {
@@ -57,10 +59,12 @@ async function stopServer() {
 }
 
 async function setup() {
-  const r1 = await mcpRequest("register", { supervisor: true, developer: false }, { "x-ai-identity": "claude" });
-  const r2 = await mcpRequest("register", { supervisor: false, developer: true }, { "x-ai-identity": "codebuddy" });
+  await writeFile(TEST_TASK, "# test task", "utf-8").catch(() => {});
+  const r1 = await mcpRequest("register", { supervisor: true, developer: false, work_dir: "/test" }, { "x-ai-identity": "claude" });
+  const r2 = await mcpRequest("register", { supervisor: false, developer: true, work_dir: "/test" }, { "x-ai-identity": "codebuddy" });
   if (!r1.ok || !r2.ok) throw new Error(`Setup failed: ${JSON.stringify(r1)} ${JSON.stringify(r2)}`);
-  const adv = await mcpRequest("claim_turn", { mode: "advance", timeouts: { requirements: 10, planning: 10, implementation: 60, summary: 30 }, task: { description: "测试任务——验证 PairFlow 状态机流程" } }, { "x-ai-identity": "claude" });
+  await mcpRequest("confirm_task", { task_path: TEST_TASK }, { "x-ai-identity": "claude" });
+  const adv = await mcpRequest("advance", {}, { "x-ai-identity": "claude" });
   if (!adv.ok) throw new Error(`Advance failed: ${JSON.stringify(adv)}`);
 }
 
@@ -69,34 +73,39 @@ describe("Register", () => {
   afterAll(stopServer);
 
   it("rejects without header", async () => {
-    const r = await mcpRequest("register", { supervisor: true, developer: false });
+    const r = await mcpRequest("register", { supervisor: true, developer: false, work_dir: "/test" });
     expect(r.ok).toBe(false);
   });
   it("registers with header", async () => {
-    const r = await mcpRequest("register", { supervisor: true, developer: false }, { "x-ai-identity": "alice" });
+    const r = await mcpRequest("register", { supervisor: true, developer: false, work_dir: "/test" }, { "x-ai-identity": "alice" });
     expect(r.ok).toBe(true);
   });
 });
 
 describe("Claim turn + submit", () => {
-  beforeAll(async () => { await startServer(); await setup(); }, 20000);
-  afterAll(stopServer);
+  beforeAll(async () => {
+    await writeFile(TEST_TASK, "# test task", "utf-8");
+    await startServer(); await setup();
+  }, 20000);
+  afterAll(async () => {
+    stopServer();
+    await rm(TEST_TASK, { force: true });
+    await rm(TEST_TASK + ".pid", { force: true });
+  });
 
   it("rejects non-supervisor advance", async () => {
-    const r = await mcpRequest("claim_turn", { mode: "advance" }, { "x-ai-identity": "codebuddy" });
+    const r = await mcpRequest("advance", {}, { "x-ai-identity": "codebuddy" });
     expect(r.ok).toBe(false);
   });
-  it("returns lease token", async () => {
-    const r = await mcpRequest("claim_turn", { mode: "turn" }, { "x-ai-identity": "codebuddy" });
+  it("claim turn succeeds for current turn holder", async () => {
+    const r = await mcpRequest("claim_turn", {}, { "x-ai-identity": "codebuddy" });
     expect(r.ok).toBe(true);
-    expect(r.lease_token).toBeTruthy();
   });
   it("submit works", async () => {
-    await mcpRequest("claim_turn", { mode: "turn" }, { "x-ai-identity": "codebuddy" });
+    await mcpRequest("claim_turn", {}, { "x-ai-identity": "codebuddy" });
     const r = await mcpRequest("submit", {
-      content: "## 本轮审阅范围\n\n- test\n\n## 收敛状态\n\n- 本轮新增 issue：P0：0，P1：0，P2：0\n- 本轮关闭 issue：无",
-      converge_mark: { stance: null, need_next_round: null, new_issues: [], resolved_issue_ids: [] },
-      commit_hash: "abc12345",
+      file_path: TEST_TASK,
+      git_commit_hash: "abc1234567",
     }, { "x-ai-identity": "codebuddy" });
     expect(r.ok).toBe(true);
   });
@@ -104,7 +113,7 @@ describe("Claim turn + submit", () => {
 
 describe("Issue CRUD", () => {
   beforeAll(async () => { await startServer(); await setup(); }, 20000);
-  afterAll(stopServer);
+  afterAll(async () => { stopServer(); await rm(TEST_TASK + ".pid", { force: true }); });
 
   it("creates and lists", async () => {
     const r = await mcpRequest("create_issue", { type: "P1", topic: "test", description: "desc", proposal: "fix", rationale: "§5.3" }, { "x-ai-identity": "claude" });
@@ -125,7 +134,7 @@ describe("Issue CRUD", () => {
 
 describe("Force converge", () => {
   beforeAll(async () => { await startServer(); await setup(); }, 20000);
-  afterAll(stopServer);
+  afterAll(async () => { stopServer(); await rm(TEST_TASK + ".pid", { force: true }); });
 
   it("only supervisor", async () => {
     const r = await mcpRequest("force_converge", {}, { "x-ai-identity": "codebuddy" });
@@ -141,8 +150,8 @@ describe("Concurrent mutex", () => {
 
   it("serializes", async () => {
     const [r1, r2] = await Promise.all([
-      mcpRequest("register", { supervisor: true, developer: false }, { "x-ai-identity": "a" }),
-      mcpRequest("register", { supervisor: false, developer: true }, { "x-ai-identity": "b" }),
+      mcpRequest("register", { supervisor: true, developer: false, work_dir: "/test" }, { "x-ai-identity": "a" }),
+      mcpRequest("register", { supervisor: false, developer: true, work_dir: "/test" }, { "x-ai-identity": "b" }),
     ]);
     expect(r1.ok).toBe(true);
     expect(r2.ok).toBe(true);

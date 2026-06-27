@@ -18,84 +18,54 @@ export async function register(
 
   const supervisor = args.supervisor === true;
   const developer = args.developer === true;
-  const workDir = (args.work_dir as string) ?? ""; // P0-28: work_dir 参数
+  const workDir = args.work_dir as string;
+  if (!workDir) {
+    return err("work_dir is required — provide project root directory path");
+  }
 
   return stateMutex.runExclusive(async () => {
     const state = await loadState();
     const now = new Date().toISOString();
 
-    // Validate phase — allow re-registration in any phase after crash recovery
-    if (state.phase !== "idle" && !state.require_re_register) {
+    if (state.phase !== "idle") {
       return err(`register only allowed in IDLE phase, current: ${state.phase}`);
     }
 
-    // Crash recovery re-registration: idempotent update (retro-2 §4.2)
-    if (state.require_re_register) {
-      const recoveredPeer = state.peers.find((p) => p.identity === identity);
-      if (!recoveredPeer) {
-        return err(`identity "${identity}" not found in recovered peers — recovered identities: ${state.peers.map(p => p.identity).join(", ")}`);
-      }
-      // Idempotent update: refresh registered_at to confirm online presence
-      recoveredPeer.registered_at = now;
-      if (workDir) recoveredPeer.work_dir = workDir;
-      // Check all peers re-registered: epoch sentinel means "not yet re-registered".
-      // crash-recovery.ts sets registered_at to epoch to force explicit re-register.
-      const EPOCH = "1970-01-01T00:00:00.000Z";
-      const allReRegistered = state.peers.every((p) => p.registered_at !== EPOCH);
-      if (allReRegistered) {
-        state.require_re_register = false;
-      }
-      await saveState(state);
-      await logEvent("register", { identity, supervisor, developer, re_register: true, all_re_registered: !state.require_re_register });
-      return ok({ ok: true, identity, role: recoveredPeer.role, is_developer: recoveredPeer.is_developer, re_register: true, all_re_registered: !state.require_re_register },
-        { tool: "wait_for_turn", when: "已重新确认在线状态，等待推进" });
-    }
-
-    // P0-28: 校验 work_dir（第二个 peer 注册时）
-    if (workDir && state.peers.length === 1) {
+    // work_dir 一致性校验（第二个 peer 注册时与第一个比对）
+    if (state.peers.length === 1) {
       const firstPeer = state.peers[0];
-      if (firstPeer.work_dir && firstPeer.work_dir !== workDir) {
+      if (firstPeer.work_dir !== workDir) {
         return err(
-          `work_dir mismatch — yours: "${workDir}", ${firstPeer.identity}'s: "${firstPeer.work_dir}". Verify same git repository.`
+          `work_dir mismatch — yours: "${workDir}", ${firstPeer.identity}'s: "${firstPeer.work_dir}". Verify same project directory.`
         );
       }
     }
 
-    // Check for existing registration
-    const existing = state.peers.find((p) => p.identity === identity);
-    const overwritten = existing !== undefined;
-    if (overwritten) {
-      // Validate supervisor uniqueness on re-registration
-      if (supervisor) {
-        const existingSupervisor = state.peers.find((p) => p.role === "supervisor" && p.identity !== identity);
-        if (existingSupervisor) {
-          return err(`supervisor already registered: ${existingSupervisor.identity}`);
-        }
-      }
-      const warning = `previous connection had in-flight operation, completed before override`;
-      // Remove old, add new
-      state.peers = state.peers.filter((p) => p.identity !== identity);
-      state.peers.push({ identity, role: supervisor ? "supervisor" : "peer", is_developer: developer, registered_at: now, work_dir: workDir || existing.work_dir });
-      await saveState(state);
-      await logEvent("register", { identity, supervisor, developer, work_dir: workDir, overwritten: true });
-      return ok({ ok: true, identity, role: supervisor ? "supervisor" : "peer", is_developer: developer, warning, recovered: state.recovered || undefined },
-        { tool: "wait_for_turn", when: "已重新注册，等待推进" });
+    // Identity already registered
+    if (state.peers.some((p) => p.identity === identity)) {
+      return err(`identity "${identity}" already registered`);
     }
 
-    // Validate role constraints
-    if (supervisor) {
-      const existingSupervisor = state.peers.find((p) => p.role === "supervisor");
-      if (existingSupervisor) {
-        return err(`supervisor already registered: ${existingSupervisor.identity}`);
-      }
+    // Validate role constraints: exactly one supervisor, one developer
+    if (supervisor && state.peers.some((p) => p.role === "supervisor")) {
+      return err("supervisor already registered");
+    }
+    if (developer && state.peers.some((p) => p.is_developer)) {
+      return err("developer already registered");
     }
 
-    state.peers.push({ identity, role: supervisor ? "supervisor" : "peer", is_developer: developer, registered_at: now, work_dir: workDir || undefined });
+    state.peers.push({ identity, role: supervisor ? "supervisor" : "peer", is_developer: developer, registered_at: now, work_dir: workDir });
     await saveState(state);
     await logEvent("register", { identity, supervisor, developer, work_dir: workDir });
 
-    const bothRegistered = state.peers.length >= 2;
-    return ok({ ok: true, identity, role: supervisor ? "supervisor" : "peer", is_developer: developer, recovered: state.recovered || undefined },
-      { tool: "wait_for_turn", when: bothRegistered ? "双方已注册，等待 supervisor advance" : "等待对方注册" });
+    const prefix = `Set X-AI-Identity: ${identity} header on all subsequent requests`;
+    const tip = supervisor
+      ? `${prefix}。下一步调用 confirm_dir 确认工作目录 ${workDir}`
+      : `${prefix}。下一步调用 wait_for_turn 接口`;
+
+    return ok({
+      ok: true, identity, is_supervisor: supervisor, is_developer: developer,
+      phase: state.phase,
+    }, tip);
   });
 }

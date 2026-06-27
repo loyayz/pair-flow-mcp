@@ -35,6 +35,7 @@ describe("State management", () => {
 
   it("initRequirementsPhase sets correct initial turn", () => {
     const state = defaultState();
+    state.workflow_id = "20260627000000";
     state.peers = [
       { identity: "supervisor", role: "supervisor", is_developer: false, registered_at: "" },
       { identity: "peer", role: "peer", is_developer: false, registered_at: "" },
@@ -42,8 +43,7 @@ describe("State management", () => {
     const next = initRequirementsPhase(state, "peer", { description: "test task" });
     expect(next.phase).toBe("requirements");
     expect(next.turn).toBe("peer");
-    expect(next.workflow_id).toBeTruthy();
-    expect(next.workflow_id).toMatch(/^\d{14}$/);
+    expect(next.workflow_id).toBe("20260627000000");
   });
 });
 

@@ -51,7 +51,7 @@ export async function createIssue(
     await mkdir(`${HANDOFF_DIR}/${state.workflow_id}`, { recursive: true }).then(() => appendFile(journalPath,JSON.stringify({ action: "create", timestamp: new Date().toISOString(), id: issueId, type, topic, raised_by: identity }) + "\n"));
     await logEvent("create_issue", { issue_id: issueId, type, topic, identity });
     return ok({ ok: true, issue_id: issueId },
-      { tool: "submit", when: "将 issue 写入收敛标记并提交" });
+      "下一步调用 submit 接口");
   });
 }
 
