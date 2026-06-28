@@ -23,6 +23,12 @@ export async function advance(
       return err("only supervisor can advance");
     }
 
+    // Only allow advance when turn is idle or belongs to the supervisor.
+    // Prevents supervisor from skipping the other peer's round.
+    if (state.turn !== "idle" && state.turn !== identity) {
+      return err(`not your turn — current turn: ${state.turn}. Wait for the other peer to finish before advancing`);
+    }
+
     const currentPhase = state.phase;
 
     if (currentPhase === "idle") {
