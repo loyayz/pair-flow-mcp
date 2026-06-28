@@ -9,6 +9,9 @@ import { resolve } from "./token-map.js";
 export function parseIdentity(headers: IsomorphicHeaders | undefined): string {
   const raw = headers?.["x-ai-identity"];
   if (typeof raw === "string" && raw.trim().length > 0) {
+    // Inner sanitizeIdentity: guards against path traversal in plaintext header values.
+    // Outer sanitizeIdentity: defense-in-depth against a malicious identity stored in the
+    // token map (e.g. if registerToken were ever called with an unsanitized string).
     return sanitizeIdentity(resolve(sanitizeIdentity(raw.trim())));
   }
   return "unknown";
