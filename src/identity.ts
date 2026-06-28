@@ -9,7 +9,7 @@ import { resolve } from "./token-map.js";
 export function parseIdentity(headers: IsomorphicHeaders | undefined): string {
   const raw = headers?.["x-ai-identity"];
   if (typeof raw === "string" && raw.trim().length > 0) {
-    return resolve(sanitizeIdentity(raw.trim()));
+    return sanitizeIdentity(resolve(sanitizeIdentity(raw.trim())));
   }
   return "unknown";
 }
