@@ -36,12 +36,10 @@ export async function confirmTask(
 
     // Validate task file is under work_dir
     const supervisor = state.peers.find((p) => p.identity === identity);
-    const workDir = supervisor?.work_dir;
-    if (workDir) {
-      const resolvedWorkDir = resolve(workDir);
-      if (resolved !== resolvedWorkDir && !resolved.startsWith(resolvedWorkDir + sep)) {
-        return err("task_path must be under work_dir");
-      }
+    if (!supervisor?.work_dir) return err("supervisor must have a registered work_dir");
+    const resolvedWorkDir = resolve(supervisor.work_dir);
+    if (resolved !== resolvedWorkDir && !resolved.startsWith(resolvedWorkDir + sep)) {
+      return err("task_path must be under work_dir");
     }
 
     state.task = { spec_file: resolved };
@@ -105,7 +103,7 @@ export async function confirmTask(
       }, tip);
     }
 
-    const tip = `已确认任务文档: ${resolved}，工作流 ID: ${state.workflow_id}。${identityInfo}。请向用户复述以上信息并说明即将进入需求阶段、由对方(developer)先产出。待用户确认后调用 advance 接口。`;
+    const tip = `已确认任务文档: ${resolved}（绝对路径），工作流 ID: ${state.workflow_id}。${identityInfo}。请向用户复述以上信息并说明即将进入需求阶段、由对方(developer)先产出。待用户确认后调用 advance 接口。`;
     return ok({
       task_path: resolved,
       workflow_id: state.workflow_id,

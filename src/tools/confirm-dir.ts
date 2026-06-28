@@ -32,11 +32,11 @@ export async function confirmDir(
       const taskHint = w.task_path ? ` (任务: ${w.task_path})` : "";
       return `${w.id}${taskHint}`;
     }).join(", ");
-    const tip = `${identityInfo}。发现 ${incomplete.length} 个未完成工作流: ${idList}${more}。请询问用户选择: A) 恢复某个未完成工作流 → 以对应的任务文档路径调用 confirm_task；B) 新建工作流 → 以新任务文档路径调用 confirm_task。`;
+    const tip = `${identityInfo}。发现 ${incomplete.length} 个未完成工作流: ${idList}${more}。请询问用户选择: A) 恢复某个未完成工作流 → 以对应的任务文档绝对路径调用 confirm_task；B) 新建工作流 → 以新任务文档绝对路径调用 confirm_task。`;
     return ok({ work_dir: workDir, incomplete_workflows: incomplete }, tip);
   }
 
-  const tip = `${identityInfo}。无未完成工作流。下一步调用 confirm_task 确认任务文档。`;
+  const tip = `${identityInfo}。无未完成工作流。下一步调用 confirm_task 确认任务文档，task_path 使用绝对路径。`;
   return ok({ work_dir: workDir, incomplete_workflows: incomplete }, tip);
 }
 
