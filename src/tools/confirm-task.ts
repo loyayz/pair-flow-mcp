@@ -1,5 +1,5 @@
 import { readFile, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { resolve, sep } from "node:path";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
@@ -33,6 +33,16 @@ export async function confirmTask(
     const state = await loadState();
     if (!isSupervisor(state, identity)) return err("only supervisor can confirm task");
     if (state.phase !== "idle") return err("confirm_task only allowed in IDLE phase");
+
+    // Validate task file is under work_dir
+    const supervisor = state.peers.find((p) => p.identity === identity);
+    const workDir = supervisor?.work_dir;
+    if (workDir) {
+      const resolvedWorkDir = resolve(workDir);
+      if (resolved !== resolvedWorkDir && !resolved.startsWith(resolvedWorkDir + sep)) {
+        return err("task_path must be under work_dir");
+      }
+    }
 
     state.task = { spec_file: resolved };
 

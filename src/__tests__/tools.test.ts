@@ -60,8 +60,9 @@ async function stopServer() {
 
 async function setup() {
   await writeFile(TEST_TASK, "# test task", "utf-8").catch(() => {});
-  const r1 = await mcpRequest("register", { supervisor: true, developer: false, work_dir: "/test" }, { "x-ai-identity": "claude" });
-  const r2 = await mcpRequest("register", { supervisor: false, developer: true, work_dir: "/test" }, { "x-ai-identity": "codebuddy" });
+  const workDir = tmpdir();
+  const r1 = await mcpRequest("register", { supervisor: true, developer: false, work_dir: workDir }, { "x-ai-identity": "claude" });
+  const r2 = await mcpRequest("register", { supervisor: false, developer: true, work_dir: workDir }, { "x-ai-identity": "codebuddy" });
   if (!r1.ok || !r2.ok) throw new Error(`Setup failed: ${JSON.stringify(r1)} ${JSON.stringify(r2)}`);
   await mcpRequest("confirm_task", { task_path: TEST_TASK }, { "x-ai-identity": "claude" });
   const adv = await mcpRequest("advance", {}, { "x-ai-identity": "claude" });
