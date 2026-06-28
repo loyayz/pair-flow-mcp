@@ -79,6 +79,9 @@ describe("Register", () => {
   it("registers with header", async () => {
     const r = await mcpRequest("register", { supervisor: true, developer: false, work_dir: "/test" }, { "x-ai-identity": "alice" });
     expect(r.ok).toBe(true);
+    expect(r.token).toBeDefined();
+    expect(typeof r.token).toBe("string");
+    expect(r.token.length).toBeGreaterThan(0);
   });
 });
 
