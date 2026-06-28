@@ -28,7 +28,7 @@ describe("Handoff reconstruction", () => {
 
   it("returns null when no handoff exists", async () => {
     const st = defaultState();
-    const recovered = await reconstructFromHandoff(st);
+    const recovered = await reconstructFromHandoff(st, "00000000000000");
     expect(recovered).toBeNull();
   });
 
@@ -40,7 +40,7 @@ describe("Handoff reconstruction", () => {
     await writeFile(join(wfDir, "r1_bob.meta.json"), JSON.stringify({ round: 1 }));
 
     const st = defaultState();
-    const recovered = await reconstructFromHandoff(st, undefined, wfId);
+    const recovered = await reconstructFromHandoff(st, wfId);
     expect(recovered).not.toBeNull();
     expect(recovered!.workflow_id).toBe(wfId);
   });
