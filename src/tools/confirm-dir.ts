@@ -70,6 +70,8 @@ async function scanIncompleteWorkflows(workDir: string): Promise<Array<{id: stri
 
       // Only report as incomplete if .pid file still exists and matches this workflow
       if (taskPath) {
+        // Defense-in-depth: taskPath comes from meta.json on disk, guard against traversal
+        if (taskPath.includes("..")) continue;
         try {
           const pidRaw = (await readFile(`${taskPath}.pid`, "utf-8")).trim();
           if (pidRaw !== d.name) continue; // .pid points to a different workflow
