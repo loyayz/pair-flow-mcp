@@ -94,18 +94,20 @@ export async function confirmTask(
       const action = turnIsSelf
         ? "请向用户复述以上恢复状态，确认后调用 claim_turn 获取执行权"
         : "请等待对方操作，调用 wait_for_turn 接口";
+      const taskPathNorm = resolved.replace(/\\/g, "/");
       const tip = `已恢复工作流 ${state.workflow_id}，当前阶段: ${state.phase}，轮次: ${state.round}。${identityInfo}。${turnInfo}。${action}。`;
       return ok({
-        task_path: resolved,
+        task_path: taskPathNorm,
         workflow_id: state.workflow_id,
         phase: state.phase,
         recovered,
       }, tip);
     }
 
-    const tip = `已确认任务文档: ${resolved}（绝对路径），工作流 ID: ${state.workflow_id}。${identityInfo}。请向用户复述以上信息并说明即将进入需求阶段、由对方(developer)先产出。待用户确认后调用 advance 接口。`;
+    const taskPathNorm = resolved.replace(/\\/g, "/");
+    const tip = `已确认任务文档: ${taskPathNorm}（绝对路径），工作流 ID: ${state.workflow_id}。${identityInfo}。请向用户复述以上信息并说明即将进入需求阶段、由对方(developer)先产出。待用户确认后调用 advance 接口。`;
     return ok({
-      task_path: resolved,
+      task_path: taskPathNorm,
       workflow_id: state.workflow_id,
       phase: state.phase,
       recovered,

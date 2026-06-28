@@ -1,5 +1,5 @@
 import { unlink } from "node:fs/promises";
-import { resolve, sep } from "node:path";
+import { join, resolve, sep } from "node:path";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
@@ -38,7 +38,8 @@ export async function advance(
       const next = initRequirementsPhase(state, nonSupervisor, state.task);
       await saveState(next);
       await logEvent("advance", { identity, from: "idle", to: "requirements", task: state.task.spec_file });
-      return ok({ ok: true, new_phase: "requirements", turn: nonSupervisor }, `阶段已推进到 requirements，turn 已切给 ${nonSupervisor}(对方)。当前身份: ${identity}(supervisor)。请等待对方产出需求分析。调用 wait_for_turn 接口。`);
+      const reqFile = join("handoff", next.workflow_id!, "requirements", `r1_${nonSupervisor}.md`).replace(/\\/g, "/");
+      return ok({ ok: true, new_phase: "requirements", turn: nonSupervisor }, `[行动] 等待 ${nonSupervisor}(对方) 产出需求分析。对方 claim_turn 后将获得完整产出指引。调用 wait_for_turn 接口。\n\n[文件] ${reqFile}\n\n[状态] ${identity}(supervisor) | requirements | round: 1`);
     }
 
     // Non-IDLE phases: supervisor decides when to advance (no automated convergence check)
@@ -49,7 +50,9 @@ export async function advance(
       const next = initPlanningPhase(state, reviewer.identity);
       await saveState(next);
       await logEvent("advance", { identity, from: "requirements", to: "planning" });
-      return ok({ ok: true, new_phase: "planning", turn: reviewer.identity }, `阶段已推进到 planning，turn 已切给 ${reviewer.identity}(对方)。当前身份: ${identity}(supervisor)。请等待对方产出实施计划。调用 wait_for_turn 接口。`);
+      const turnIsSelf = reviewer.identity === identity;
+      const planFile = join("handoff", next.workflow_id!, "planning", `r1_${reviewer.identity}.md`).replace(/\\/g, "/");
+      return ok({ ok: true, new_phase: "planning", turn: reviewer.identity }, `[行动] 等待 ${reviewer.identity}(${turnIsSelf ? "你" : "对方"}) 产出实施计划。对方 claim_turn 后将获得完整产出指引。${turnIsSelf ? "调用 claim_turn 获取执行权。" : "调用 wait_for_turn 接口。"}\n\n[文件] ${planFile}\n\n[状态] ${identity}(supervisor) | planning | round: 1`);
     }
 
     if (currentPhase === "planning") {
@@ -58,14 +61,17 @@ export async function advance(
       const next = initImplementationPhase(state, developer.identity);
       await saveState(next);
       await logEvent("advance", { identity, from: "planning", to: "implementation", dev_cycle: next.dev_cycle });
-      return ok({ ok: true, new_phase: "implementation", sub_phase: "coding", turn: developer.identity }, `阶段已推进到 implementation(coding)，turn 已切给 ${developer.identity}(对方)。当前身份: ${identity}(supervisor)。请等待对方产出代码。调用 wait_for_turn 接口。`);
+      const turnIsSelf = developer.identity === identity;
+      const implFile = join("handoff", next.workflow_id!, "implementation", `r1_coding_${developer.identity}.md`).replace(/\\/g, "/");
+      return ok({ ok: true, new_phase: "implementation", sub_phase: "coding", turn: developer.identity }, `[行动] 等待 ${developer.identity}(${turnIsSelf ? "你" : "对方"}) 产出代码实现(coding)。对方 claim_turn 后将获得完整产出指引。${turnIsSelf ? "调用 claim_turn 获取执行权。" : "调用 wait_for_turn 接口。"}\n\n[文件] ${implFile}\n\n[状态] ${identity}(supervisor) | implementation/coding | round: 1`);
     }
 
     if (currentPhase === "implementation") {
       const next = initSummaryPhase(state, identity);
       await saveState(next);
       await logEvent("advance", { identity, from: "implementation", to: "summary" });
-      return ok({ ok: true, new_phase: "summary", turn: identity }, `阶段已推进到 summary，turn 归属: ${identity}(你)。当前身份: ${identity}(supervisor)。请产出汇总草稿。调用 claim_turn 获取执行权。`);
+      const summaryFile = join("handoff", next.workflow_id!, "summary", `r1_${identity}.md`).replace(/\\/g, "/");
+      return ok({ ok: true, new_phase: "summary", turn: identity }, `[行动] 产出汇总草稿，包含关键决策、遗留问题和后续建议。调用 claim_turn 获取执行权。\n\n[文件] ${summaryFile}\n\n[状态] ${identity}(supervisor) | summary | round: 1`);
     }
 
     if (currentPhase === "summary") {
@@ -84,10 +90,11 @@ export async function advance(
           try { await unlink(pidPath); } catch { /* .pid may not exist */ }
         }
       }
+      const finishedId = state.workflow_id;
       const next = initIdleState(state);
       await saveState(next);
       await logEvent("advance", { identity, from: "summary", to: "idle" });
-      return ok({ ok: true, new_phase: "idle" }, `工作流已结束，阶段: idle。当前身份: ${identity}(supervisor)。`);
+      return ok({ ok: true, new_phase: "idle" }, `[行动] 工作流已结束。全部产出归档于 handoff/${finishedId}/。\n\n如需开始新任务，双方重新 register 后，监督者调用 confirm_dir → confirm_task。\n\n[状态] ${identity}(supervisor) | idle`);
     }
 
     return err(`unknown phase: ${currentPhase}`);

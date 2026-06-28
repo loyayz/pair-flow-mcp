@@ -8,6 +8,7 @@ import { loadState, saveState, isCurrentHolder, getOtherIdentity } from "../stat
 import { logEvent } from "../logger.js";
 import { stateMutex } from "../mutex.js";
 import { err, ok } from "../response.js";
+import { identityLabel } from "../tip.js";
 
 const HANDOFF_DIR = process.env.HANDOFF_DIR || "handoff";
 
@@ -85,11 +86,10 @@ export async function submit(
     // P0-3: Auto-generate meta.json for crash recovery
     await writeMetaJson(filePath, commitHash, originalSubPhase, state.task);
 
-    const peer = state.peers.find((p) => p.identity === identity);
-    const roleLabel = peer?.role === "supervisor" ? "supervisor" : (peer?.is_developer ? "developer" : "reviewer");
+    const idLabel = identityLabel(state, identity);
     const nextPeer = state.peers.find((p) => p.identity === state.turn);
-    const nextRoleLabel = nextPeer?.role === "supervisor" ? "supervisor" : (nextPeer?.is_developer ? "developer" : "reviewer");
-    const identityInfo = `当前身份: ${identity}(${roleLabel})。turn 已切给 ${state.turn}(${nextRoleLabel}，对方)`;
+    const nextLabel = identityLabel(state, state.turn);
+    const identityInfo = `当前身份: ${idLabel}。turn 已切给 ${nextLabel}(对方)`;
     const tip = state.phase === "summary" && nextPeer?.role === "supervisor"
       ? `${identityInfo}。请调用 advance 接口结束当前工作流`
       : state.phase === "summary"
