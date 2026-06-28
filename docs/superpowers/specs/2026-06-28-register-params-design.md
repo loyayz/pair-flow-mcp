@@ -77,3 +77,29 @@ curl -s -X POST http://localhost:3100/mcp \
 
 - ✅ 在范围内：`register` 入参变更、校验错误返回 curl 参考
 - ❌ 不在范围内：其他工具的 identity 解析变更、token 机制变更、状态机行为变更
+
+## 6. 实现细节
+
+### 6.1 Zod Schema
+
+`identity` 和 `work_dir` 在 Zod schema 中标记为 `.optional()`，防止 SDK 层在校验失败时返回 Zod 默认错误（`-32602`）而非自定义 curl 参考。实际必填校验在 handler 代码中完成：
+
+```typescript
+inputSchema: {
+  identity: z.string().optional(),
+  supervisor: z.boolean(),
+  developer: z.boolean(),
+  work_dir: z.string().optional(),
+}
+```
+
+### 6.2 校验顺序
+
+1. `identity` 缺失 → `badParam("identity", "缺失")`
+2. `identity` 非法字符（`sanitizeIdentity` 抛出）→ `badParam("identity", "非法")`
+3. `work_dir` 缺失 → `badParam("work_dir", "缺失")`
+4. 获取锁 → phase/唯一性/角色/work_dir 一致性校验（现有错误信息不变）
+
+### 6.3 安全说明
+
+注册阶段 identity 来自 body，服务端无法验证其真实性。安全边界在注册后：返回的随机 UUID token 是后续所有请求的唯一认证凭据，token→identity 映射在服务端进程内存中，不可伪造。
