@@ -43,7 +43,7 @@ export async function confirmTask(
       const raw = (await readFile(pidFile, "utf-8")).trim();
       // Validate workflow ID format (14-digit timestamp)
       if (raw && /^\d{14}$/.test(raw)) {
-        const recoveredState = await reconstructFromHandoff(state, undefined, raw);
+        const recoveredState = await reconstructFromHandoff(state, raw);
         if (recoveredState) {
           // Restore workflow progress, keep current registered peers
           state.workflow_id = recoveredState.workflow_id;

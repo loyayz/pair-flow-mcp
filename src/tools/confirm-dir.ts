@@ -5,6 +5,7 @@ import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sd
 import { parseIdentity } from "../identity.js";
 import { loadState, isSupervisor } from "../state.js";
 import { err, ok } from "../response.js";
+import { isWorkflowComplete } from "../crash-recovery.js";
 
 export async function confirmDir(
   args: Record<string, unknown>,
@@ -46,13 +47,9 @@ async function scanIncompleteWorkflows(workDir: string): Promise<Array<{id: stri
     const entries = await readdir(handoffDir, { withFileTypes: true });
     const wfDirs = entries.filter((e) => e.isDirectory() && /^\d{14}$/.test(e.name));
     for (const d of wfDirs) {
-      try {
-        const summaryDir = `${handoffDir}/${d.name}/summary`;
-        const sEntries = await readdir(summaryDir);
-        if (sEntries.some((e) => e.includes("_final.md"))) {
-          continue; // completed workflow
-        }
-      } catch { /* no summary dir → incomplete */ }
+      // Complete = summary/ directory exists with files
+      if (await isWorkflowComplete(d.name)) continue;
+
       // Try to extract task_path from meta.json in any phase subdirectory
       let taskPath: string | null = null;
       for (const phase of ["requirements", "planning", "implementation", "summary"]) {
@@ -70,6 +67,17 @@ async function scanIncompleteWorkflows(workDir: string): Promise<Array<{id: stri
           }
         } catch { /* phase dir may not exist */ }
       }
+
+      // Only report as incomplete if .pid file still exists and matches this workflow
+      if (taskPath) {
+        try {
+          const pidRaw = (await readFile(`${taskPath}.pid`, "utf-8")).trim();
+          if (pidRaw !== d.name) continue; // .pid points to a different workflow
+        } catch {
+          continue; // .pid does not exist — task already unbound
+        }
+      }
+
       incomplete.push({ id: d.name, task_path: taskPath });
     }
   } catch { /* handoff dir doesn't exist */ }
