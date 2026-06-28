@@ -63,9 +63,10 @@ export async function register(
 
     const prefix = `Set X-AI-Identity: ${token} header on all subsequent requests`;
     const identityInfo = `当前身份: ${identity}(${supervisor ? "supervisor" : developer ? "developer" : "reviewer"})`;
+    const pairingNote = `结对编程由两个独立 AI 各自在一个 session 中注册。你只需注册自己的身份，不要在同一 session 注册对方身份——你不是对方，也不能代替对方操作`;
     const tip = supervisor
-      ? `${prefix}。${identityInfo}。下一步调用 confirm_dir 接口，参数 work_dir="${workDir}"`
-      : `${prefix}。${identityInfo}。下一步调用 wait_for_turn 接口，等待 supervisor 推进`;
+      ? `${prefix}。${identityInfo}。${pairingNote}。下一步调用 confirm_dir 接口，参数 work_dir="${workDir}"`
+      : `${prefix}。${identityInfo}。${pairingNote}。下一步调用 wait_for_turn 接口，等待 supervisor 推进`;
 
     return ok({
       ok: true, identity, token, is_supervisor: supervisor, is_developer: developer,
