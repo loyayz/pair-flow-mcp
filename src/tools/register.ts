@@ -1,27 +1,50 @@
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
-import { parseIdentity } from "../identity.js";
+import { sanitizeIdentity } from "../identity.js";
 import { loadState, saveState } from "../state.js";
 import { logEvent } from "../logger.js";
 import { stateMutex } from "../mutex.js";
 import { err, ok } from "../response.js";
 import { registerToken } from "../token-map.js";
 
+const REGISTER_CURL = `curl -s -X POST http://localhost:3100/mcp \\
+  -H "Content-Type: application/json" \\
+  -H "Accept: application/json, text/event-stream" \\
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"register","arguments":{"identity":"<你的身份名>","supervisor":<true|false>,"developer":<true|false>,"work_dir":"<项目根目录绝对路径>"}}}'
+
+- identity: 你的身份名称，如 "claude"。只能包含字母、数字、下划线、连字符
+- supervisor: 是否为监督者，true 或 false。两个 AI 中只能有一个监督者
+- developer: 是否为开发者，true 或 false。两个 AI 中只能有一个开发者
+- work_dir: 项目根目录绝对路径，两个 AI 必须相同`;
+
+function badParam(paramName: string, reason: "缺失" | "非法"): string {
+  return `${paramName} 参数${reason}。正确格式参考（尖括号内为变量）：
+
+${REGISTER_CURL}`;
+}
+
 export async function register(
   args: Record<string, unknown>,
   extra: RequestHandlerExtra<ServerRequest, ServerNotification>
 ): Promise<CallToolResult> {
-  const identity = parseIdentity(extra.requestInfo?.headers);
-  if (identity === "unknown") {
-    return err("identity required — set X-AI-Identity header");
+  // identity 从 body 取，不再从 header 取
+  const identity = args.identity as string;
+  if (!identity) {
+    return err(badParam("identity", "缺失"));
+  }
+
+  try {
+    sanitizeIdentity(identity);
+  } catch {
+    return err(badParam("identity", "非法"));
   }
 
   const supervisor = args.supervisor === true;
   const developer = args.developer === true;
   const workDir = args.work_dir as string;
   if (!workDir) {
-    return err("work_dir is required — provide project root directory path");
+    return err(badParam("work_dir", "缺失"));
   }
 
   return stateMutex.runExclusive(async () => {

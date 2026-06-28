@@ -61,8 +61,8 @@ async function stopServer() {
 async function setup() {
   await writeFile(TEST_TASK, "# test task", "utf-8").catch(() => {});
   const workDir = tmpdir();
-  const r1 = await mcpRequest("register", { supervisor: true, developer: false, work_dir: workDir }, { "x-ai-identity": "claude" });
-  const r2 = await mcpRequest("register", { supervisor: false, developer: true, work_dir: workDir }, { "x-ai-identity": "codebuddy" });
+  const r1 = await mcpRequest("register", { identity: "claude", supervisor: true, developer: false, work_dir: workDir });
+  const r2 = await mcpRequest("register", { identity: "codebuddy", supervisor: false, developer: true, work_dir: workDir });
   if (!r1.ok || !r2.ok) throw new Error(`Setup failed: ${JSON.stringify(r1)} ${JSON.stringify(r2)}`);
   await mcpRequest("confirm_task", { task_path: TEST_TASK }, { "x-ai-identity": "claude" });
   const adv = await mcpRequest("advance", {}, { "x-ai-identity": "claude" });
@@ -73,12 +73,12 @@ describe("Register", () => {
   beforeAll(startServer, 15000);
   afterAll(stopServer);
 
-  it("rejects without header", async () => {
+  it("rejects without identity in body", async () => {
     const r = await mcpRequest("register", { supervisor: true, developer: false, work_dir: "/test" });
     expect(r.ok).toBe(false);
   });
-  it("registers with header", async () => {
-    const r = await mcpRequest("register", { supervisor: true, developer: false, work_dir: "/test" }, { "x-ai-identity": "alice" });
+  it("registers with identity in body", async () => {
+    const r = await mcpRequest("register", { identity: "alice", supervisor: true, developer: false, work_dir: "/test" });
     expect(r.ok).toBe(true);
     expect(r.token).toBeDefined();
     expect(typeof r.token).toBe("string");
@@ -121,8 +121,8 @@ describe("Concurrent mutex", () => {
 
   it("serializes", async () => {
     const [r1, r2] = await Promise.all([
-      mcpRequest("register", { supervisor: true, developer: false, work_dir: "/test" }, { "x-ai-identity": "a" }),
-      mcpRequest("register", { supervisor: false, developer: true, work_dir: "/test" }, { "x-ai-identity": "b" }),
+      mcpRequest("register", { identity: "a", supervisor: true, developer: false, work_dir: "/test" }),
+      mcpRequest("register", { identity: "b", supervisor: false, developer: true, work_dir: "/test" }),
     ]);
     expect(r1.ok).toBe(true);
     expect(r2.ok).toBe(true);
