@@ -6,6 +6,7 @@ import { loadState, saveState } from "../state.js";
 import { logEvent } from "../logger.js";
 import { stateMutex } from "../mutex.js";
 import { err, ok } from "../response.js";
+import { registerToken } from "../token-map.js";
 
 export async function register(
   args: Record<string, unknown>,
@@ -58,14 +59,16 @@ export async function register(
     await saveState(state);
     await logEvent("register", { identity, supervisor, developer, work_dir: workDir });
 
-    const prefix = `Set X-AI-Identity: ${identity} header on all subsequent requests`;
+    const token = registerToken(identity);
+
+    const prefix = `Set X-AI-Identity: ${token} header on all subsequent requests`;
     const identityInfo = `当前身份: ${identity}(${supervisor ? "supervisor" : developer ? "developer" : "reviewer"})`;
     const tip = supervisor
       ? `${prefix}。${identityInfo}。下一步调用 confirm_dir 接口，参数 work_dir="${workDir}"`
       : `${prefix}。${identityInfo}。下一步调用 wait_for_turn 接口，等待 supervisor 推进`;
 
     return ok({
-      ok: true, identity, is_supervisor: supervisor, is_developer: developer,
+      ok: true, identity, token, is_supervisor: supervisor, is_developer: developer,
       phase: state.phase,
     }, tip);
   });
