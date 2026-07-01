@@ -22,7 +22,7 @@ export async function confirmDir(
   if (state.phase !== "idle") return err("confirm_dir only allowed in IDLE phase");
 
   const incomplete = await scanIncompleteWorkflows(workDir);
-  const identityInfo = `当前身份: ${identity}(supervisor)`;
+  const statusLine = `[当前] 你是 ${identity}（supervisor）。`;
   const MAX_SHOW = 5;
 
   if (incomplete.length > 0) {
@@ -32,11 +32,11 @@ export async function confirmDir(
       const taskHint = w.task_path ? ` (任务: ${w.task_path})` : "";
       return `${w.id}${taskHint}`;
     }).join(", ");
-    const tip = `${identityInfo}。发现 ${incomplete.length} 个未完成工作流: ${idList}${more}。请询问用户选择: A) 恢复某个未完成工作流 → 以对应的任务文档绝对路径调用 confirm_task；B) 新建工作流 → 以新任务文档绝对路径调用 confirm_task。`;
+    const tip = `[行动] 发现 ${incomplete.length} 个未完成工作流: ${idList}${more}。请询问用户选择: A) 恢复某个未完成工作流 → 以对应的任务文档绝对路径调用 confirm_task；B) 新建工作流 → 以新任务文档绝对路径调用 confirm_task。\n\n${statusLine}`;
     return ok({ work_dir: workDir, incomplete_workflows: incomplete }, tip);
   }
 
-  const tip = `${identityInfo}。无未完成工作流。下一步调用 confirm_task 确认任务文档，task_path 使用绝对路径。`;
+  const tip = `[行动] 无未完成工作流。请询问用户要处理的任务文档路径（绝对路径），拿到后调用 confirm_task。\n\n${statusLine}`;
   return ok({ work_dir: workDir, incomplete_workflows: incomplete }, tip);
 }
 
