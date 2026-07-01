@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { access, readFile, writeFile } from "node:fs/promises";
 import { resolve, sep } from "node:path";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
@@ -40,6 +40,13 @@ export async function confirmTask(
     const resolvedWorkDir = resolve(supervisor.work_dir);
     if (resolved !== resolvedWorkDir && !resolved.startsWith(resolvedWorkDir + sep)) {
       return err("task_path must be under work_dir");
+    }
+
+    // Validate task file actually exists
+    try {
+      await access(resolved);
+    } catch {
+      return err(`task file not found: ${resolved.replace(/\\/g, "/")}`);
     }
 
     state.task = { spec_file: resolved };
