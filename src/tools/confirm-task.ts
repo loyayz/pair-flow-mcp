@@ -25,6 +25,12 @@ export async function confirmTask(
   const taskPath = args.task_path as string;
   if (!taskPath) return err("task_path is required");
 
+  // task_type: "requirements" | "development", default "development"
+  const taskType = (args.task_type as string) || "development";
+  if (taskType !== "requirements" && taskType !== "development") {
+    return err(`invalid task_type "${taskType}" — must be "requirements" or "development"`);
+  }
+
   // Path traversal guard
   const resolved = resolve(taskPath);
   if (taskPath.includes("..")) return err("task_path must not contain path traversal");
@@ -49,7 +55,7 @@ export async function confirmTask(
       return err(`task file not found: ${resolved.replace(/\\/g, "/")}`);
     }
 
-    state.task = { spec_file: resolved };
+    state.task = { spec_file: resolved, task_type: taskType as "requirements" | "development" };
 
     const pidFile = `${resolved}.pid`;
     let recovered = false;

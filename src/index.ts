@@ -32,7 +32,7 @@ function createServerWithTools() {
   mcp.registerTool("who_am_i", { description: "身份确认 + 注册信息。解析 X-AI-Identity header。" }, whoAmI);
   mcp.registerTool("register", { description: "IDLE 阶段注册身份和角色。identity 从 body 取。supervisor/developer 各唯一但可兼任。work_dir 必填，双方校验一致性。", inputSchema: { identity: z.string().optional(), supervisor: z.boolean(), developer: z.boolean(), work_dir: z.string().optional() } }, register);
   mcp.registerTool("confirm_dir", { description: "确认工作目录，返回未完成的工作流列表。仅监督者在 IDLE 阶段可用。", inputSchema: { work_dir: z.string() } }, confirmDir);
-  mcp.registerTool("confirm_task", { description: "确认任务文档路径。仅监督者在 IDLE 阶段可用。", inputSchema: { task_path: z.string() } }, confirmTask);
+  mcp.registerTool("confirm_task", { description: "确认任务文档路径。仅监督者在 IDLE 阶段可用。", inputSchema: { task_path: z.string(), task_type: z.enum(["requirements", "development"]).optional() } }, confirmTask);
   mcp.registerTool("claim_turn", { description: "获取当前轮次的执行权。仅通过 X-AI-Identity header 识别身份。", inputSchema: {} }, claimTurn);
   mcp.registerTool("advance", { description: "推进到下一阶段。仅监督者可用。", inputSchema: {} }, advance);
   mcp.registerTool("get_state", { description: "返回当前执行指引（tip）。匿名可用。" }, getState);

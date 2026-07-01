@@ -51,6 +51,14 @@ export async function advance(
     // Non-IDLE phases: supervisor decides when to advance (no automated convergence check)
 
     if (currentPhase === "requirements") {
+      // Requirements-mode shortcut: skip planning + implementation, go directly to summary
+      if (state.task?.task_type === "requirements") {
+        const next = initSummaryPhase(state, identity);
+        await saveState(next);
+        await logEvent("advance", { identity, from: "requirements", to: "summary", task_type: "requirements" });
+        const summaryFile = join("handoff", next.workflow_id!, "summary", `r1_${identity}.md`).replace(/\\/g, "/");
+        return ok({ ok: true, new_phase: "summary", turn: identity }, `[行动] 产出汇总草稿，包含关键决策、遗留问题和后续建议。调用 claim_turn 获取执行权。\n\n[产出] ${summaryFile}\n\n[当前] 你是 ${identity}（supervisor）。当前是第 1 轮汇总，轮到你了。`);
+      }
       const reviewer = state.peers.find((p) => !p.is_developer);
       if (!reviewer) return err("no reviewer (is_developer=false) registered");
       const next = initPlanningPhase(state, reviewer.identity);

@@ -35,6 +35,7 @@ export interface Task {
   spec_file?: string;
   goals?: string[];
   context?: string;
+  task_type?: "requirements" | "development";
 }
 
 export interface PairFlowState {
