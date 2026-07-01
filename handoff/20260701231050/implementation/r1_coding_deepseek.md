@@ -1,6 +1,6 @@
 # 实现总结：新增任务类型
 
-> 提出人：deepseek（developer）| 第 1 轮代码实现
+> 提出人：deepseek（developer）| 第 1 轮代码实现 | 工作流恢复后重新确认
 
 ---
 
