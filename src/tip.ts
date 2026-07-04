@@ -53,30 +53,41 @@ function getAction(state: PairFlowState, identity: string): string {
     return `未知的阶段/子阶段组合: phase=${state.phase}, sub_phase=${state.sub_phase}, round=1`;
   }
 
-  if (state.phase === "requirements" || state.phase === "planning") {
-    if (state.phase === "requirements") {
-      return `基于任务文档 ${taskPath}，审阅 ${prevInfo}。所有观点需注明提出人。双方均同意的点直接修改任务文档；不同意的点在产出文件中标注原因和建议`;
-    }
-    const r1Submitter = Object.entries(state.last_submit_per_turn)
-      .find(([_, s]) => s.round === 1 && s.commit_hash)?.[0];
-    const planDoc = r1Submitter
-      ? join(HANDOFF_DIR, safe(state.workflow_id), "planning", `r1_${safe(r1Submitter)}.md`).replace(/\\/g, "/")
-      : "计划文档";
-    return `基于计划文档 ${planDoc}，审阅 ${prevInfo}。所有观点需注明提出人。双方均同意的点直接修改计划文档；不同意的点在产出文件中标注原因和建议`;
-  }
-
   const isSupervisor = state.peers.some((p) => p.identity === identity && p.role === "supervisor");
-  const advanceHint = isSupervisor
-    ? "。若审阅后确认当前阶段目标已达成，调用 advance 进入下一阶段"
+
+  // 监督者 advance 目标（按阶段定制）
+  let advanceTarget = "";
+  if (isSupervisor) {
+    if (state.phase === "requirements") advanceTarget = "进入实施计划阶段";
+    else if (state.phase === "planning") advanceTarget = "进入代码实现阶段";
+    else if (state.phase === "implementation") advanceTarget = "进入汇总阶段";
+    else if (state.phase === "summary") advanceTarget = "结束工作流";
+  }
+  const advancePrefix = advanceTarget
+    ? `作为监督者，若确认目标已达成可直接调用 advance（${advanceTarget}），无需 submit。否则：`
     : "";
+
+  if (state.phase === "requirements" || state.phase === "planning") {
+    const docRef = state.phase === "requirements"
+      ? `任务文档 ${taskPath}`
+      : `计划文档 ${(() => {
+          const r1Submitter = Object.entries(state.last_submit_per_turn)
+            .find(([_, s]) => s.round === 1 && s.commit_hash)?.[0];
+          return r1Submitter
+            ? join(HANDOFF_DIR, safe(state.workflow_id), "planning", `r1_${safe(r1Submitter)}.md`).replace(/\\/g, "/")
+            : "计划文档";
+        })()}`;
+    const subject = state.phase === "requirements" ? "任务文档" : "计划文档";
+    return `${advancePrefix}基于${docRef}，审阅 ${prevInfo}。所有观点需注明提出人。双方均同意的点直接修改${subject}；不同意的点在产出文件中标注原因和建议`;
+  }
 
   if (state.phase === "implementation" && state.sub_phase === "review") {
     const planFile = join(HANDOFF_DIR, safe(state.workflow_id), "planning", `r1_${otherIdent}.md`).replace(/\\/g, "/");
     if (state.round > 2) {
       const myPrevReview = join(HANDOFF_DIR, safe(state.workflow_id), safe(state.phase), `r${state.round - 2}_review_${safe(identity)}.md`).replace(/\\/g, "/");
-      return `结合实施计划 ${planFile}、上一轮你的评审文档 ${myPrevReview}，审阅对方的代码产出 ${prevInfo}。检查是否按计划实现、上一轮问题是否已解决、代码正确性和风格${advanceHint}`;
+      return `${advancePrefix}结合实施计划 ${planFile}、上一轮你的评审文档 ${myPrevReview}，审阅对方的代码产出 ${prevInfo}。检查是否按计划实现、上一轮问题是否已解决、代码正确性和风格`;
     }
-    return `结合实施计划 ${planFile}，审阅对方的代码产出 ${prevInfo}。检查是否按计划实现、代码正确性和风格${advanceHint}`;
+    return `${advancePrefix}结合实施计划 ${planFile}，审阅对方的代码产出 ${prevInfo}。检查是否按计划实现、代码正确性和风格`;
   }
 
   if (state.phase === "implementation" && state.sub_phase === "coding") {
@@ -87,7 +98,7 @@ function getAction(state: PairFlowState, identity: string): string {
     if (state.round === 2) {
       return `审阅监督者的汇总草稿 ${prevInfo}，提出修改意见或补充遗漏`;
     }
-    return `基于上一轮审阅意见修订汇总文档 ${prevInfo}${advanceHint}`;
+    return `${advancePrefix}基于上一轮审阅意见修订汇总文档 ${prevInfo}`;
   }
 
   return `未知的阶段/子阶段组合: phase=${state.phase}, sub_phase=${state.sub_phase}, round=${state.round}`;
