@@ -39,7 +39,16 @@ function getAction(state: PairFlowState, identity: string): string {
 
   if (state.round === 1) {
     if (state.phase === "requirements") {
-      return `读取任务文档 ${taskPath}，进行需求分析。所有观点需注明提出人`;
+      return `深度需求分析。对以下每个维度不满足于第一反应，追问自己至少一次"为什么"或"那意味着什么"，触及底层逻辑后再记录结论：
+
+1. 目标与范围 — 核心问题是什么？给出你的判断并定义边界（做/不做）
+2. 干系人与场景 — 谁会用到？给出你的干系人画像和主场景描述
+3. 功能需求 — 需要哪些核心功能？给出你的功能清单并按优先级排序
+4. 非功能约束 — 有哪些质量要求？给出你对性能/安全/兼容性的判断
+5. 假设与风险 — 哪些判断未经证实？标注为"假设"并给出你的风险预估
+6. 歧义与待澄清 — 哪里模糊不清？列出你的疑问和临时替代方案
+
+所有观点需注明提出人。`;
     }
     if (state.phase === "planning") {
       return `读取任务文档 ${taskPath}，根据需求分析产出实施计划，不需要拆分里程碑。所有观点需注明提出人`;
@@ -67,18 +76,29 @@ function getAction(state: PairFlowState, identity: string): string {
     ? `作为监督者，若确认目标已达成可直接调用 advance（${advanceTarget}），无需 submit。否则：`
     : "";
 
-  if (state.phase === "requirements" || state.phase === "planning") {
-    const docRef = state.phase === "requirements"
-      ? `任务文档 ${taskPath}`
-      : `计划文档 ${(() => {
-          const r1Submitter = Object.entries(state.last_submit_per_turn)
-            .find(([_, s]) => s.round === 1 && s.commit_hash)?.[0];
-          return r1Submitter
-            ? join(HANDOFF_DIR, safe(state.workflow_id), "planning", `r1_${safe(r1Submitter)}.md`).replace(/\\/g, "/")
-            : "计划文档";
-        })()}`;
-    const subject = state.phase === "requirements" ? "任务文档" : "计划文档";
-    return `${advancePrefix}基于${docRef}，审阅 ${prevInfo}。所有观点需注明提出人。双方均同意的点直接修改${subject}；不同意的点在产出文件中标注原因和建议`;
+  if (state.phase === "requirements") {
+    if (state.round === 2) {
+      return `先基于任务文档 ${taskPath} 产出你的独立需求分析，再对照审阅 ${prevInfo}：
+
+1. 目标与范围 — 你对核心问题和边界的判断？与对方对比，一致则确认，有遗漏则补充，不同则标注差异和理由
+2. 干系人与场景 — 你眼中的干系人画像和主场景？补充对方遗漏的，质疑对方过度假设的
+3. 功能需求 — 你的功能清单和优先级？找出对方遗漏的功能、高估/低估的优先级
+4. 非功能约束 — 你对性能/安全/兼容性的判断？检查对方是否忽略了关键约束
+5. 假设与风险 — 你识别出的假设和风险？对照对方标注，发现未标注假设或遗漏风险
+6. 歧义与待澄清 — 你看到的模糊点？合并双方问题列表
+
+每项先记录你的独立判断再对比，不跳过思考直接附和。双方同意的确认/补充到任务文档，分歧标注原因。所有观点需注明提出人`;
+    }
+    return `${advancePrefix}基于任务文档 ${taskPath} 和前几轮分析，审阅 ${prevInfo}。所有观点需注明提出人。双方同意的确认/补充到任务文档，分歧标注原因和建议`;
+  }
+
+  if (state.phase === "planning") {
+    const r1Submitter = Object.entries(state.last_submit_per_turn)
+      .find(([_, s]) => s.round === 1 && s.commit_hash)?.[0];
+    const planDoc = r1Submitter
+      ? join(HANDOFF_DIR, safe(state.workflow_id), "planning", `r1_${safe(r1Submitter)}.md`).replace(/\\/g, "/")
+      : "计划文档";
+    return `${advancePrefix}基于计划文档 ${planDoc}，审阅 ${prevInfo}。所有观点需注明提出人。双方均同意的点直接修改计划文档；不同意的点在产出文件中标注原因和建议`;
   }
 
   if (state.phase === "implementation" && state.sub_phase === "review") {
