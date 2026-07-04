@@ -127,25 +127,26 @@ export async function confirmTask(
     const state = getState(wfId);
     if (!state) return err("workflow state not found");
 
+    // 当前调用者可能已经在工作流中（恢复场景）
+    const alreadyIn = state.peers.some((p) => p.identity === identity);
+    if (alreadyIn) {
+      const raw = extra.requestInfo?.headers?.["x-ai-identity"] as string;
+      if (raw) bindWorkflow(raw.trim(), wfId);
+
+      const myPeer = state.peers.find(p => p.identity === identity)!;
+      const turnIsSelf = state.turn === identity;
+      const turnInfo = turnIsSelf ? `turn 在 ${state.turn}（你）` : `turn 在 ${state.turn}（对方）`;
+      const tip = `[行动] 已重新加入工作流 ${wfId}。当前在 ${state.phase} 阶段第 ${state.round} 轮，${turnInfo}。调用 wait_for_turn，根据服务端提示继续下一步。\n\n[当前] 你是 ${identity}（${myPeer.role === "supervisor" ? "supervisor" : "developer"}）。工作流 ${wfId}。`;
+      return ok({
+        task_path: resolvedTaskPath.replace(/\\/g, "/"),
+        workflow_id: wfId,
+        phase: state.phase,
+        recovered: true,
+      }, tip);
+    }
+
     // 检查是否已满
     if (state.peers.length >= 2) {
-      // 当前调用者可能已经在工作流中
-      const alreadyIn = state.peers.some((p) => p.identity === identity);
-      if (alreadyIn) {
-        // 已绑定，执行恢复流程中本应完成的绑定
-        const raw = extra.requestInfo?.headers?.["x-ai-identity"] as string;
-        if (raw) bindWorkflow(raw.trim(), wfId);
-
-        const turnIsSelf = state.turn === identity;
-        const turnInfo = turnIsSelf ? `turn 在 ${state.turn}（你）` : `turn 在 ${state.turn}（对方）`;
-        const tip = `[行动] 已重新加入工作流 ${wfId}。当前在 ${state.phase} 阶段第 ${state.round} 轮，${turnInfo}。调用 wait_for_turn，根据服务端提示继续下一步。\n\n[当前] 你是 ${identity}（${state.peers.find(p => p.identity === identity)?.role === "supervisor" ? "supervisor" : "developer"}）。工作流 ${wfId}。`;
-        return ok({
-          task_path: resolvedTaskPath.replace(/\\/g, "/"),
-          workflow_id: wfId,
-          phase: state.phase,
-          recovered: true,
-        }, tip);
-      }
       return err("this task already has 2 peers — cannot join");
     }
 
