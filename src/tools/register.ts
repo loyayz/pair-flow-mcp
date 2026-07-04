@@ -8,10 +8,9 @@ import { registerToken } from "../token-map.js";
 const REGISTER_CURL = `curl -s -X POST http://localhost:3100/mcp \\
   -H "Content-Type: application/json" \\
   -H "Accept: application/json, text/event-stream" \\
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"register","arguments":{"identity":"<你的身份名>","work_dir":"<项目根目录绝对路径>"}}}'
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"register","arguments":{"identity":"<你的身份名>"}}}'
 
-- identity: 你的身份名称，如 "claude"。只能包含字母、数字、下划线、连字符
-- work_dir: 项目根目录绝对路径，两个 AI 必须相同`;
+- identity: 你的身份名称，如 "claude"。只能包含字母、数字、下划线、连字符`;
 
 function badParam(paramName: string, reason: "缺失" | "非法"): string {
   return `${paramName} 参数${reason}。正确格式参考（尖括号内为变量）：
@@ -27,9 +26,6 @@ export async function register(
   if (!identity) return err(badParam("identity", "缺失"));
 
   try { sanitizeIdentity(identity); } catch { return err(badParam("identity", "非法")); }
-
-  const workDir = args.work_dir as string;
-  if (!workDir) return err(badParam("work_dir", "缺失"));
 
   const token = registerToken(identity);
 

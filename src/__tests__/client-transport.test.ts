@@ -49,7 +49,7 @@ describe("Client transport with identity injection", () => {
     const t = createClientTransport(`http://localhost:${PORT}/mcp`, "claude");
     const c = new Client({ name: "test", version: "1" }, {});
     await c.connect(t);
-    const r = await call(c, "register", { identity: "claude", supervisor: true, developer: false, work_dir: "/test" });
+    const r = await call(c, "register", { identity: "claude" });
     expect(r.ok).toBe(true);
     expect(r.identity).toBe("claude");
     await c.close();
