@@ -4,17 +4,15 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { reconstructFromHandoff, parseFilename, isWorkflowComplete } from "../crash-recovery.js";
-import { saveState, defaultState } from "../state.js";
+import { defaultState } from "../state.js";
 
 const TEST_ROOT = join(tmpdir(), `pairflow-test-${randomUUID()}`);
 const origCwd = process.cwd();
-const STATE_DIR = process.env.STATE_DIR || ".pairflow";
 const HANDOFF_DIR = process.env.HANDOFF_DIR || "handoff";
 
 async function resetStateDir() {
   await mkdir(TEST_ROOT, { recursive: true });
   process.chdir(TEST_ROOT);
-  try { await rm(join(TEST_ROOT, STATE_DIR), { recursive: true }); } catch { /* */ }
   try { await rm(join(TEST_ROOT, HANDOFF_DIR), { recursive: true }); } catch { /* */ }
 }
 

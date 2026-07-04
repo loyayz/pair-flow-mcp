@@ -1,36 +1,40 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { rm } from "node:fs/promises";
-import { defaultState, loadState, saveState, initRequirementsPhase, initPlanningPhase, initImplementationPhase, isSupervisor, getOtherIdentity } from "../state.js";
+import { defaultState, setState, getState, deleteState, initRequirementsPhase, initPlanningPhase, initImplementationPhase, isSupervisor, getOtherIdentity } from "../state.js";
 import type { PairFlowState } from "../state.js";
 
-const STATE_DIR = process.env.STATE_DIR || ".pairflow";
+const TEST_WF = "20260701000001";
 
-async function resetState() {
-  try { await rm(STATE_DIR, { recursive: true }); } catch { /* ok */ }
-  await saveState(defaultState());
+function resetState() {
+  deleteState(TEST_WF);
 }
 
 describe("State management", () => {
   beforeEach(resetState);
-  afterEach(async () => { try { await rm(STATE_DIR, { recursive: true }); } catch { /* ok */ } });
+  afterEach(resetState);
 
-  it("loads default state on first run", async () => {
-    const state = await loadState();
-    expect(state.schema_version).toBe(1);
-    expect(state.phase).toBe("idle");
-    expect(state.turn).toBe("idle");
+  it("returns undefined for unknown workflow", () => {
+    expect(getState(TEST_WF)).toBeUndefined();
   });
 
-  it("saves and loads state", async () => {
+  it("sets and gets state", () => {
     const state = defaultState();
+    state.workflow_id = TEST_WF;
     state.peers = [
       { identity: "alice", role: "supervisor", is_developer: false, registered_at: new Date().toISOString() },
       { identity: "bob", role: "peer", is_developer: true, registered_at: new Date().toISOString() },
     ];
-    await saveState(state);
-    const loaded = await loadState();
-    expect(loaded.peers.length).toBe(2);
-    expect(loaded.peers[0].identity).toBe("alice");
+    setState(TEST_WF, state);
+    const loaded = getState(TEST_WF);
+    expect(loaded).toBeDefined();
+    expect(loaded!.peers.length).toBe(2);
+    expect(loaded!.peers[0].identity).toBe("alice");
+  });
+
+  it("deletes state", () => {
+    setState(TEST_WF, defaultState());
+    expect(getState(TEST_WF)).toBeDefined();
+    deleteState(TEST_WF);
+    expect(getState(TEST_WF)).toBeUndefined();
   });
 
   it("initRequirementsPhase sets correct initial turn", () => {

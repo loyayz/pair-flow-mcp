@@ -3,8 +3,8 @@ import { join, resolve } from "node:path";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { CallToolResult, ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
 import { err, ok } from "../response.js";
-import { parseIdentity } from "../identity.js";
-import { loadState } from "../state.js";
+import { parseSession } from "../identity.js";
+import { getState } from "../state.js";
 
 const HANDOFF_DIR = process.env.HANDOFF_DIR || "handoff";
 
@@ -12,10 +12,12 @@ const HANDOFF_DIR = process.env.HANDOFF_DIR || "handoff";
 
 export async function getArchivedFiles(
   args: Record<string, unknown>,
+  extra: RequestHandlerExtra<ServerRequest, ServerNotification>,
 ): Promise<CallToolResult> {
-  const state = await loadState();
+  const { workflowId } = parseSession(extra.requestInfo?.headers);
+  const state = workflowId ? getState(workflowId) : undefined;
   const suppliedId = args.workflow_id as string | undefined;
-  const wfId = suppliedId ? validatePathSegment(suppliedId) : state.workflow_id;
+  const wfId = suppliedId ? validatePathSegment(suppliedId) : (state?.workflow_id ?? workflowId);
   if (!wfId) return ok({ files: [] });
 
   const safeId = validatePathSegment(wfId);
@@ -24,7 +26,6 @@ export async function getArchivedFiles(
   const phase = args.phase as string | undefined;
   if (phase) dir = join(dir, validatePathSegment(phase));
 
-  // Verify resolved path stays within HANDOFF_DIR
   if (!resolve(dir).startsWith(resolve(HANDOFF_DIR))) {
     return err("invalid path");
   }
@@ -51,16 +52,14 @@ export async function getArchivedFileContent(
   args: Record<string, unknown>,
   extra: RequestHandlerExtra<ServerRequest, ServerNotification>
 ): Promise<CallToolResult> {
-  const identity = parseIdentity(extra.requestInfo?.headers);
+  const { workflowId } = parseSession(extra.requestInfo?.headers);
   const filename = args.filename as string;
   if (!filename) return err("filename required");
 
-  const state = await loadState();
-
-  const wfId = state.workflow_id;
+  const state = workflowId ? getState(workflowId) : undefined;
+  const wfId = state?.workflow_id ?? workflowId;
   if (!wfId) return err("no active workflow");
 
-  // P1: optional phase parameter — prepend to filename for phase subdirectory
   const phase = args.phase as string | undefined;
   const VALID_PHASES = ["requirements", "planning", "implementation", "summary"];
   if (phase && !VALID_PHASES.includes(phase)) {
@@ -70,7 +69,6 @@ export async function getArchivedFileContent(
 
   const safeWfId = validatePathSegment(wfId);
   const filePath = join(HANDOFF_DIR, safeWfId, safeFilename);
-  // Prevent path traversal
   if (!resolve(filePath).startsWith(resolve(join(HANDOFF_DIR, safeWfId)))) {
     return err("invalid filename");
   }
@@ -82,6 +80,3 @@ export async function getArchivedFileContent(
     return err(`file not found: ${filename}`);
   }
 }
-
-// ── force_converge ──
-

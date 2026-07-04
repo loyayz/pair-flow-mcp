@@ -1,33 +1,35 @@
 import { describe, it, expect } from "vitest";
-import { parseIdentity, sanitizeIdentity } from "../identity.js";
+import { parseSession, sanitizeIdentity } from "../identity.js";
 
-describe("parseIdentity", () => {
-  it("returns 'unknown' for undefined headers", () => {
-    expect(parseIdentity(undefined)).toBe("unknown");
+describe("parseSession", () => {
+  it("returns unknown for undefined headers", () => {
+    expect(parseSession(undefined).identity).toBe("unknown");
   });
 
-  it("returns 'unknown' for empty headers", () => {
-    expect(parseIdentity({})).toBe("unknown");
+  it("returns unknown for empty headers", () => {
+    expect(parseSession({}).identity).toBe("unknown");
   });
 
-  it("returns 'unknown' when x-ai-identity header is missing", () => {
-    expect(parseIdentity({ "content-type": "application/json" })).toBe("unknown");
+  it("returns unknown when x-ai-identity header is missing", () => {
+    expect(parseSession({ "content-type": "application/json" }).identity).toBe("unknown");
   });
 
-  it("parses x-ai-identity header (lowercase)", () => {
-    expect(parseIdentity({ "x-ai-identity": "test-ai" })).toBe("test-ai");
+  it("parses x-ai-identity header as plaintext identity", () => {
+    const s = parseSession({ "x-ai-identity": "test-ai" });
+    expect(s.identity).toBe("test-ai");
+    expect(s.workflowId).toBeNull();
   });
 
   it("trims whitespace from identity", () => {
-    expect(parseIdentity({ "x-ai-identity": "  claude-fable  " })).toBe("claude-fable");
+    expect(parseSession({ "x-ai-identity": "  claude-fable  " }).identity).toBe("claude-fable");
   });
 
-  it("returns 'unknown' when x-ai-identity is empty string", () => {
-    expect(parseIdentity({ "x-ai-identity": "" })).toBe("unknown");
+  it("returns unknown when x-ai-identity is empty string", () => {
+    expect(parseSession({ "x-ai-identity": "" }).identity).toBe("unknown");
   });
 
-  it("returns 'unknown' when x-ai-identity is whitespace only", () => {
-    expect(parseIdentity({ "x-ai-identity": "   " })).toBe("unknown");
+  it("returns unknown when x-ai-identity is whitespace only", () => {
+    expect(parseSession({ "x-ai-identity": "   " }).identity).toBe("unknown");
   });
 });
 

@@ -1,129 +1,199 @@
-import { access, readFile, writeFile } from "node:fs/promises";
-import { resolve, sep } from "node:path";
+import { access, readFile, writeFile, readdir } from "node:fs/promises";
+import { resolve } from "node:path";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
-import { parseIdentity } from "../identity.js";
-import { loadState, saveState, isSupervisor } from "../state.js";
-import { reconstructFromHandoff } from "../crash-recovery.js";
-import { stateMutex } from "../mutex.js";
+import { parseSession } from "../identity.js";
+import { getState, setState, getAllStates, defaultState, formatWorkflowId } from "../state.js";
+import { reconstructFromHandoff, isWorkflowComplete } from "../crash-recovery.js";
 import { err, ok } from "../response.js";
+import { bindWorkflow } from "../token-map.js";
 
-function formatWorkflowId(): string {
-  const d = new Date();
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+const HANDOFF_DIR = process.env.HANDOFF_DIR || "handoff";
+
+async function findWorkflowByTaskPath(taskPath: string): Promise<string | null> {
+  // Search in-memory states
+  for (const [wfId, state] of [...getAllStates()]) {
+    if (state.task?.spec_file === taskPath) return wfId;
+  }
+  return null;
+}
+
+async function findIncompleteByTaskPath(taskPath: string): Promise<string | null> {
+  try {
+    const entries = await readdir(HANDOFF_DIR, { withFileTypes: true });
+    const wfDirs = entries.filter((e) => e.isDirectory() && /^\d{14}$/.test(e.name));
+    // Sort descending, return the latest incomplete workflow
+    wfDirs.sort((a, b) => b.name.localeCompare(a.name));
+    for (const d of wfDirs) {
+      if (await isWorkflowComplete(d.name)) continue;
+      // Check if this workflow's task_path matches
+      for (const phase of ["requirements", "planning", "implementation", "summary"]) {
+        try {
+          const phaseDir = `${HANDOFF_DIR}/${d.name}/${phase}`;
+          const pEntries = await readdir(phaseDir, { withFileTypes: true });
+          const metaFile = pEntries.find((e) => e.isFile() && e.name.endsWith(".meta.json"));
+          if (metaFile) {
+            const metaRaw = await readFile(`${phaseDir}/${metaFile.name}`, "utf-8");
+            const meta = JSON.parse(metaRaw);
+            if (meta.task?.spec_file === taskPath) return d.name;
+            break; // Found this workflow's task, doesn't match — try next workflow
+          }
+        } catch { /* phase dir may not exist */ }
+      }
+    }
+  } catch { /* handoff dir doesn't exist */ }
+  return null;
 }
 
 export async function confirmTask(
   args: Record<string, unknown>,
   extra: RequestHandlerExtra<ServerRequest, ServerNotification>
 ): Promise<CallToolResult> {
-  const identity = parseIdentity(extra.requestInfo?.headers);
+  const { identity } = parseSession(extra.requestInfo?.headers);
   if (identity === "unknown") return err("identity required");
 
   const taskPath = args.task_path as string;
   if (!taskPath) return err("task_path is required");
 
-  // task_type: "requirements" | "development", default "development"
+  // Task type
   const taskType = (args.task_type as string) || "development";
   if (taskType !== "requirements" && taskType !== "development") {
     return err(`invalid task_type "${taskType}" — must be "requirements" or "development"`);
   }
 
+  // Role declaration
+  const supervisor = args.supervisor === true;
+  const developer = args.developer === true;
+
+  // work_dir
+  const workDir = (args.work_dir as string) || "";
+  if (!workDir) return err("work_dir is required");
+
   // Path traversal guard
-  const resolved = resolve(taskPath);
+  const resolvedTaskPath = resolve(taskPath);
   if (taskPath.includes("..")) return err("task_path must not contain path traversal");
 
-  return stateMutex.runExclusive(async () => {
-    const state = await loadState();
-    if (!isSupervisor(state, identity)) return err("only supervisor can confirm task");
-    if (state.phase !== "idle") return err("confirm_task only allowed in IDLE phase");
+  // Validate task file exists
+  try { await access(resolvedTaskPath); } catch {
+    return err(`task file not found: ${resolvedTaskPath.replace(/\\/g, "/")}`);
+  }
 
-    // Validate task file is under work_dir
-    const supervisor = state.peers.find((p) => p.identity === identity);
-    if (!supervisor?.work_dir) return err("supervisor must have a registered work_dir");
-    const resolvedWorkDir = resolve(supervisor.work_dir);
-    if (resolved !== resolvedWorkDir && !resolved.startsWith(resolvedWorkDir + sep)) {
-      return err("task_path must be under work_dir");
-    }
+  let wfId: string;
+  let recovered = false;
+  let isFirst = false;
 
-    // Validate task file actually exists
-    try {
-      await access(resolved);
-    } catch {
-      return err(`task file not found: ${resolved.replace(/\\/g, "/")}`);
-    }
+  // 1. 查内存 — 是否有同 task_path 的活跃工作流
+  let existing = await findWorkflowByTaskPath(resolvedTaskPath);
 
-    state.task = { spec_file: resolved, task_type: taskType as "requirements" | "development" };
-
-    const pidFile = `${resolved}.pid`;
-    let recovered = false;
-
-    try {
-      const raw = (await readFile(pidFile, "utf-8")).trim();
-      // Validate workflow ID format (14-digit timestamp)
-      if (raw && /^\d{14}$/.test(raw)) {
-        const recoveredState = await reconstructFromHandoff(state, raw);
-        if (recoveredState) {
-          // Restore workflow progress, keep current registered peers
-          state.workflow_id = recoveredState.workflow_id;
-          state.phase = recoveredState.phase;
-          state.sub_phase = recoveredState.sub_phase;
-          state.round = recoveredState.round;
-          state.last_submit_per_turn = recoveredState.last_submit_per_turn;
-          state.task = recoveredState.task;
-          state.history = recoveredState.history;
-          recovered = true;
-
-          // P2-4: Validate recovered turn holder is registered. If not, fall back to first peer.
-          const currentPeerIds = new Set(state.peers.map((p) => p.identity));
-          if (!currentPeerIds.has(state.turn)) {
-            state.turn = state.peers[0]?.identity ?? "idle";
-          }
-          // Clean last_submit_per_turn entries for unregistered identities
-          for (const key of Object.keys(state.last_submit_per_turn)) {
-            if (!currentPeerIds.has(key)) {
-              delete state.last_submit_per_turn[key];
-            }
-          }
-        }
+  // 2. 查磁盘 — handoff 扫描未完成工作流（仅在内存中没找到时）
+  if (!existing) {
+    const handoffWfId = await findIncompleteByTaskPath(resolvedTaskPath);
+    if (handoffWfId) {
+      const defState = defaultState();
+      const recoveredState = await reconstructFromHandoff(defState, handoffWfId);
+      if (recoveredState) {
+        setState(handoffWfId, recoveredState);
+        existing = handoffWfId;
+        recovered = true;
       }
-    } catch {
-      const wfId = formatWorkflowId();
-      state.workflow_id = wfId;
-      await writeFile(pidFile, wfId, "utf-8");
+    }
+  }
+
+  if (!existing) {
+    // 全新工作流
+    wfId = formatWorkflowId();
+    const state = defaultState();
+    state.workflow_id = wfId;
+    state.task = { spec_file: resolvedTaskPath, task_type: taskType as "requirements" | "development" };
+    // 将当前调用者加入 peers
+    state.peers.push({
+      identity,
+      role: supervisor ? "supervisor" : "peer",
+      is_developer: developer,
+      registered_at: new Date().toISOString(),
+      work_dir: workDir,
+    });
+    setState(wfId, state);
+    isFirst = true;
+  } else {
+    wfId = existing;
+    const state = getState(wfId);
+    if (!state) return err("workflow state not found");
+
+    // 检查是否已满
+    if (state.peers.length >= 2) {
+      // 当前调用者可能已经在工作流中
+      const alreadyIn = state.peers.some((p) => p.identity === identity);
+      if (alreadyIn) {
+        // 已绑定，执行恢复流程中本应完成的绑定
+        const raw = extra.requestInfo?.headers?.["x-ai-identity"] as string;
+        if (raw) bindWorkflow(raw.trim(), wfId);
+
+        const turnIsSelf = state.turn === identity;
+        const turnInfo = turnIsSelf ? `turn 在 ${state.turn}（你）` : `turn 在 ${state.turn}（对方）`;
+        const tip = `[行动] 已重新加入工作流 ${wfId}。当前在 ${state.phase} 阶段第 ${state.round} 轮，${turnInfo}。调用 wait_for_turn，根据服务端提示继续下一步。\n\n[当前] 你是 ${identity}（${state.peers.find(p => p.identity === identity)?.role === "supervisor" ? "supervisor" : "developer"}）。工作流 ${wfId}。`;
+        return ok({
+          task_path: resolvedTaskPath.replace(/\\/g, "/"),
+          workflow_id: wfId,
+          phase: state.phase,
+          recovered: true,
+        }, tip);
+      }
+      return err("this task already has 2 peers — cannot join");
     }
 
-    await saveState(state);
-
-    const identityInfo = `当前身份: ${identity}(supervisor)`;
-
-    if (recovered) {
-      const turnIsSelf = state.turn === identity;
-      const turnInfo = turnIsSelf
-        ? `turn 归属: ${state.turn}(你)`
-        : `turn 归属: ${state.turn}(对方)`;
-      const action = turnIsSelf
-        ? "请向用户复述以上恢复状态，确认后调用 claim_turn 获取执行权"
-        : "请等待对方操作，调用 wait_for_turn 接口";
-      const taskPathNorm = resolved.replace(/\\/g, "/");
-      const tip = `已恢复工作流 ${state.workflow_id}，当前阶段: ${state.phase}，轮次: ${state.round}。${identityInfo}。${turnInfo}。${action}。`;
-      return ok({
-        task_path: taskPathNorm,
-        workflow_id: state.workflow_id,
-        phase: state.phase,
-        recovered,
-      }, tip);
+    // 角色校验
+    const firstPeer = state.peers[0];
+    if (supervisor && firstPeer.role === "supervisor") {
+      return err("supervisor already exists for this task");
+    }
+    if (developer && firstPeer.is_developer) {
+      return err("developer already exists for this task");
     }
 
-    const taskPathNorm = resolved.replace(/\\/g, "/");
-    const tip = `已确认任务文档: ${taskPathNorm}（绝对路径），工作流 ID: ${state.workflow_id}。${identityInfo}。请向用户复述以上信息并说明即将进入需求阶段、由对方(developer)先产出。待用户确认后调用 advance 接口。`;
-    return ok({
-      task_path: taskPathNorm,
-      workflow_id: state.workflow_id,
-      phase: state.phase,
-      recovered,
-    }, tip);
-  });
+    // work_dir 一致性
+    if (firstPeer.work_dir !== workDir) {
+      return err(`work_dir mismatch: "${workDir}" vs "${firstPeer.work_dir}"`);
+    }
+
+    // 加入
+    state.peers.push({
+      identity,
+      role: supervisor ? "supervisor" : "peer",
+      is_developer: developer,
+      registered_at: new Date().toISOString(),
+      work_dir: workDir,
+    });
+    setState(wfId, state);
+  }
+
+  // 绑定 token → workflow
+  const raw = extra.requestInfo?.headers?.["x-ai-identity"] as string;
+  if (raw) bindWorkflow(raw.trim(), wfId);
+
+  // 写 .pid
+  const pidFile = `${resolvedTaskPath}.pid`;
+  try { await writeFile(pidFile, wfId, "utf-8"); } catch { /* best effort */ }
+
+  const curState = getState(wfId)!;
+  const roleLabel = supervisor ? "supervisor" : "developer";
+  const phaseText = curState.phase !== "idle" ? `，${curState.phase} 阶段第 ${curState.round} 轮` : "，idle 阶段";
+  const statusLine = `[当前] 你是 ${identity}（${roleLabel}）。工作流 ${wfId}${phaseText}。`;
+
+  let actionLine: string;
+  if (isFirst) {
+    actionLine = `${recovered ? "已恢复" : "已创建"}工作流 ${wfId}。等待对方 AI 以相同 task_path 调用 confirm_task 加入。调用 wait_for_turn，根据服务端提示继续下一步。`;
+  } else {
+    const p = curState.peers;
+    const names = p.map((x) => `${x.identity}（${x.role === "supervisor" ? "supervisor" : "developer"}）`).join(" + ");
+    actionLine = `已加入工作流 ${wfId}。双方已就位：${names}。调用 wait_for_turn，根据服务端提示继续下一步。`;
+  }
+
+  return ok({
+    task_path: resolvedTaskPath.replace(/\\/g, "/"),
+    workflow_id: wfId,
+    phase: curState.phase,
+    recovered,
+  }, `[行动] ${actionLine}\n\n${statusLine}`);
 }

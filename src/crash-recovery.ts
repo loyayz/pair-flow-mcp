@@ -1,6 +1,6 @@
 import { readdir, readFile, mkdir, access } from "node:fs/promises";
 import { join, resolve, relative } from "node:path";
-import { loadState, saveState, defaultState, type PairFlowState, type Phase, type SubPhase, type Peer, type LastSubmit } from "./state.js";
+import { defaultState, type PairFlowState, type Phase, type SubPhase, type Peer, type LastSubmit } from "./state.js";
 import { logEvent } from "./logger.js";
 
 const HANDOFF_DIR = process.env.HANDOFF_DIR || "handoff";

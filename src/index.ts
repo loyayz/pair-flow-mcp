@@ -1,19 +1,16 @@
-import { rm } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
-import { acquireLock, releaseLock } from "./lock.js";
 import { ping } from "./tools/ping.js";
 import { whoAmI } from "./tools/who-am-i.js";
 import { register } from "./tools/register.js";
 import { claimTurn } from "./tools/claim-turn.js";
 import { advance } from "./tools/advance.js";
-import { getState } from "./tools/get-state.js";
+import { getStateTool } from "./tools/get-state.js";
 import { submit } from "./tools/submit.js";
 import { getArchivedFiles, getArchivedFileContent } from "./tools/archive-tools.js";
 import { waitForTurn } from "./tools/wait-for-turn.js";
-import { confirmDir } from "./tools/confirm-dir.js";
 import { confirmTask } from "./tools/confirm-task.js";
 
 const PORT = parseInt(process.env.PORT || "3100", 10);
@@ -30,12 +27,11 @@ function createServerWithTools() {
 
   mcp.registerTool("ping", { description: "连通性检查。匿名可用。" }, ping);
   mcp.registerTool("who_am_i", { description: "身份确认 + 注册信息。解析 X-AI-Identity header。" }, whoAmI);
-  mcp.registerTool("register", { description: "IDLE 阶段注册身份和角色。identity 从 body 取。supervisor/developer 各唯一但可兼任。work_dir 必填，双方校验一致性。", inputSchema: { identity: z.string().optional(), supervisor: z.boolean(), developer: z.boolean(), work_dir: z.string().optional() } }, register);
-  mcp.registerTool("confirm_dir", { description: "确认工作目录，返回未完成的工作流列表。仅监督者在 IDLE 阶段可用。", inputSchema: { work_dir: z.string() } }, confirmDir);
-  mcp.registerTool("confirm_task", { description: "确认任务文档路径。仅监督者在 IDLE 阶段可用。", inputSchema: { task_path: z.string(), task_type: z.enum(["requirements", "development"]).optional() } }, confirmTask);
+  mcp.registerTool("register", { description: "IDLE 阶段注册身份。identity 从 body 取。角色声明移至 confirm_task。", inputSchema: { identity: z.string().optional(), work_dir: z.string().optional() } }, register);
+  mcp.registerTool("confirm_task", { description: "确认任务文档路径，声明角色，两个 AI 以相同 task_path 成对。", inputSchema: { task_path: z.string(), task_type: z.enum(["requirements", "development"]).optional(), supervisor: z.boolean(), developer: z.boolean(), work_dir: z.string().optional() } }, confirmTask);
   mcp.registerTool("claim_turn", { description: "获取当前轮次的执行权。仅通过 X-AI-Identity header 识别身份。", inputSchema: {} }, claimTurn);
   mcp.registerTool("advance", { description: "推进到下一阶段。仅监督者可用。", inputSchema: {} }, advance);
-  mcp.registerTool("get_state", { description: "返回当前执行指引（tip）。匿名可用。" }, getState);
+  mcp.registerTool("get_state", { description: "返回当前执行指引（tip）。匿名可用。" }, getStateTool);
   mcp.registerTool("get_archived_files", { description: "列出归档文件。phase/workflow_id 可选过滤。", inputSchema: { phase: z.string().optional(), workflow_id: z.string().optional() } }, getArchivedFiles);
   mcp.registerTool("get_archived_file_content", { description: "读取归档文件内容。phase 参数可选，用于指定子目录（requirements/planning/implementation/summary）。", inputSchema: { filename: z.string(), phase: z.string().optional() } }, getArchivedFileContent);
   mcp.registerTool("wait_for_turn", { description: "长轮询等待 turn 切换到调用方。10s 间隔，600s 超时。turn=自己时返回。" }, waitForTurn);
@@ -94,34 +90,23 @@ const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse
   res.writeHead(404).end("Not Found");
 });
 
-httpServer.listen(PORT, async () => {
-  try {
-    // Clean previous runtime state — fresh start every time
-    const STATE_DIR = process.env.STATE_DIR || ".pairflow";
-    await rm(STATE_DIR, { recursive: true, force: true });
-    await acquireLock();
-    console.log(`[pair-flow] Lock acquired`);
-  } catch (err) {
-    console.error(`[pair-flow] Startup failed:`, err);
-    process.exit(1);
-  }
+httpServer.listen(PORT, () => {
   ready = true;
   console.log(`[pair-flow] HTTP MCP Server listening on http://localhost:${PORT}/mcp`);
   console.log(`[pair-flow] Health check: http://localhost:${PORT}/health`);
 });
 
-process.on("SIGTERM", async () => { await releaseLock(); process.exit(0); });
-process.on("SIGINT", async () => { await releaseLock(); process.exit(0); });
+process.on("SIGTERM", () => { process.exit(0); });
+process.on("SIGINT", () => { process.exit(0); });
 
 // Crash handling: log + cleanup + exit. External process manager (PM2/systemd/docker)
 // is responsible for restart. crash-recovery.ts will restore state from handoff on next start.
 // Per Node.js best practice: do not attempt in-process recovery after uncaughtException.
 let crashCount = 0;
 let lastCrashTime = 0;
-process.on("uncaughtException", async (err) => {
+process.on("uncaughtException", (err) => {
   console.error("[pair-flow] Uncaught exception:", err);
   const now = Date.now();
-  // Crash loop detection: 3 crashes within 30s → refuse to let PM restart us
   if (now - lastCrashTime < 30_000) {
     crashCount++;
   } else {
@@ -130,10 +115,8 @@ process.on("uncaughtException", async (err) => {
   lastCrashTime = now;
   if (crashCount >= 3) {
     console.error("[pair-flow] Crash loop detected (3 crashes in 30s). Check environment.");
-    await releaseLock();
     process.exit(1);
   }
-  console.error("[pair-flow] Exiting — external process manager should restart. crash-recovery will restore state.");
-  await releaseLock();
-  setTimeout(() => process.exit(1), 100); // allow releaseLock to flush
+  console.error("[pair-flow] Exiting — external process manager should restart.");
+  setTimeout(() => process.exit(1), 100);
 });

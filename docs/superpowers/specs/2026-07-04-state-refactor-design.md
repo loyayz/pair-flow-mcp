@@ -156,7 +156,15 @@ register({
 ### 5.2 Tip
 
 ```
-Set X-AI-Identity: {token}...你已注册。询问用户任务文档路径、任务类型（development/requirements）和你的角色（supervisor/developer），然后调用 confirm_task。
+Set X-AI-Identity: {token} header on all subsequent requests。你已注册。询问用户以下信息后调用 confirm_task({...})。两个 AI 使用相同的 task_path 自动成对，服务端校验角色唯一性和 work_dir 一致性。
+
+confirm_task 入参：
+
+task_path   — 任务文档绝对路径。两个 AI 必须传相同值才能成对。
+task_type   — 任务类型。"development"（开发）走完整四阶段流程；"requirements"（需求）只做需求分析+汇总，跳过 planning 和 implementation。
+supervisor  — 是否为监督者（true/false）。双方只能有一个监督者。
+developer   — 是否为开发者（true/false）。双方只能有一个开发者。
+work_dir    — 项目根目录绝对路径。两个 AI 必须一致。
 ```
 
 双方 tip 相同，不再区分监督者/非监督者。

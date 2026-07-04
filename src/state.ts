@@ -1,7 +1,4 @@
-import { writeFile, mkdir, readFile, rename } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, dirname } from "node:path";
-import { randomUUID } from "node:crypto";
+import { Mutex } from "async-mutex";
 
 // ── Types (§5.1 state.json schema) ──
 
@@ -14,7 +11,7 @@ export interface Peer {
   role: PeerRole;
   is_developer: boolean;
   registered_at: string;
-  work_dir?: string; // P0-28: 注册时上报的工作目录
+  work_dir?: string;
 }
 
 export interface LastSubmit {
@@ -54,6 +51,37 @@ export interface PairFlowState {
   history: HistoryEntry[];
 }
 
+// ── In-memory state store ──
+
+const states = new Map<string, PairFlowState>();
+const mutexes = new Map<string, Mutex>();
+
+export function getState(workflowId: string): PairFlowState | undefined {
+  return states.get(workflowId);
+}
+
+export function setState(workflowId: string, state: PairFlowState): void {
+  states.set(workflowId, state);
+}
+
+export function deleteState(workflowId: string): void {
+  states.delete(workflowId);
+  mutexes.delete(workflowId);
+}
+
+export function getMutex(workflowId: string): Mutex {
+  let m = mutexes.get(workflowId);
+  if (!m) {
+    m = new Mutex();
+    mutexes.set(workflowId, m);
+  }
+  return m;
+}
+
+export function getAllStates(): Map<string, PairFlowState> {
+  return states;
+}
+
 // ── Default state ──
 
 export function defaultState(): PairFlowState {
@@ -74,39 +102,7 @@ export function defaultState(): PairFlowState {
   };
 }
 
-// ── Atomic write ──
-
-const STATE_DIR = process.env.STATE_DIR || ".pairflow";
-const STATE_FILE = `${STATE_DIR}/state.json`;
-
-export async function loadState(): Promise<PairFlowState> {
-  try {
-    const raw = await readFile(STATE_FILE, "utf-8");
-    return JSON.parse(raw) as PairFlowState;
-  } catch {
-    return defaultState();
-  }
-}
-
-/** Check whether state.json exists on disk. Used by crash-recovery to distinguish
- *  "fresh start" from "state file was deleted mid-session". */
-export async function stateFileExists(): Promise<boolean> {
-  try {
-    await readFile(STATE_FILE, "utf-8");
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-export async function saveState(state: PairFlowState): Promise<void> {
-  await mkdir(dirname(STATE_FILE), { recursive: true });
-  const tmp = join(tmpdir(), `pairflow-state-${randomUUID()}.json`);
-  await writeFile(tmp, JSON.stringify(state, null, 2), "utf-8");
-  await rename(tmp, STATE_FILE);
-}
-
-// ── Phase initialization (§10) ──
+// ── Phase initialization ──
 
 export function initRequirementsPhase(state: PairFlowState, nonSupervisorId: string, task: Task): PairFlowState {
   const now = new Date().toISOString();
@@ -195,10 +191,12 @@ export function initIdleState(state: PairFlowState): PairFlowState {
 
 // ── Helpers ──
 
-export function formatWorkflowId(iso: string): string {
-  // yyyyMMddHHmmss from ISO string
-  return iso.replace(/[-:T]/g, "").slice(0, 14);
+export function formatWorkflowId(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
 }
+
 export function isCurrentHolder(state: PairFlowState, identity: string): boolean {
   return state.turn === identity;
 }
