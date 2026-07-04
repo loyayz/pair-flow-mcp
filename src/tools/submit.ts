@@ -90,10 +90,10 @@ export async function submit(
     const tip = state.phase === "summary" && nextPeer?.role === "supervisor"
       ? `${identityInfo}。请调用 advance 接口结束当前工作流`
       : state.phase === "summary"
-        ? `${identityInfo}。请等待监督者调用 advance 结束工作流。调用 wait_for_turn 接口`
+        ? `${identityInfo}。请等待监督者调用 advance 结束工作流。调用 wait_for_turn（长轮询，10s 间隔，最多 600s）。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。`
         : nextPeer?.role === "supervisor"
           ? `${identityInfo}。若审阅后确认当前阶段目标已达成，可调用 advance 接口进入下一阶段`
-          : `${identityInfo}。请等待对方操作。调用 wait_for_turn 接口`;
+          : `${identityInfo}。请等待对方操作。调用 wait_for_turn（长轮询，10s 间隔，最多 600s）。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。`;
     return ok({ ok: true, next_turn: state.turn }, tip);
   });
 }

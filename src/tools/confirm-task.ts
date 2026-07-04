@@ -136,7 +136,7 @@ export async function confirmTask(
       const myPeer = state.peers.find(p => p.identity === identity)!;
       const turnIsSelf = state.turn === identity;
       const turnInfo = turnIsSelf ? `turn 在 ${state.turn}（你）` : `turn 在 ${state.turn}（对方）`;
-      const tip = `[行动] 已重新加入工作流 ${wfId}。当前在 ${state.phase} 阶段第 ${state.round} 轮，${turnInfo}。调用 wait_for_turn，根据服务端提示继续下一步。\n\n[当前] 你是 ${identity}（${myPeer.role === "supervisor" ? "supervisor" : "developer"}）。工作流 ${wfId}。`;
+      const tip = `[行动] 已重新加入工作流 ${wfId}。当前在 ${state.phase} 阶段第 ${state.round} 轮，${turnInfo}。调用 wait_for_turn（长轮询，10s 间隔，最多 600s）。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。\n\n[当前] 你是 ${identity}（${myPeer.role === "supervisor" ? "supervisor" : "developer"}）。工作流 ${wfId}。`;
       return ok({
         task_path: resolvedTaskPath.replace(/\\/g, "/"),
         workflow_id: wfId,
@@ -190,11 +190,11 @@ export async function confirmTask(
 
   let actionLine: string;
   if (isFirst) {
-    actionLine = `${recovered ? "已恢复" : "已创建"}工作流 ${wfId}。等待对方 AI 以相同 task_path 调用 confirm_task 加入。调用 wait_for_turn，根据服务端提示继续下一步。`;
+    actionLine = `${recovered ? "已恢复" : "已创建"}工作流 ${wfId}。等待对方 AI 以相同 task_path 调用 confirm_task 加入。调用 wait_for_turn（长轮询，10s 间隔，最多 600s）。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。`;
   } else {
     const p = curState.peers;
     const names = p.map((x) => `${x.identity}（${x.role === "supervisor" ? "supervisor" : "developer"}）`).join(" + ");
-    actionLine = `已加入工作流 ${wfId}。双方已就位：${names}。调用 wait_for_turn，根据服务端提示继续下一步。`;
+    actionLine = `已加入工作流 ${wfId}。双方已就位：${names}。调用 wait_for_turn（长轮询，10s 间隔，最多 600s）。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。`;
   }
 
   return ok({

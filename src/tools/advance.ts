@@ -43,7 +43,7 @@ export async function advance(
       setState(workflowId, next);
       await logEvent("advance", { identity, from: "idle", to: "requirements", task: state.task.spec_file });
       const reqFile = join("handoff", next.workflow_id!, "requirements", `r1_${nonSupervisor}.md`).replace(/\\/g, "/");
-      return ok({ ok: true, new_phase: "requirements", turn: nonSupervisor }, `[行动] 等待 ${nonSupervisor} 产出需求分析。对方 claim_turn 后将获得完整指引。调用 wait_for_turn。\n\n[产出] ${nonSupervisor} 将产出到 ${reqFile}\n\n[当前] 你是 ${identity}（supervisor）。当前是第 1 轮需求分析，轮到 ${nonSupervisor} 了。`);
+      return ok({ ok: true, new_phase: "requirements", turn: nonSupervisor }, `[行动] 等待 ${nonSupervisor} 产出需求分析。对方 claim_turn 后将获得完整指引。调用 wait_for_turn（长轮询，10s 间隔，最多 600s）。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。\n\n[产出] ${nonSupervisor} 将产出到 ${reqFile}\n\n[当前] 你是 ${identity}（supervisor）。当前是第 1 轮需求分析，轮到 ${nonSupervisor} 了。`);
     }
 
     if (currentPhase === "requirements") {
@@ -63,7 +63,7 @@ export async function advance(
       const planFile = join("handoff", next.workflow_id!, "planning", `r1_${reviewer.identity}.md`).replace(/\\/g, "/");
       const planAction = turnIsSelf
         ? `产出实施计划。调用 claim_turn 获取执行权。`
-        : `等待 ${reviewer.identity} 产出实施计划。对方 claim_turn 后将获得完整指引。调用 wait_for_turn。`;
+        : `等待 ${reviewer.identity} 产出实施计划。对方 claim_turn 后将获得完整指引。调用 wait_for_turn（长轮询，10s 间隔，最多 600s）。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。`;
       const planWho = turnIsSelf ? "轮到你了。" : `轮到 ${reviewer.identity} 了。`;
       return ok({ ok: true, new_phase: "planning", turn: reviewer.identity }, `[行动] ${planAction}\n\n[产出] ${reviewer.identity} 将产出到 ${planFile}\n\n[当前] 你是 ${identity}（supervisor）。当前是第 1 轮实施计划，${planWho}`);
     }
@@ -78,7 +78,7 @@ export async function advance(
       const implFile = join("handoff", next.workflow_id!, "implementation", `r1_coding_${developer.identity}.md`).replace(/\\/g, "/");
       const implAction = turnIsSelf
         ? `进行代码实现(coding)。调用 claim_turn 获取执行权。`
-        : `等待 ${developer.identity} 产出代码实现(coding)。对方 claim_turn 后将获得完整指引。调用 wait_for_turn。`;
+        : `等待 ${developer.identity} 产出代码实现(coding)。对方 claim_turn 后将获得完整指引。调用 wait_for_turn（长轮询，10s 间隔，最多 600s）。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。`;
       const implWho = turnIsSelf ? "轮到你了。" : `轮到 ${developer.identity} 了。`;
       return ok({ ok: true, new_phase: "implementation", sub_phase: "coding", turn: developer.identity }, `[行动] ${implAction}\n\n[产出] ${developer.identity} 将产出到 ${implFile}\n\n[当前] 你是 ${identity}（supervisor）。当前是第 1 轮代码实现，${implWho}`);
     }
