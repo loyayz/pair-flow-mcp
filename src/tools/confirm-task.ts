@@ -1,5 +1,5 @@
 import { access, readFile, writeFile, readdir } from "node:fs/promises";
-import { resolve } from "node:path";
+import { resolve, sep } from "node:path";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
@@ -73,6 +73,12 @@ export async function confirmTask(
   // Path traversal guard
   const resolvedTaskPath = resolve(taskPath);
   if (taskPath.includes("..")) return err("task_path must not contain path traversal");
+
+  // Validate task file is under work_dir
+  const resolvedWorkDir = resolve(workDir);
+  if (resolvedTaskPath !== resolvedWorkDir && !resolvedTaskPath.startsWith(resolvedWorkDir + sep)) {
+    return err("task_path must be under work_dir");
+  }
 
   // Validate task file exists
   try { await access(resolvedTaskPath); } catch {
