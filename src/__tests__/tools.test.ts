@@ -11,6 +11,8 @@ const TEST_HANDOFF = resolve(".pairflow-test-handoff");
 const TEST_STATE = resolve(".pairflow-test");
 const TEST_TASK = resolve(tmpdir(), "pairflow-test-task.md");
 let server: ChildProcess;
+let claudeToken = "";
+let codebuddyToken = "";
 
 function mcpRequest(name: string, args: Record<string, unknown> = {}, headers: Record<string, string> = {}): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
@@ -63,8 +65,14 @@ async function setup() {
   const r1 = await mcpRequest("register", { identity: "claude" });
   const r2 = await mcpRequest("register", { identity: "codebuddy" });
   if (!r1.ok || !r2.ok) throw new Error(`Setup failed: ${JSON.stringify(r1)} ${JSON.stringify(r2)}`);
-  await mcpRequest("confirm_task", { task_path: TEST_TASK }, { "x-ai-identity": "claude" });
-  const adv = await mcpRequest("advance", {}, { "x-ai-identity": "claude" });
+  claudeToken = r1.token as string;
+  codebuddyToken = r2.token as string;
+  const workDir = resolve(tmpdir());
+  const c1 = await mcpRequest("confirm_task", { task_path: TEST_TASK, supervisor: true, developer: false, work_dir: workDir }, { "x-ai-identity": claudeToken });
+  if (!c1.ok) throw new Error(`confirm_task(claude) failed: ${JSON.stringify(c1)}`);
+  const c2 = await mcpRequest("confirm_task", { task_path: TEST_TASK, supervisor: false, developer: true, work_dir: workDir }, { "x-ai-identity": codebuddyToken });
+  if (!c2.ok) throw new Error(`confirm_task(codebuddy) failed: ${JSON.stringify(c2)}`);
+  const adv = await mcpRequest("advance", {}, { "x-ai-identity": claudeToken });
   if (!adv.ok) throw new Error(`Advance failed: ${JSON.stringify(adv)}`);
 }
 
@@ -97,19 +105,19 @@ describe("Claim turn + submit", () => {
   });
 
   it("rejects non-supervisor advance", async () => {
-    const r = await mcpRequest("advance", {}, { "x-ai-identity": "codebuddy" });
+    const r = await mcpRequest("advance", {}, { "x-ai-identity": codebuddyToken });
     expect(r.ok).toBe(false);
   });
   it("claim turn succeeds for current turn holder", async () => {
-    const r = await mcpRequest("claim_turn", {}, { "x-ai-identity": "codebuddy" });
+    const r = await mcpRequest("claim_turn", {}, { "x-ai-identity": codebuddyToken });
     expect(r.ok).toBe(true);
   });
   it("submit works", async () => {
-    await mcpRequest("claim_turn", {}, { "x-ai-identity": "codebuddy" });
+    await mcpRequest("claim_turn", {}, { "x-ai-identity": codebuddyToken });
     const r = await mcpRequest("submit", {
       file_path: TEST_TASK,
       git_commit_hash: "def7654321",
-    }, { "x-ai-identity": "codebuddy" });
+    }, { "x-ai-identity": codebuddyToken });
     expect(r.ok).toBe(true);
   });
 });

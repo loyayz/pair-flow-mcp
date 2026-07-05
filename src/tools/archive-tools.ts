@@ -65,7 +65,8 @@ export async function getArchivedFileContent(
   if (phase && !VALID_PHASES.includes(phase)) {
     return err(`invalid phase: ${phase}. Must be one of: ${VALID_PHASES.join(", ")}`);
   }
-  const safeFilename = phase ? join(validatePathSegment(phase), filename) : filename;
+  const effectivePhase = phase ?? state?.phase ?? "requirements";
+  const safeFilename = join(validatePathSegment(effectivePhase), filename);
 
   const safeWfId = validatePathSegment(wfId);
   const filePath = join(HANDOFF_DIR, safeWfId, safeFilename);

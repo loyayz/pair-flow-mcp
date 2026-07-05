@@ -37,6 +37,12 @@ function getAction(state: PairFlowState, identity: string): string {
     ? `${prevFile.replace(/\\/g, "/")}（对方 commit: ${otherSubmit!.commit_hash}）`
     : "对方上一轮产出";
 
+  if (state.phase === "idle") {
+    const isSup = state.peers.some((p) => p.identity === identity && p.role === "supervisor");
+    if (isSup) return "双方已就位。作为监督者，调用 advance 开始工作流";
+    return "等待监督者调用 advance 开始工作流";
+  }
+
   if (state.round === 1) {
     if (state.phase === "requirements") {
       return `深度需求分析。对以下每个维度不满足于第一反应，追问自己至少一次"为什么"或"那意味着什么"，触及底层逻辑后再记录结论：
@@ -142,9 +148,11 @@ export function buildTip(state: PairFlowState, identity: string): string {
     ? "轮到你了"
     : `轮到 ${safe(state.turn)} 了`;
 
+  const productLine = state.phase === "idle"
+    ? ""
+    : `\n[产出] 完成后 git commit，调用 submit，file_path = ${file}\n`;
+
   return `[行动] ${action}
-
-[产出] 完成后 git commit，调用 submit，file_path = ${file}
-
+${productLine}
 [当前] 你是 ${label}。当前是第 ${state.round} 轮${phaseText}，${turnOwner}。`;
 }

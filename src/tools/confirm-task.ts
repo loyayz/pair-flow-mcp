@@ -172,6 +172,11 @@ export async function confirmTask(
       registered_at: new Date().toISOString(),
       work_dir: workDir,
     });
+    // idle 阶段双方就位后，turn 切给监督者——使其 wait_for_turn 立即返回
+    if (state.phase === "idle") {
+      const sup = state.peers.find((p) => p.role === "supervisor");
+      if (sup) state.turn = sup.identity;
+    }
     setState(wfId, state);
   }
 

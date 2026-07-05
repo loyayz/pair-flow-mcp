@@ -7,6 +7,7 @@ export function err(message: string, extra?: Record<string, unknown>): CallToolR
 }
 
 export function ok(data: Record<string, unknown>, tip?: string): CallToolResult {
+  data.ok = true;
   data.reminder = REMINDER;
   if (tip) data.tip = tip;
   return { content: [{ type: "text", text: JSON.stringify(data) }] };

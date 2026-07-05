@@ -1,14 +1,14 @@
 import { describe, it, expect } from "vitest";
-import { registerToken, resolve } from "../token-map.js";
+import { registerToken, resolveSession } from "../token-map.js";
 
 describe("token-map", () => {
   it("resolves token to identity", () => {
     const token = registerToken("claude");
-    expect(resolve(token)).toBe("claude");
+    expect(resolveSession(token)?.identity).toBe("claude");
   });
 
   it("passes through unknown values", () => {
-    expect(resolve("unknown-identity")).toBe("unknown-identity");
-    expect(resolve("")).toBe("");
+    expect(resolveSession("unknown-identity")).toBeNull();
+    expect(resolveSession("")).toBeNull();
   });
 });

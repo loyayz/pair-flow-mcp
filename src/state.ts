@@ -30,8 +30,6 @@ export interface HistoryEntry {
 
 export interface Task {
   spec_file?: string;
-  goals?: string[];
-  context?: string;
   task_type?: "requirements" | "development";
 }
 
@@ -104,80 +102,62 @@ export function defaultState(): PairFlowState {
 
 // ── Phase initialization ──
 
-export function initRequirementsPhase(state: PairFlowState, nonSupervisorId: string, task: Task): PairFlowState {
-  const now = new Date().toISOString();
-  const emptyLastSubmit: LastSubmit = { round: null, sub_phase: null, commit_hash: null, submitted_at: null, file_path: null };
+/** 统一 phase 级重置（设计 §11）：round=1，last_submit_per_turn 清空，时间戳清空。 */
+function resetPhaseBase(state: PairFlowState): PairFlowState {
+  const empty: LastSubmit = { round: null, sub_phase: null, commit_hash: null, submitted_at: null, file_path: null };
   const lsp: Record<string, LastSubmit> = {};
-  for (const p of state.peers) {
-    lsp[p.identity] = { ...emptyLastSubmit };
-  }
+  for (const p of state.peers) lsp[p.identity] = { ...empty };
   return {
     ...state,
+    round: 1,
+    turn_switched_at: null,
+    turn_claimed_at: null,
+    last_submit_per_turn: lsp,
+  };
+}
+
+export function initRequirementsPhase(state: PairFlowState, nonSupervisorId: string, task: Task): PairFlowState {
+  const now = new Date().toISOString();
+  return {
+    ...resetPhaseBase(state),
     task,
     phase: "requirements",
     sub_phase: null,
-    round: 1,
     turn: nonSupervisorId,
-    turn_switched_at: now,
-    turn_claimed_at: null,
-    last_submit_per_turn: lsp,
     history: [...state.history, { type: "phase_change", timestamp: now, details: { from: "idle", to: "requirements", round: 1, turn: nonSupervisorId } }],
   };
 }
 
 export function initPlanningPhase(state: PairFlowState, reviewerId: string): PairFlowState {
   const now = new Date().toISOString();
-  const emptyLastSubmit: LastSubmit = { round: null, sub_phase: null, commit_hash: null, submitted_at: null, file_path: null };
-  const lsp: Record<string, LastSubmit> = {};
-  for (const p of state.peers) {
-    lsp[p.identity] = { ...emptyLastSubmit };
-  }
   return {
-    ...state,
+    ...resetPhaseBase(state),
     phase: "planning",
     sub_phase: null,
-    round: 1,
     turn: reviewerId,
-    last_submit_per_turn: lsp,
     history: [...state.history, { type: "phase_change", timestamp: now, details: { from: state.phase, to: "planning", round: 1, turn: reviewerId } }],
   };
 }
 
 export function initImplementationPhase(state: PairFlowState, developerId: string): PairFlowState {
   const now = new Date().toISOString();
-  const emptyLastSubmit: LastSubmit = { round: null, sub_phase: null, commit_hash: null, submitted_at: null, file_path: null };
-  const lsp: Record<string, LastSubmit> = {};
-  for (const p of state.peers) {
-    lsp[p.identity] = { ...emptyLastSubmit };
-  }
   return {
-    ...state,
+    ...resetPhaseBase(state),
     phase: "implementation",
     sub_phase: "coding",
     dev_cycle: (state.dev_cycle ?? -1) + 1,
-    round: 1,
     turn: developerId,
-    last_submit_per_turn: lsp,
     history: [...state.history, { type: "phase_change", timestamp: now, details: { from: state.phase, to: "implementation", round: 1, turn: developerId, dev_cycle: (state.dev_cycle ?? -1) + 1 } }],
   };
 }
 
 export function initSummaryPhase(state: PairFlowState, supervisorId: string): PairFlowState {
   const now = new Date().toISOString();
-  const emptyLastSubmit: LastSubmit = { round: null, sub_phase: null, commit_hash: null, submitted_at: null, file_path: null };
-  const lsp: Record<string, LastSubmit> = {};
-  for (const p of state.peers) {
-    lsp[p.identity] = { ...emptyLastSubmit };
-  }
   return {
-    ...state,
+    ...resetPhaseBase(state),
     phase: "summary",
     sub_phase: null,
-    round: 1,
     turn: supervisorId,
-    turn_switched_at: now,
-    turn_claimed_at: null,
-    last_submit_per_turn: lsp,
     history: [...state.history, { type: "phase_change", timestamp: now, details: { from: state.phase, to: "summary", round: 1, turn: supervisorId } }],
   };
 }
