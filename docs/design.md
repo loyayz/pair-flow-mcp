@@ -29,20 +29,20 @@ AI-A (MCP Client)              AI-B (MCP Client)
 │              PairFlow Server (HTTP MCP)           │
 │                                                  │
 │  状态机 + 模板引擎 + 收敛判定引擎                    │
-│  .pairflow/（运行时: state.json + lock + pairflow.log）│
+│  .pairflow/（运行时: pairflow.log）                │
 │  handoff/{workflow_id}/（归档: 产出 + journal）     │
 │                                                  │
 │  MCP Tools: ping / who_am_i / register            │
 │            get_state / claim_turn / submit          │
 │            get_archived_files / ...                 │
-│            confirm_dir / confirm_task / advance     │
+│            confirm_task / advance                 │
 │            wait_for_turn / get_archived_file_content│
 └──────────────────────────────────────────────────┘
 ```
 
 - **两个 AI**：在 IDLE 阶段注册身份和角色，后续按阶段参与协作
 - **监督者**：AI 之一兼任，控制 `advance` + P0 沟通 + 最终异议 + SUMMARY 汇总
-- **PairFlow**：中立调度方。MCP 工具对称（两边可调用相同接口），状态变更持进程级互斥锁，state.json 原子写入
+- **PairFlow**：中立调度方。MCP 工具对称（两边可调用相同接口），状态变更持 async-mutex（per-workflow 内存锁）
 
 ---
 
