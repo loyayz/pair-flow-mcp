@@ -163,12 +163,7 @@ export async function reconstructFromHandoff(
     state.sub_phase = inferSubPhase(latestMetaFiles);
   }
 
-  // 4b. Recover dev_cycle (retro-2 §4.1)
-  if (state.phase === "implementation") {
-    state.dev_cycle = await inferDevPhase(wfDirVar);
-  }
-
-  // 4c. Recover last_submit_per_turn from meta.json (retro-1 §2.2)
+  // 4b. Recover last_submit_per_turn from meta.json (retro-1 §2.2)
   try {
     state.last_submit_per_turn = await reconstructLastSubmit(wfDirVar, state.peers, state.phase);
   } catch { /* keep empty if reconstruction fails */ }
@@ -231,47 +226,6 @@ function inferSubPhase(metaFiles: string[]): SubPhase {
   }
   // P2-12: no submissions found — phase was advanced but no work started, don't assume "coding"
   return null;
-}
-
-async function inferDevPhase(wfDir: string): Promise<number> {
-  // Try planning doc first
-  try {
-    const planningDir = join(wfDir, "planning");
-    const entries = await readdir(planningDir);
-    const r1File = entries.find((e) => e.startsWith("r1_") && e.endsWith(".md") && !e.includes(".meta"));
-    if (r1File) {
-      const content = await readFile(join(planningDir, r1File), "utf-8");
-      const match = content.match(/循环总数[：:]\s*(\d+)/i);
-      if (match) {
-        const totalCycles = parseInt(match[1], 10);
-        // Count completed coding rounds in implementation/ to determine current dev_cycle
-        const implCount = await countCodingRounds(wfDir);
-        return Math.min(implCount, totalCycles - 1);
-      }
-    }
-  } catch { /* planning dir missing */ }
-
-  // Fallback: count coding rounds in implementation/
-  try {
-    return await countCodingRounds(wfDir);
-  } catch {
-    return 0;
-  }
-}
-
-async function countCodingRounds(wfDir: string): Promise<number> {
-  try {
-    const implDir = join(wfDir, "implementation");
-    const metaFiles = await findFiles(implDir, ".meta.json");
-    let count = 0;
-    for (const mf of metaFiles) {
-      const parsed = parseFilename(basename(mf));
-      if (parsed?.sub_phase === "coding") count++;
-    }
-    return count;
-  } catch {
-    return 0;
-  }
 }
 
 async function reconstructLastSubmit(wfDir: string, peers: Peer[], phase: string): Promise<Record<string, LastSubmit>> {

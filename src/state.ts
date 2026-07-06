@@ -32,7 +32,6 @@ export interface PairFlowState {
   workflow_id: string | null;
   phase: Phase;
   sub_phase: SubPhase;
-  dev_cycle: number | null;
   round: number;
   turn: string;
   turn_switched_at: string | null;
@@ -81,7 +80,6 @@ export function defaultState(): PairFlowState {
     workflow_id: null,
     phase: "idle",
     sub_phase: null,
-    dev_cycle: null,
     round: 1,
     turn: "idle",
     turn_switched_at: null,
@@ -136,7 +134,6 @@ export function initImplementationPhase(state: PairFlowState, developerId: strin
     ...resetPhaseBase(state),
     phase: "implementation",
     sub_phase: "coding",
-    dev_cycle: (state.dev_cycle ?? -1) + 1,
     turn: developerId,
 
   };

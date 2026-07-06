@@ -42,7 +42,7 @@ AI-A (MCP Client)              AI-B (MCP Client)
 
 - **两个 AI**：在 IDLE 阶段注册身份和角色，后续按阶段参与协作
 - **监督者**：AI 之一兼任，控制 `advance` + 分歧裁定 + 最终异议 + SUMMARY 汇总
-- **PairFlow**：中立调度方。MCP 工具对称（两边可调用相同接口），状态变更持 async-mutex（per-workflow 内存锁）
+- **PairFlow**：中立调度方。两边可见相同工具集，执行权限按角色和 turn 控制。状态变更持 async-mutex（per-workflow 内存锁）
 
 ---
 
@@ -139,7 +139,6 @@ AI-A (supervisor)                    AI-B (developer)
   "workflow_id": null,          // confirm_task 时生成（yyyyMMddHHmmss）
   "phase": "idle | requirements | planning | implementation | summary",
   "sub_phase": "coding | review | null",
-  "dev_cycle": null,            // 当前开发循环序号，每次 advance → IMPLEMENTATION 时 +1
   "round": 1,                   // 当前阶段内的轮次
   "turn": "idle | <identity>",  // 当前持有操作权的身份
   "turn_switched_at": null,     // turn 切换时间戳（submit 时写入）

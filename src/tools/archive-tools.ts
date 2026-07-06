@@ -24,6 +24,10 @@ export async function getArchivedFiles(
   let dir = join(HANDOFF_DIR, safeId);
 
   const phase = args.phase as string | undefined;
+  const VALID_PHASES = ["requirements", "planning", "implementation", "summary"];
+  if (phase && !VALID_PHASES.includes(phase)) {
+    return err(`invalid phase: ${phase}. Must be one of: ${VALID_PHASES.join(", ")}`);
+  }
   if (phase) dir = join(dir, validatePathSegment(phase));
 
   if (!resolve(dir).startsWith(resolve(HANDOFF_DIR))) {
