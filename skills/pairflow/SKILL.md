@@ -30,7 +30,7 @@ description: 启动 PairFlow MCP Server 并完成 register + confirm_task 结对
 检查 server 是否已在运行：
 
 ```bash
-curl -s http://localhost:3100/health
+curl -s --noproxy "*" http://127.0.0.1:3100/health
 ```
 
 若返回 `{"ok":true,...}` 则跳过启动步骤。
@@ -46,7 +46,7 @@ cd <pairflow代码目录> && npx tsx src/index.ts &
 使用确认好的 identity 调用 register：
 
 ```
-curl -s -X POST http://localhost:3100/mcp \
+curl -s -X POST http://127.0.0.1:3100/mcp \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
   --noproxy "*" \
@@ -60,7 +60,7 @@ curl -s -X POST http://localhost:3100/mcp \
 使用收集到的参数调用 confirm_task：
 
 ```
-curl -s -X POST http://localhost:3100/mcp \
+curl -s -X POST http://127.0.0.1:3100/mcp \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
   -H "X-AI-Identity: <token>" \
@@ -72,8 +72,10 @@ curl -s -X POST http://localhost:3100/mcp \
 
 根据 confirm_task 返回的 tip 判断所处场景：
 
-- **"等待对方 AI 加入"** — 你是第一个。提醒用户"等待对方 AI 用相同 task_path 调用 confirm_task 加入"
-- **"双方已就位"** — 结对已成功建立。根据 tip 提示调用 `wait_for_turn` 继续
+- **"等待对方 AI 加入"** — 你是第一个加入的。提醒用户"等待对方 AI 用相同 task_path 调用 confirm_task 加入"。调用 `wait_for_turn`——双方就位后服务端会将 turn 切给监督者，届时自动返回。
+- **"双方已就位"** — 结对已成功建立：
+  - **你是监督者**：`wait_for_turn` 会立即返回（turn 已切给你），然后调 `claim_turn`，按指引调 `advance` 开始工作流
+  - **你不是监督者**：调 `wait_for_turn`，等待监督者 advance 后将 turn 切给你
 - **错误** — 根据错误信息修正参数后重试
 
 将 token 告诉用户或保存以备后续使用。
