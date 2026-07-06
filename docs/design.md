@@ -8,7 +8,7 @@
 
 构建一个本地 HTTP MCP Server，驱动两个 AI 按照结构化工作流完成结对编程。不绑定具体 AI 产品——两端通过 HTTP header 自报身份，PairFlow 不预设"谁是谁"。
 
-工作流覆盖从需求到交付的完整软件开发生命周期，包含四阶段主流程：需求阶段 → 计划阶段 → 开发阶段 → 汇总阶段（其中开发阶段内部含 coding→review→fix 子循环，对应四个状态机 phase：REQUIREMENTS/PLANNING/IMPLEMENTATION/SUMMARY）。任一阶段出现分歧时，双方在产出文档中标注观点差异，监督者在 advance 前裁定是否需要用户介入。
+工作流覆盖从需求到交付的完整软件开发生命周期，包含四阶段主流程：需求阶段 → 计划阶段 → 开发阶段 → 汇总阶段（其中开发阶段内部含 coding↔review 交替子循环，对应四个状态机 phase：REQUIREMENTS/PLANNING/IMPLEMENTATION/SUMMARY）。任一阶段出现分歧时，双方在产出文档中标注观点差异，监督者在 advance 前裁定是否需要用户介入。
 
 **核心定位**：结对编程的工作流引擎——持续互审 + 知识共享 + 方案互补。两个 AI 在同一工作流中交替产出与评审，减少单人偏差。
 
@@ -138,7 +138,7 @@ AI-A (supervisor)                    AI-B (developer)
   "schema_version": 1,
   "workflow_id": null,          // confirm_task 时生成（yyyyMMddHHmmss）
   "phase": "idle | requirements | planning | implementation | summary",
-  "sub_phase": "coding | review | null",
+  "sub_phase": "coding | review | null", // 仅在 IMPLEMENTATION 阶段生效
   "round": 1,                   // 当前阶段内的轮次
   "turn": "idle | <identity>",  // 当前持有操作权的身份
   "turn_switched_at": null,     // turn 切换时间戳（submit 时写入）
