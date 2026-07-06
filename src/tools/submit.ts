@@ -5,7 +5,7 @@ import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/proto
 import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
 import { parseSession } from "../identity.js";
 import { getState, setState, getMutex, isCurrentHolder, getOtherIdentity } from "../state.js";
-import { logEvent } from "../logger.js";
+
 import { err, ok } from "../response.js";
 import { identityLabel } from "../tip.js";
 
@@ -79,7 +79,7 @@ export async function submit(
       state.turn_claimed_at = null;
     }
     setState(workflowId, state);
-    await logEvent("submit", { identity, round: state.round - 1, file_path: filePath, commit_hash: commitHash });
+
 
     await writeMetaJson(filePath, commitHash, originalSubPhase, state.task);
 

@@ -5,7 +5,7 @@ import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/proto
 import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
 import { parseSession } from "../identity.js";
 import { getState, setState, getMutex, isSupervisor, getOtherIdentity, initRequirementsPhase, initPlanningPhase, initImplementationPhase, initSummaryPhase, initIdleState } from "../state.js";
-import { logEvent } from "../logger.js";
+
 import { err, ok } from "../response.js";
 
 export async function advance(
@@ -41,7 +41,7 @@ export async function advance(
       if (!nonSupervisor) return err("no other peer registered");
       const next = initRequirementsPhase(state, nonSupervisor, state.task);
       setState(workflowId, next);
-      await logEvent("advance", { identity, from: "idle", to: "requirements", task: state.task.spec_file });
+
       const reqFile = join("handoff", next.workflow_id!, "requirements", `r1_${nonSupervisor}.md`).replace(/\\/g, "/");
       return ok({ ok: true, new_phase: "requirements", turn: nonSupervisor }, `[行动] 等待 ${nonSupervisor} 产出需求分析。对方 claim_turn 后将获得完整指引。调用 wait_for_turn（长轮询，10s 间隔，最多 600s）。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。\n\n[产出] ${nonSupervisor} 将产出到 ${reqFile}\n\n[当前] 你是 ${identity}（supervisor）。当前是第 1 轮需求分析，轮到 ${nonSupervisor} 了。`);
     }
@@ -50,7 +50,7 @@ export async function advance(
       if (state.task?.task_type === "requirements") {
         const next = initSummaryPhase(state, identity);
         setState(workflowId, next);
-        await logEvent("advance", { identity, from: "requirements", to: "summary", task_type: "requirements" });
+
         const summaryFile = join("handoff", next.workflow_id!, "summary", `r1_${identity}.md`).replace(/\\/g, "/");
         return ok({ ok: true, new_phase: "summary", turn: identity }, `[行动] 产出汇总草稿，包含关键决策、遗留问题和后续建议。调用 claim_turn 获取执行权。\n\n[产出] ${summaryFile}\n\n[当前] 你是 ${identity}（supervisor）。当前是第 1 轮汇总，轮到你了。`);
       }
@@ -58,7 +58,7 @@ export async function advance(
       if (!reviewer) return err("no reviewer (is_developer=false) registered");
       const next = initPlanningPhase(state, reviewer.identity);
       setState(workflowId, next);
-      await logEvent("advance", { identity, from: "requirements", to: "planning" });
+
       const turnIsSelf = reviewer.identity === identity;
       const planFile = join("handoff", next.workflow_id!, "planning", `r1_${reviewer.identity}.md`).replace(/\\/g, "/");
       const planAction = turnIsSelf
@@ -73,7 +73,7 @@ export async function advance(
       if (!developer) return err("no developer (is_developer=true) registered");
       const next = initImplementationPhase(state, developer.identity);
       setState(workflowId, next);
-      await logEvent("advance", { identity, from: "planning", to: "implementation", dev_cycle: next.dev_cycle });
+
       const turnIsSelf = developer.identity === identity;
       const implFile = join("handoff", next.workflow_id!, "implementation", `r1_coding_${developer.identity}.md`).replace(/\\/g, "/");
       const implAction = turnIsSelf
@@ -86,7 +86,7 @@ export async function advance(
     if (currentPhase === "implementation") {
       const next = initSummaryPhase(state, identity);
       setState(workflowId, next);
-      await logEvent("advance", { identity, from: "implementation", to: "summary" });
+
       const summaryFile = join("handoff", next.workflow_id!, "summary", `r1_${identity}.md`).replace(/\\/g, "/");
       return ok({ ok: true, new_phase: "summary", turn: identity }, `[行动] 产出汇总草稿，包含关键决策、遗留问题和后续建议。调用 claim_turn 获取执行权。\n\n[产出] ${summaryFile}\n\n[当前] 你是 ${identity}（supervisor）。当前是第 1 轮汇总，轮到你了。`);
     }
@@ -106,7 +106,7 @@ export async function advance(
       const finishedId = state.workflow_id;
       const next = initIdleState(state);
       setState(workflowId, next);
-      await logEvent("advance", { identity, from: "summary", to: "idle" });
+
       return ok({ ok: true, new_phase: "idle" }, `[行动] 工作流已结束。全部产出归档于 handoff/${finishedId}/。如需开始新任务，双方重新 register 后，监督者调用 confirm_task。\n\n[当前] 你是 ${identity}（supervisor）。工作流已结束。`);
     }
 
