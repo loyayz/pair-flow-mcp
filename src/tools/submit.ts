@@ -7,7 +7,7 @@ import { parseSession } from "../identity.js";
 import { getState, setState, getMutex, isCurrentHolder, getOtherIdentity } from "../state.js";
 
 import { err, ok } from "../response.js";
-import { identityLabel } from "../tip.js";
+import { identityLabel, phaseLabel } from "../tip.js";
 
 const HANDOFF_DIR = process.env.HANDOFF_DIR || "handoff";
 
@@ -61,8 +61,6 @@ export async function submit(
       submitted_at: now,
       file_path: filePath,
     };
-    state.history.push({ type: "submit", timestamp: now, details: { identity, round: state.round, file_path: filePath, commit_hash: commitHash } });
-
     // IMPLEMENTATION sub_phase toggle
     if (state.phase === "implementation" && state.sub_phase === "coding") {
       state.sub_phase = "review";
@@ -86,14 +84,22 @@ export async function submit(
     const idLabel = identityLabel(state, identity);
     const nextPeer = state.peers.find((p) => p.identity === state.turn);
     const nextLabel = identityLabel(state, state.turn);
-    const identityInfo = `当前身份: ${idLabel}。turn 已切给 ${nextLabel}(对方)`;
-    const tip = state.phase === "summary" && nextPeer?.role === "supervisor"
-      ? `${identityInfo}。请调用 advance 接口结束当前工作流`
-      : state.phase === "summary"
-        ? `${identityInfo}。请等待监督者调用 advance 结束工作流。调用 wait_for_turn（长轮询，10s 间隔，最多 600s）。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。`
-        : nextPeer?.role === "supervisor"
-          ? `${identityInfo}。若审阅后确认当前阶段目标已达成，可调用 advance 接口进入下一阶段`
-          : `${identityInfo}。请等待对方操作。调用 wait_for_turn（长轮询，10s 间隔，最多 600s）。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。`;
+    const phaseText = phaseLabel(state.phase, state.sub_phase);
+
+    let action: string;
+    if (state.phase === "summary" && nextPeer?.role === "supervisor") {
+      action = "调用 advance 结束当前工作流";
+    } else if (state.phase === "summary") {
+      action = "等待监督者调用 advance 结束工作流。调用 wait_for_turn（长轮询，10s 间隔，最多 600s）。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。";
+    } else if (nextPeer?.role === "supervisor") {
+      action = "若审阅后确认当前阶段目标已达成，可调用 advance 进入下一阶段";
+    } else {
+      action = "等待对方操作。调用 wait_for_turn（长轮询，10s 间隔，最多 600s）。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。";
+    }
+
+    const tip = `[行动] ${action}
+[产出] ${filePath.replace(/\\/g, "/")}（已提交）
+[当前] 你是 ${idLabel}。当前是第 ${state.round - 1} 轮${phaseText}，turn 已切给 ${nextLabel}。`;
     return ok({ ok: true, next_turn: state.turn }, tip);
   });
 }

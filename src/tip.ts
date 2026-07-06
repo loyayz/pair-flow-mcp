@@ -130,7 +130,7 @@ function getAction(state: PairFlowState, identity: string): string {
   return `未知的阶段/子阶段组合: phase=${state.phase}, sub_phase=${state.sub_phase}, round=${state.round}`;
 }
 
-function phaseLabel(phase: string, subPhase: string | null): string {
+export function phaseLabel(phase: string, subPhase: string | null): string {
   if (phase === "implementation") return subPhase === "review" ? "代码评审" : "代码实现";
   if (phase === "requirements") return "需求分析";
   if (phase === "planning") return "实施计划";

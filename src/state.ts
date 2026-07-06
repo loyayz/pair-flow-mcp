@@ -22,12 +22,6 @@ export interface LastSubmit {
   file_path: string | null;
 }
 
-export interface HistoryEntry {
-  type: "phase_change" | "submit";
-  timestamp: string;
-  details: Record<string, unknown>;
-}
-
 export interface Task {
   spec_file?: string;
   task_type?: "requirements" | "development";
@@ -46,7 +40,6 @@ export interface PairFlowState {
   task: Task | null;
   peers: Peer[];
   last_submit_per_turn: Record<string, LastSubmit>;
-  history: HistoryEntry[];
 }
 
 // ── In-memory state store ──
@@ -96,7 +89,6 @@ export function defaultState(): PairFlowState {
     task: null,
     peers: [],
     last_submit_per_turn: {},
-    history: [],
   };
 }
 
@@ -124,7 +116,6 @@ export function initRequirementsPhase(state: PairFlowState, nonSupervisorId: str
     phase: "requirements",
     sub_phase: null,
     turn: nonSupervisorId,
-    history: [...state.history, { type: "phase_change", timestamp: now, details: { from: "idle", to: "requirements", round: 1, turn: nonSupervisorId } }],
   };
 }
 
@@ -135,7 +126,7 @@ export function initPlanningPhase(state: PairFlowState, reviewerId: string): Pai
     phase: "planning",
     sub_phase: null,
     turn: reviewerId,
-    history: [...state.history, { type: "phase_change", timestamp: now, details: { from: state.phase, to: "planning", round: 1, turn: reviewerId } }],
+
   };
 }
 
@@ -147,7 +138,7 @@ export function initImplementationPhase(state: PairFlowState, developerId: strin
     sub_phase: "coding",
     dev_cycle: (state.dev_cycle ?? -1) + 1,
     turn: developerId,
-    history: [...state.history, { type: "phase_change", timestamp: now, details: { from: state.phase, to: "implementation", round: 1, turn: developerId, dev_cycle: (state.dev_cycle ?? -1) + 1 } }],
+
   };
 }
 
@@ -158,14 +149,13 @@ export function initSummaryPhase(state: PairFlowState, supervisorId: string): Pa
     phase: "summary",
     sub_phase: null,
     turn: supervisorId,
-    history: [...state.history, { type: "phase_change", timestamp: now, details: { from: state.phase, to: "summary", round: 1, turn: supervisorId } }],
+
   };
 }
 
 export function initIdleState(state: PairFlowState): PairFlowState {
   return {
     ...defaultState(),
-    history: [],
   };
 }
 

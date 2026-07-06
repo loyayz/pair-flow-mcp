@@ -1,4 +1,4 @@
-import { access, readFile, writeFile, readdir } from "node:fs/promises";
+import { access, readFile, writeFile } from "node:fs/promises";
 import { resolve, sep } from "node:path";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
@@ -19,30 +19,14 @@ async function findWorkflowByTaskPath(taskPath: string): Promise<string | null> 
   return null;
 }
 
-async function findIncompleteByTaskPath(taskPath: string): Promise<string | null> {
+async function readPidFile(taskPath: string): Promise<string | null> {
   try {
-    const entries = await readdir(HANDOFF_DIR, { withFileTypes: true });
-    const wfDirs = entries.filter((e) => e.isDirectory() && /^\d{14}$/.test(e.name));
-    // Sort descending, return the latest incomplete workflow
-    wfDirs.sort((a, b) => b.name.localeCompare(a.name));
-    for (const d of wfDirs) {
-      if (await isWorkflowComplete(d.name)) continue;
-      // Check if this workflow's task_path matches
-      for (const phase of ["requirements", "planning", "implementation", "summary"]) {
-        try {
-          const phaseDir = `${HANDOFF_DIR}/${d.name}/${phase}`;
-          const pEntries = await readdir(phaseDir, { withFileTypes: true });
-          const metaFile = pEntries.find((e) => e.isFile() && e.name.endsWith(".meta.json"));
-          if (metaFile) {
-            const metaRaw = await readFile(`${phaseDir}/${metaFile.name}`, "utf-8");
-            const meta = JSON.parse(metaRaw);
-            if (meta.task?.spec_file === taskPath) return d.name;
-            break; // Found this workflow's task, doesn't match — try next workflow
-          }
-        } catch { /* phase dir may not exist */ }
-      }
-    }
-  } catch { /* handoff dir doesn't exist */ }
+    const pidFile = `${taskPath}.pid`;
+    const wfId = (await readFile(pidFile, "utf-8")).trim();
+    if (!/^\d{14}$/.test(wfId)) return null;
+    if (await isWorkflowComplete(wfId)) return null;
+    return wfId;
+  } catch { /* .pid doesn't exist or is unreadable */ }
   return null;
 }
 
@@ -92,15 +76,15 @@ export async function confirmTask(
   // 1. 查内存 — 是否有同 task_path 的活跃工作流
   let existing = await findWorkflowByTaskPath(resolvedTaskPath);
 
-  // 2. 查磁盘 — handoff 扫描未完成工作流（仅在内存中没找到时）
+  // 2. 读 .pid — 恢复未完成工作流（内存中没找到时）
   if (!existing) {
-    const handoffWfId = await findIncompleteByTaskPath(resolvedTaskPath);
-    if (handoffWfId) {
+    const pidWfId = await readPidFile(resolvedTaskPath);
+    if (pidWfId) {
       const defState = defaultState();
-      const recoveredState = await reconstructFromHandoff(defState, handoffWfId);
+      const recoveredState = await reconstructFromHandoff(defState, pidWfId);
       if (recoveredState) {
-        setState(handoffWfId, recoveredState);
-        existing = handoffWfId;
+        setState(pidWfId, recoveredState);
+        existing = pidWfId;
         recovered = true;
       }
     }

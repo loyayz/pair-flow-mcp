@@ -30,6 +30,12 @@ export async function advance(
 
     const currentPhase = state.phase;
 
+    // 非 idle 阶段：双方至少各 submit 一次才能 advance（§6 收敛）
+    if (currentPhase !== "idle") {
+      const bothSubmitted = state.peers.every((p) => state.last_submit_per_turn[p.identity]?.commit_hash);
+      if (!bothSubmitted) return err("both peers must submit at least once before advancing");
+    }
+
     if (currentPhase === "idle") {
       if (state.peers.length < 2) {
         return err("both peers must register before advance");
