@@ -118,6 +118,11 @@ export async function confirmTask(
       if (raw) bindWorkflow(raw.trim(), wfId);
 
       const myPeer = state.peers.find(p => p.identity === identity)!;
+      // 用确认时的入参覆盖重建推断的角色——调用者声明为准
+      myPeer.role = supervisor ? "supervisor" : "peer";
+      myPeer.is_developer = developer;
+      setState(wfId, state);
+
       const turnIsSelf = state.turn === identity;
       const turnInfo = turnIsSelf ? `turn 在 ${state.turn}（你）` : `turn 在 ${state.turn}（对方）`;
       const tip = `[行动] 已重新加入工作流 ${wfId}。当前在 ${state.phase} 阶段第 ${state.round} 轮，${turnInfo}。调用 wait_for_turn（长轮询，10s 间隔，最多 600s）。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。\n\n[当前] 你是 ${identity}（${myPeer.role === "supervisor" ? "supervisor" : "developer"}）。工作流 ${wfId}。`;

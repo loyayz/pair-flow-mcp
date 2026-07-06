@@ -84,21 +84,12 @@ export async function reconstructFromHandoff(
   const identities = await extractIdentities(wfDir);
   if (identities.size === 0) return null; // can't recover without peers
 
-  const phaseDirs = await listPhaseDirs(wfDir);
-
-  // Infer roles: first submitter in requirements = developer; first in planning = reviewer
-  const reqFirst = await getFirstSubmitter(wfDir, "requirements");
-  const planFirst = await getFirstSubmitter(wfDir, "planning");
-
   for (const id of identities) {
-    const isDev = reqFirst === id;
-    const isSup = planFirst === id;
+    // 角色由 confirm_task 入参覆盖——重建时用默认值
     state.peers.push({
       identity: id,
-      role: isSup ? "supervisor" : "peer",
-      is_developer: isDev,
-      // Use epoch to force re-register — 60s window check in register.ts
-      // will reject this until the peer actually calls register()
+      role: "peer",
+      is_developer: false,
       registered_at: "1970-01-01T00:00:00.000Z",
     });
   }
@@ -197,26 +188,6 @@ async function extractIdentities(wfDir: string): Promise<Set<string>> {
   return ids;
 }
 
-async function getFirstSubmitter(wfDir: string, phase: string): Promise<string | null> {
-  try {
-    const files = await findFiles(join(wfDir, phase), ".meta.json");
-    // Find r1_ file (first submission in this phase)
-    for (const f of files) {
-      const parsed = parseFilename(basename(f));
-      if (parsed && parsed.round === 1) return parsed.identity;
-    }
-  } catch { /* */ }
-  return null;
-}
-
-async function listPhaseDirs(wfDir: string): Promise<string[]> {
-  try {
-    const entries = await readdir(wfDir, { withFileTypes: true });
-    return entries.filter((e) => e.isDirectory()).map((e) => e.name);
-  } catch {
-    return [];
-  }
-}
 
 // ── Field recovery helpers (retro-1 §2.2 + retro-2 §4.1) ──
 function inferSubPhase(metaFiles: string[]): SubPhase {
