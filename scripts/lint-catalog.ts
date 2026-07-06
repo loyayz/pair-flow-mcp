@@ -8,7 +8,7 @@ import { rulesCatalog } from "../src/template.js";
 import { readFile } from "node:fs/promises";
 
 async function main() {
-  const specPath = "docs/superpowers/specs/2026-06-21-pair-flow-design.md";
+  const specPath = "docs/superpowers/specs/design.md";
   const spec = await readFile(specPath, "utf-8");
   const errors: string[] = [];
   const warnings: string[] = [];

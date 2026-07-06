@@ -59,4 +59,4 @@ cp -r skills/pairflow ~/.claude/skills/pairflow
 
 所有请求通过 HTTP header `X-AI-Identity: <token>` 携带身份。register 返回 token，confirm_task 绑定 token 到工作流。
 
-完整设计文档见 `docs/superpowers/specs/2026-06-21-pair-flow-design.md`。
+完整设计文档见 `docs/design.md`。
