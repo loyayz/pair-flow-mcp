@@ -5,7 +5,7 @@ import { z } from "zod";
 import { ping } from "./tools/ping.js";
 import { whoAmI } from "./tools/who-am-i.js";
 import { register } from "./tools/register.js";
-import { claimTurn } from "./tools/claim-turn.js";
+
 import { advance } from "./tools/advance.js";
 import { getStateTool } from "./tools/get-state.js";
 import { submit } from "./tools/submit.js";
@@ -29,7 +29,7 @@ function createServerWithTools() {
   mcp.registerTool("who_am_i", { description: "身份确认 + 注册信息。解析 X-AI-Identity header。" }, whoAmI);
   mcp.registerTool("register", { description: "IDLE 阶段注册身份。identity 从 body 取。角色声明移至 confirm_task。", inputSchema: { identity: z.string().optional() } }, register);
   mcp.registerTool("confirm_task", { description: "确认任务文档路径，声明角色，两个 AI 以相同 task_path 成对。", inputSchema: { task_path: z.string(), task_type: z.enum(["requirements", "development"]).optional(), supervisor: z.boolean(), developer: z.boolean(), work_dir: z.string().optional() } }, confirmTask);
-  mcp.registerTool("claim_turn", { description: "获取当前轮次的执行权。仅通过 X-AI-Identity header 识别身份。", inputSchema: {} }, claimTurn);
+
   mcp.registerTool("advance", { description: "推进到下一阶段。仅监督者可用。", inputSchema: {} }, advance);
   mcp.registerTool("get_state", { description: "返回当前执行指引（tip）。匿名可用。" }, getStateTool);
   mcp.registerTool("get_archived_files", { description: "列出归档文件。phase/workflow_id 可选过滤。", inputSchema: { phase: z.string().optional(), workflow_id: z.string().optional() } }, getArchivedFiles);

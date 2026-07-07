@@ -108,12 +108,11 @@ describe("Claim turn + submit", () => {
     const r = await mcpRequest("advance", {}, { "x-ai-identity": codebuddyToken });
     expect(r.ok).toBe(false);
   });
-  it("claim turn succeeds for current turn holder", async () => {
-    const r = await mcpRequest("claim_turn", {}, { "x-ai-identity": codebuddyToken });
-    expect(r.ok).toBe(true);
+  it("wait_for_turn returns immediately for current turn holder", async () => {
+    const r = await mcpRequest("wait_for_turn", {}, { "x-ai-identity": codebuddyToken });
+    expect(r.turn).toBe("codebuddy");
   });
   it("submit works", async () => {
-    await mcpRequest("claim_turn", {}, { "x-ai-identity": codebuddyToken });
     const r = await mcpRequest("submit", {
       file_path: TEST_TASK,
       git_commit_hash: "def7654321",
