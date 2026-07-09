@@ -29,7 +29,7 @@ export async function waitForTurn(
     if (!state) return err("workflow not found");
 
     if (state.turn === identity) {
-      // 记录领取时间（替代 claim_turn）+ 返回完整指引
+      // 记录 turn 领取时间并返回完整指引
       await getMutex(workflowId).runExclusive(async () => {
         const s = getState(workflowId);
         if (s && s.turn === identity) {

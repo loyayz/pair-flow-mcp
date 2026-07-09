@@ -1,6 +1,6 @@
 import { readdir, readFile, mkdir, access } from "node:fs/promises";
 import { join, resolve, relative } from "node:path";
-import { defaultState, type PairFlowState, type Phase, type SubPhase, type Peer, type LastSubmit } from "./state.js";
+import { defaultState, type PairFlowState, type Phase, type SubPhase, type Peer, type LastSubmission } from "./state.js";
 
 
 const HANDOFF_DIR = process.env.HANDOFF_DIR || "handoff";
@@ -154,9 +154,9 @@ export async function reconstructFromHandoff(
     state.sub_phase = inferSubPhase(latestMetaFiles);
   }
 
-  // 4b. Recover last_submit_per_turn from meta.json (retro-1 §2.2)
+  // 4b. Recover last_submission_by_participant from meta.json (retro-1 §2.2)
   try {
-    state.last_submit_per_turn = await reconstructLastSubmit(wfDirVar, state.peers, state.phase);
+    state.last_submission_by_participant = await reconstructLastSubmissionByParticipant(wfDirVar, state.peers, state.phase);
   } catch { /* keep empty if reconstruction fails */ }
 
   console.log(`[pair-flow] Reconstructed state from handoff/${wfId}: phase=${state.phase}, peers=${state.peers.length}, round=${state.round}`);
@@ -199,9 +199,9 @@ function inferSubPhase(metaFiles: string[]): SubPhase {
   return null;
 }
 
-async function reconstructLastSubmit(wfDir: string, peers: Peer[], phase: string): Promise<Record<string, LastSubmit>> {
-  const lsp: Record<string, LastSubmit> = {};
-  const empty: LastSubmit = { round: null, sub_phase: null, commit_hash: null, submitted_at: null, file_path: null };
+async function reconstructLastSubmissionByParticipant(wfDir: string, peers: Peer[], phase: string): Promise<Record<string, LastSubmission>> {
+  const lsp: Record<string, LastSubmission> = {};
+  const empty: LastSubmission = { round: null, sub_phase: null, commit_hash: null, submitted_at: null, file_path: null };
 
   // Initialize all peers with empty
   for (const p of peers) lsp[p.identity] = { ...empty };

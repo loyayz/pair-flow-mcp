@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { spawn, type ChildProcess } from "node:child_process";
-import { rm, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
 import http from "node:http";
@@ -13,6 +13,7 @@ const TEST_TASK = resolve(tmpdir(), "pairflow-test-task.md");
 let server: ChildProcess;
 let claudeToken = "";
 let codebuddyToken = "";
+let workflowId = "";
 
 function mcpRequest(name: string, args: Record<string, unknown> = {}, headers: Record<string, string> = {}): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
@@ -70,6 +71,7 @@ async function setup() {
   const workDir = resolve(tmpdir());
   const c1 = await mcpRequest("confirm_task", { task_path: TEST_TASK, supervisor: true, developer: false, work_dir: workDir }, { "x-ai-identity": claudeToken });
   if (!c1.ok) throw new Error(`confirm_task(claude) failed: ${JSON.stringify(c1)}`);
+  workflowId = c1.workflow_id as string;
   const c2 = await mcpRequest("confirm_task", { task_path: TEST_TASK, supervisor: false, developer: true, work_dir: workDir }, { "x-ai-identity": codebuddyToken });
   if (!c2.ok) throw new Error(`confirm_task(codebuddy) failed: ${JSON.stringify(c2)}`);
   const adv = await mcpRequest("advance", {}, { "x-ai-identity": claudeToken });
@@ -90,10 +92,14 @@ describe("Register", () => {
     expect(r.token).toBeDefined();
     expect(typeof r.token).toBe("string");
     expect(r.token.length).toBeGreaterThan(0);
+
+    const who = await mcpRequest("who_am_i", {}, { "x-ai-identity": r.token as string });
+    expect(who.registered).toBe(true);
+    expect(who.joined_workflow).toBe(false);
   });
 });
 
-describe("Claim turn + submit", () => {
+describe("Wait for turn + submit", () => {
   beforeAll(async () => {
     await writeFile(TEST_TASK, "# test task", "utf-8");
     await startServer(); await setup();
@@ -112,9 +118,19 @@ describe("Claim turn + submit", () => {
     const r = await mcpRequest("wait_for_turn", {}, { "x-ai-identity": codebuddyToken });
     expect(r.turn).toBe("codebuddy");
   });
-  it("submit works", async () => {
+  it("rejects submit outside the workflow archive", async () => {
     const r = await mcpRequest("submit", {
       file_path: TEST_TASK,
+      git_commit_hash: "def7654321",
+    }, { "x-ai-identity": codebuddyToken });
+    expect(r.ok).toBe(false);
+  });
+  it("submit works", async () => {
+    const archiveFile = resolve(TEST_HANDOFF, workflowId, "requirements", "r1_codebuddy.md");
+    await mkdir(dirname(archiveFile), { recursive: true });
+    await writeFile(archiveFile, "# requirements", "utf-8");
+    const r = await mcpRequest("submit", {
+      file_path: archiveFile,
       git_commit_hash: "def7654321",
     }, { "x-ai-identity": codebuddyToken });
     expect(r.ok).toBe(true);

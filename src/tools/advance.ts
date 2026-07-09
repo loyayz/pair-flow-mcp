@@ -32,7 +32,7 @@ export async function advance(
 
     // 非 idle 阶段：双方至少各 submit 一次才能 advance（§6 收敛）
     if (currentPhase !== "idle") {
-      const bothSubmitted = state.peers.every((p) => state.last_submit_per_turn[p.identity]?.commit_hash);
+      const bothSubmitted = state.peers.every((p) => state.last_submission_by_participant[p.identity]?.commit_hash);
       if (!bothSubmitted) return err("both peers must submit at least once before advancing");
     }
 
@@ -49,7 +49,7 @@ export async function advance(
       setState(workflowId, next);
 
       const reqFile = join("handoff", next.workflow_id!, "requirements", `r1_${nonSupervisor}.md`).replace(/\\/g, "/");
-      return ok({ ok: true, new_phase: "requirements", turn: nonSupervisor }, `[行动] 等待 ${nonSupervisor} 产出需求分析。对方 claim_turn 后将获得完整指引。调用 wait_for_turn（长轮询，10s 间隔，最多 600s）。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。\n\n[产出] ${nonSupervisor} 将产出到 ${reqFile}\n\n[当前] 你是 ${identity}（supervisor）。当前是第 1 轮需求分析，轮到 ${nonSupervisor} 了。`);
+      return ok({ ok: true, new_phase: "requirements", turn: nonSupervisor }, `[行动] 等待 ${nonSupervisor} 产出需求分析。对方调用 wait_for_turn 后将获得完整指引。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。\n\n[产出] ${nonSupervisor} 将产出到 ${reqFile}\n\n[当前] 你是 ${identity}（supervisor）。当前是第 1 轮需求分析，轮到 ${nonSupervisor} 了。`);
     }
 
     if (currentPhase === "requirements") {
@@ -58,7 +58,7 @@ export async function advance(
         setState(workflowId, next);
 
         const summaryFile = join("handoff", next.workflow_id!, "summary", `r1_${identity}.md`).replace(/\\/g, "/");
-        return ok({ ok: true, new_phase: "summary", turn: identity }, `[行动] 产出汇总草稿，包含关键决策、遗留问题和后续建议。调用 claim_turn 获取执行权。\n\n[产出] ${summaryFile}\n\n[当前] 你是 ${identity}（supervisor）。当前是第 1 轮汇总，轮到你了。`);
+        return ok({ ok: true, new_phase: "summary", turn: identity }, `[行动] 产出汇总草稿，包含关键决策、遗留问题和后续建议。调用 wait_for_turn 获取完整指引。\n\n[产出] ${summaryFile}\n\n[当前] 你是 ${identity}（supervisor）。当前是第 1 轮汇总，轮到你了。`);
       }
       const reviewer = state.peers.find((p) => !p.is_developer);
       if (!reviewer) return err("no reviewer (is_developer=false) registered");
@@ -68,8 +68,8 @@ export async function advance(
       const turnIsSelf = reviewer.identity === identity;
       const planFile = join("handoff", next.workflow_id!, "planning", `r1_${reviewer.identity}.md`).replace(/\\/g, "/");
       const planAction = turnIsSelf
-        ? `产出实施计划。调用 claim_turn 获取执行权。`
-        : `等待 ${reviewer.identity} 产出实施计划。对方 claim_turn 后将获得完整指引。调用 wait_for_turn（长轮询，10s 间隔，最多 600s）。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。`;
+        ? `产出实施计划。调用 wait_for_turn 获取完整指引。`
+        : `等待 ${reviewer.identity} 产出实施计划。对方调用 wait_for_turn 后将获得完整指引。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。`;
       const planWho = turnIsSelf ? "轮到你了。" : `轮到 ${reviewer.identity} 了。`;
       return ok({ ok: true, new_phase: "planning", turn: reviewer.identity }, `[行动] ${planAction}\n\n[产出] ${reviewer.identity} 将产出到 ${planFile}\n\n[当前] 你是 ${identity}（supervisor）。当前是第 1 轮实施计划，${planWho}`);
     }
@@ -83,8 +83,8 @@ export async function advance(
       const turnIsSelf = developer.identity === identity;
       const implFile = join("handoff", next.workflow_id!, "implementation", `r1_coding_${developer.identity}.md`).replace(/\\/g, "/");
       const implAction = turnIsSelf
-        ? `进行代码实现(coding)。调用 claim_turn 获取执行权。`
-        : `等待 ${developer.identity} 产出代码实现(coding)。对方 claim_turn 后将获得完整指引。调用 wait_for_turn（长轮询，10s 间隔，最多 600s）。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。`;
+        ? `进行代码实现(coding)。调用 wait_for_turn 获取完整指引。`
+        : `等待 ${developer.identity} 产出代码实现(coding)。对方调用 wait_for_turn 后将获得完整指引。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。`;
       const implWho = turnIsSelf ? "轮到你了。" : `轮到 ${developer.identity} 了。`;
       return ok({ ok: true, new_phase: "implementation", sub_phase: "coding", turn: developer.identity }, `[行动] ${implAction}\n\n[产出] ${developer.identity} 将产出到 ${implFile}\n\n[当前] 你是 ${identity}（supervisor）。当前是第 1 轮代码实现，${implWho}`);
     }
@@ -94,11 +94,11 @@ export async function advance(
       setState(workflowId, next);
 
       const summaryFile = join("handoff", next.workflow_id!, "summary", `r1_${identity}.md`).replace(/\\/g, "/");
-      return ok({ ok: true, new_phase: "summary", turn: identity }, `[行动] 产出汇总草稿，包含关键决策、遗留问题和后续建议。调用 claim_turn 获取执行权。\n\n[产出] ${summaryFile}\n\n[当前] 你是 ${identity}（supervisor）。当前是第 1 轮汇总，轮到你了。`);
+      return ok({ ok: true, new_phase: "summary", turn: identity }, `[行动] 产出汇总草稿，包含关键决策、遗留问题和后续建议。调用 wait_for_turn 获取完整指引。\n\n[产出] ${summaryFile}\n\n[当前] 你是 ${identity}（supervisor）。当前是第 1 轮汇总，轮到你了。`);
     }
 
     if (currentPhase === "summary") {
-      const summarySubmissions = Object.values(state.last_submit_per_turn).filter((s) => s.commit_hash);
+      const summarySubmissions = Object.values(state.last_submission_by_participant).filter((s) => s.commit_hash);
       if (summarySubmissions.length === 0) {
         return err("no summary submissions yet — at least one peer must submit before advancing to IDLE");
       }

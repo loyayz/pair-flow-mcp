@@ -1,5 +1,5 @@
-import { writeFile, mkdir } from "node:fs/promises";
-import { dirname } from "node:path";
+import { access, writeFile, mkdir } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
@@ -10,6 +10,7 @@ import { err, ok } from "../response.js";
 import { identityLabel, phaseLabel } from "../tip.js";
 
 const HANDOFF_DIR = process.env.HANDOFF_DIR || "handoff";
+const SAFE_SEGMENT = /^[a-zA-Z0-9_-]+$/;
 
 export async function submit(
   args: Record<string, unknown>,
@@ -42,8 +43,21 @@ export async function submit(
       return err("only the reviewer can submit during review sub_phase");
     }
 
+    const expectedFilePath = expectedSubmissionPath(state.workflow_id, state.phase, state.round, state.sub_phase, identity);
+    if (!expectedFilePath) return err("cannot submit while workflow is idle");
+    const resolvedFilePath = resolve(filePath);
+    const resolvedExpected = resolve(expectedFilePath);
+    if (!samePath(resolvedFilePath, resolvedExpected)) {
+      return err(`file_path must be ${expectedFilePath.replace(/\\/g, "/")}`);
+    }
+    try {
+      await access(resolvedExpected);
+    } catch {
+      return err(`file_path does not exist: ${expectedFilePath.replace(/\\/g, "/")}`);
+    }
+
     // Reject if no new work
-    const lastHash = Object.values(state.last_submit_per_turn)
+    const lastHash = Object.values(state.last_submission_by_participant)
       .filter((s) => s.commit_hash)
       .sort((a, b) => (b.submitted_at ?? "").localeCompare(a.submitted_at ?? ""))[0]?.commit_hash;
     if (lastHash && lastHash === commitHash) {
@@ -54,12 +68,12 @@ export async function submit(
     const originalSubPhase = state.sub_phase;
 
     const now = new Date().toISOString();
-    state.last_submit_per_turn[identity] = {
+    state.last_submission_by_participant[identity] = {
       round: state.round,
       sub_phase: state.sub_phase,
       commit_hash: commitHash,
       submitted_at: now,
-      file_path: filePath,
+      file_path: expectedFilePath,
     };
     // IMPLEMENTATION sub_phase toggle
     if (state.phase === "implementation" && state.sub_phase === "coding") {
@@ -79,7 +93,7 @@ export async function submit(
     setState(workflowId, state);
 
 
-    await writeMetaJson(filePath, commitHash, originalSubPhase, state.task);
+    await writeMetaJson(expectedFilePath, commitHash, originalSubPhase, state.task);
 
     const idLabel = identityLabel(state, identity);
     const nextPeer = state.peers.find((p) => p.identity === state.turn);
@@ -98,10 +112,35 @@ export async function submit(
     }
 
     const tip = `[行动] ${action}
-[产出] ${filePath.replace(/\\/g, "/")}（已提交）
+[产出] ${expectedFilePath.replace(/\\/g, "/")}（已提交）
 [当前] 你是 ${idLabel}。当前是第 ${state.round - 1} 轮${phaseText}，turn 已切给 ${nextLabel}。`;
     return ok({ ok: true, next_turn: state.turn }, tip);
   });
+}
+
+function expectedSubmissionPath(
+  workflowId: string | null,
+  phase: string,
+  round: number,
+  subPhase: string | null,
+  identity: string,
+): string | null {
+  if (!workflowId || phase === "idle") return null;
+  const safeIdentity = safeSegment(identity);
+  const filename = phase === "implementation" && subPhase
+    ? `r${round}_${subPhase}_${safeIdentity}.md`
+    : `r${round}_${safeIdentity}.md`;
+  return join(HANDOFF_DIR, workflowId, phase, filename);
+}
+
+function safeSegment(value: string): string {
+  return SAFE_SEGMENT.test(value) ? value : "unknown";
+}
+
+function samePath(left: string, right: string): boolean {
+  return process.platform === "win32"
+    ? left.toLowerCase() === right.toLowerCase()
+    : left === right;
 }
 
 async function writeMetaJson(

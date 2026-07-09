@@ -9,6 +9,7 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+.claude/
 
 # PairFlow runtime
 .pairflow/

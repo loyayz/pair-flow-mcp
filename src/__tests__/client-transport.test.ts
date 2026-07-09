@@ -55,12 +55,14 @@ describe("Client transport with identity injection", () => {
     await c.close();
   });
 
-  it("who_am_i returns correct identity", async () => {
+  it("who_am_i returns unknown before token registration", async () => {
     const t = createClientTransport(`http://localhost:${PORT}/mcp`, "codebuddy");
     const c = new Client({ name: "test2", version: "1" }, {});
     await c.connect(t);
     const r = await call(c, "who_am_i", {});
-    expect(r.identity).toBe("codebuddy");
+    expect(r.identity).toBe("unknown");
+    expect(r.registered).toBe(false);
+    expect(r.joined_workflow).toBe(false);
     await c.close();
   });
 });

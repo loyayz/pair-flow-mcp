@@ -49,7 +49,6 @@ cp -r skills/pairflow ~/.claude/skills/pairflow
 |------|------|
 | `register` | 声明身份，获取 token |
 | `confirm_task` | 确认任务文档和角色（supervisor/developer），两个 AI 相同 task_path 成对 |
-| `claim_turn` | 获取当前轮次执行权 |
 | `wait_for_turn` | 长轮询等待 turn 到自己（10s 间隔，600s 超时） |
 | `submit` | 提交产出（file_path + git_commit_hash） |
 | `advance` | 监督者推进到下一阶段 |

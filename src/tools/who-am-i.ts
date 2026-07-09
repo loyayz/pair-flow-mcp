@@ -8,15 +8,16 @@ import { ok } from "../response.js";
 export async function whoAmI(
   extra: RequestHandlerExtra<ServerRequest, ServerNotification>
 ): Promise<CallToolResult> {
-  const { identity, workflowId } = parseSession(extra.requestInfo?.headers);
+  const { identity, workflowId, registered } = parseSession(extra.requestInfo?.headers);
   if (identity === "unknown") {
-    return ok({ identity: "unknown", registered: false });
+    return ok({ identity: "unknown", registered: false, joined_workflow: false });
   }
   const state = workflowId ? getState(workflowId) : undefined;
   const peer = state?.peers.find((p) => p.identity === identity);
   return ok({
     identity,
-    registered: !!peer,
+    registered,
+    joined_workflow: !!peer,
     is_supervisor: peer?.role === "supervisor",
     is_developer: peer?.is_developer ?? false,
     workflow_id: workflowId,

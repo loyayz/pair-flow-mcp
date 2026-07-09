@@ -14,7 +14,7 @@ export interface Peer {
   work_dir?: string;
 }
 
-export interface LastSubmit {
+export interface LastSubmission {
   round: number | null;
   sub_phase: SubPhase;
   commit_hash: string | null;
@@ -38,7 +38,7 @@ export interface PairFlowState {
   turn_claimed_at: string | null;
   task: Task | null;
   peers: Peer[];
-  last_submit_per_turn: Record<string, LastSubmit>;
+  last_submission_by_participant: Record<string, LastSubmission>;
 }
 
 // ── In-memory state store ──
@@ -86,23 +86,23 @@ export function defaultState(): PairFlowState {
     turn_claimed_at: null,
     task: null,
     peers: [],
-    last_submit_per_turn: {},
+    last_submission_by_participant: {},
   };
 }
 
 // ── Phase initialization ──
 
-/** 统一 phase 级重置（设计 §11）：round=1，last_submit_per_turn 清空，时间戳清空。 */
+/** 统一 phase 级重置（设计 §11）：round=1，last_submission_by_participant 清空，时间戳清空。 */
 function resetPhaseBase(state: PairFlowState): PairFlowState {
-  const empty: LastSubmit = { round: null, sub_phase: null, commit_hash: null, submitted_at: null, file_path: null };
-  const lsp: Record<string, LastSubmit> = {};
+  const empty: LastSubmission = { round: null, sub_phase: null, commit_hash: null, submitted_at: null, file_path: null };
+  const lsp: Record<string, LastSubmission> = {};
   for (const p of state.peers) lsp[p.identity] = { ...empty };
   return {
     ...state,
     round: 1,
     turn_switched_at: null,
     turn_claimed_at: null,
-    last_submit_per_turn: lsp,
+    last_submission_by_participant: lsp,
   };
 }
 

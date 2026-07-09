@@ -4,6 +4,7 @@ import { resolveSession } from "./token-map.js";
 export interface ParsedSession {
   identity: string;
   workflowId: string | null;
+  registered: boolean;
 }
 
 export function parseSession(headers: IsomorphicHeaders | undefined): ParsedSession {
@@ -11,11 +12,10 @@ export function parseSession(headers: IsomorphicHeaders | undefined): ParsedSess
   if (typeof raw === "string" && raw.trim().length > 0) {
     const trimmed = raw.trim();
     const session = resolveSession(trimmed);
-    if (session) return session;
-    // Fallback: plaintext identity (backward compatible, no workflow bound)
-    return { identity: sanitizeIdentity(trimmed), workflowId: null };
+    if (session) return { ...session, registered: true };
+    return { identity: "unknown", workflowId: null, registered: false };
   }
-  return { identity: "unknown", workflowId: null };
+  return { identity: "unknown", workflowId: null, registered: false };
 }
 
 export function sanitizeIdentity(identity: string): string {

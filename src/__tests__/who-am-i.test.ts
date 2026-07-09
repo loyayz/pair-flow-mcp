@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { parseSession, sanitizeIdentity } from "../identity.js";
+import { registerToken } from "../token-map.js";
 
 describe("parseSession", () => {
   it("returns unknown for undefined headers", () => {
@@ -14,14 +15,23 @@ describe("parseSession", () => {
     expect(parseSession({ "content-type": "application/json" }).identity).toBe("unknown");
   });
 
-  it("parses x-ai-identity header as plaintext identity", () => {
+  it("returns unknown for non-token x-ai-identity header", () => {
     const s = parseSession({ "x-ai-identity": "test-ai" });
-    expect(s.identity).toBe("test-ai");
+    expect(s.identity).toBe("unknown");
     expect(s.workflowId).toBeNull();
+    expect(s.registered).toBe(false);
+  });
+
+  it("marks token-backed sessions as registered", () => {
+    const token = registerToken("registered-ai");
+    const s = parseSession({ "x-ai-identity": token });
+    expect(s.identity).toBe("registered-ai");
+    expect(s.workflowId).toBeNull();
+    expect(s.registered).toBe(true);
   });
 
   it("trims whitespace from identity", () => {
-    expect(parseSession({ "x-ai-identity": "  claude-fable  " }).identity).toBe("claude-fable");
+    expect(parseSession({ "x-ai-identity": "  claude-fable  " }).identity).toBe("unknown");
   });
 
   it("returns unknown when x-ai-identity is empty string", () => {

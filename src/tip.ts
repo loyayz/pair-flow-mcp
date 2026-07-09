@@ -29,7 +29,7 @@ function outFile(state: PairFlowState, identity: string): string {
 function getAction(state: PairFlowState, identity: string): string {
   const taskPath = (state.task?.spec_file ?? "任务文档").replace(/\\/g, "/");
   const other = state.peers.find((p) => p.identity !== identity);
-  const otherSubmit = other ? state.last_submit_per_turn[other.identity] : null;
+  const otherSubmit = other ? state.last_submission_by_participant[other.identity] : null;
   const otherIdent = other ? safe(other.identity) : "unknown";
 
   const prevFile = otherSubmit?.file_path ?? null;
@@ -99,7 +99,7 @@ function getAction(state: PairFlowState, identity: string): string {
   }
 
   if (state.phase === "planning") {
-    const r1Submitter = Object.entries(state.last_submit_per_turn)
+    const r1Submitter = Object.entries(state.last_submission_by_participant)
       .find(([_, s]) => s.round === 1 && s.commit_hash)?.[0];
     const planDoc = r1Submitter
       ? join(HANDOFF_DIR, safe(state.workflow_id), "planning", `r1_${safe(r1Submitter)}.md`).replace(/\\/g, "/")
