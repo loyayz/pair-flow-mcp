@@ -13,13 +13,13 @@ export async function whoAmI(
     return ok({ identity: "unknown", registered: false, joined_workflow: false });
   }
   const state = workflowId ? getState(workflowId) : undefined;
-  const peer = state?.peers.find((p) => p.identity === identity);
+  const participant = state?.participants.find((p) => p.identity === identity);
   return ok({
     identity,
     registered,
-    joined_workflow: !!peer,
-    is_supervisor: peer?.role === "supervisor",
-    is_developer: peer?.is_developer ?? false,
+    joined_workflow: !!participant,
+    is_supervisor: participant?.role === "supervisor",
+    is_developer: participant?.is_developer ?? false,
     workflow_id: workflowId,
   });
 }

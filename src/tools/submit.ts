@@ -4,7 +4,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
 import { parseSession } from "../identity.js";
-import { getState, setState, getMutex, hasRecoveryPlaceholderPeer, haveAllPeersSubmittedCurrentPhase, isCurrentHolder, getOtherIdentity } from "../state.js";
+import { getState, setState, getMutex, hasRecoveryPlaceholderParticipant, haveAllParticipantsSubmittedCurrentPhase, isCurrentHolder, getOtherIdentity } from "../state.js";
 
 import { err, ok } from "../response.js";
 import { identityLabel, phaseLabel } from "../tip.js";
@@ -33,14 +33,14 @@ export async function submit(
   return getMutex(workflowId).runExclusive(async () => {
     const state = getState(workflowId);
     if (!state) return err("workflow not found");
-    if (!state.peers.some((p) => p.identity === identity)) return err("identity not registered");
-    if (hasRecoveryPlaceholderPeer(state)) {
+    if (!state.participants.some((p) => p.identity === identity)) return err("identity not registered");
+    if (hasRecoveryPlaceholderParticipant(state)) {
       return err("workflow recovery incomplete — every recovered participant must call confirm_task before submit");
     }
     if (!isCurrentHolder(state, identity)) return err(`not your turn — current turn: ${state.turn}`);
 
     // IMPLEMENTATION role check
-    const isDeveloper = state.peers.some((p) => p.identity === identity && p.is_developer);
+    const isDeveloper = state.participants.some((p) => p.identity === identity && p.is_developer);
     if (state.phase === "implementation" && state.sub_phase === "coding" && !isDeveloper) {
       return err("only the developer can submit during coding sub_phase");
     }
@@ -101,27 +101,27 @@ export async function submit(
     await writeMetaJson(expectedFilePath, commitHash, originalSubPhase, state.task);
 
     const idLabel = identityLabel(state, identity);
-    const nextPeer = state.peers.find((p) => p.identity === state.turn);
+    const nextParticipant = state.participants.find((p) => p.identity === state.turn);
     const nextLabel = identityLabel(state, state.turn);
     const phaseText = phaseLabel(state.phase, state.sub_phase);
-    const currentPeer = state.peers.find((p) => p.identity === identity);
-    const supervisorPeer = state.peers.find((p) => p.role === "supervisor");
-    const bothSubmitted = haveAllPeersSubmittedCurrentPhase(state);
+    const currentParticipant = state.participants.find((p) => p.identity === identity);
+    const supervisorParticipant = state.participants.find((p) => p.role === "supervisor");
+    const bothSubmitted = haveAllParticipantsSubmittedCurrentPhase(state);
 
     let action: string;
-    if (bothSubmitted && supervisorPeer && state.turn !== supervisorPeer.identity) {
-      action = `双方已提交，但 turn 已切给 ${state.turn}。等待 ${state.turn} 继续处理或确认后自然交还监督者 ${supervisorPeer.identity}`;
-    } else if (bothSubmitted && currentPeer?.role === "supervisor" && state.phase === "summary") {
+    if (bothSubmitted && supervisorParticipant && state.turn !== supervisorParticipant.identity) {
+      action = `双方已提交，但 turn 已切给 ${state.turn}。等待 ${state.turn} 继续处理或确认后自然交还监督者 ${supervisorParticipant.identity}`;
+    } else if (bothSubmitted && currentParticipant?.role === "supervisor" && state.phase === "summary") {
       action = "双方已提交汇总。若确认汇总已收敛，可调用 advance 结束当前工作流";
-    } else if (bothSubmitted && currentPeer?.role === "supervisor") {
+    } else if (bothSubmitted && currentParticipant?.role === "supervisor") {
       action = "双方已提交。若确认当前阶段目标已达成，可调用 advance 进入下一阶段";
-    } else if (bothSubmitted && supervisorPeer) {
-      action = `双方已提交。等待监督者 ${supervisorPeer.identity} 判断是否调用 advance 推进`;
-    } else if (state.phase === "summary" && nextPeer?.role === "supervisor") {
+    } else if (bothSubmitted && supervisorParticipant) {
+      action = `双方已提交。等待监督者 ${supervisorParticipant.identity} 判断是否调用 advance 推进`;
+    } else if (state.phase === "summary" && nextParticipant?.role === "supervisor") {
       action = "调用 advance 结束当前工作流";
     } else if (state.phase === "summary") {
       action = "等待监督者调用 advance 结束工作流。调用 wait_for_turn（长轮询，10s 间隔，最多 600s）。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。";
-    } else if (nextPeer?.role === "supervisor") {
+    } else if (nextParticipant?.role === "supervisor") {
       action = "若审阅后确认当前阶段目标已达成，可调用 advance 进入下一阶段";
     } else {
       action = "等待对方操作。调用 wait_for_turn（长轮询，10s 间隔，最多 600s）。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。";

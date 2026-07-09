@@ -4,11 +4,11 @@ import { Mutex } from "async-mutex";
 
 export type Phase = "idle" | "requirements" | "planning" | "implementation" | "summary";
 export type SubPhase = "coding" | "review" | null;
-export type PeerRole = "supervisor" | "peer";
+export type ParticipantRole = "supervisor" | "participant";
 
-export interface Peer {
+export interface Participant {
   identity: string;
-  role: PeerRole;
+  role: ParticipantRole;
   is_developer: boolean;
   registered_at: string;
   work_dir?: string;
@@ -37,7 +37,7 @@ export interface PairFlowState {
   turn_switched_at: string | null;
   turn_claimed_at: string | null;
   task: Task | null;
-  peers: Peer[];
+  participants: Participant[];
   last_submission_by_participant: Record<string, LastSubmission>;
 }
 
@@ -87,7 +87,7 @@ export function defaultState(): PairFlowState {
     turn_switched_at: null,
     turn_claimed_at: null,
     task: null,
-    peers: [],
+    participants: [],
     last_submission_by_participant: {},
   };
 }
@@ -98,7 +98,7 @@ export function defaultState(): PairFlowState {
 function resetPhaseBase(state: PairFlowState): PairFlowState {
   const empty: LastSubmission = { round: null, sub_phase: null, commit_hash: null, submitted_at: null, file_path: null };
   const lsp: Record<string, LastSubmission> = {};
-  for (const p of state.peers) lsp[p.identity] = { ...empty };
+  for (const p of state.participants) lsp[p.identity] = { ...empty };
   return {
     ...state,
     round: 1,
@@ -167,27 +167,27 @@ export function isCurrentHolder(state: PairFlowState, identity: string): boolean
 }
 
 export function isSupervisor(state: PairFlowState, identity: string): boolean {
-  return state.peers.some((p) => p.identity === identity && p.role === "supervisor");
+  return state.participants.some((p) => p.identity === identity && p.role === "supervisor");
 }
 
 export function getOtherIdentity(state: PairFlowState, identity: string): string | null {
-  const other = state.peers.find((p) => p.identity !== identity);
+  const other = state.participants.find((p) => p.identity !== identity);
   return other?.identity ?? null;
 }
 
-export function getPeerByIdentity(state: PairFlowState, identity: string): Peer | undefined {
-  return state.peers.find((p) => p.identity === identity);
+export function getParticipantByIdentity(state: PairFlowState, identity: string): Participant | undefined {
+  return state.participants.find((p) => p.identity === identity);
 }
 
-export function isRecoveryPlaceholderPeer(peer: Peer): boolean {
-  return peer.registered_at === RECOVERY_REGISTERED_AT;
+export function isRecoveryPlaceholderParticipant(participant: Participant): boolean {
+  return participant.registered_at === RECOVERY_REGISTERED_AT;
 }
 
-export function hasRecoveryPlaceholderPeer(state: PairFlowState): boolean {
-  return state.peers.some(isRecoveryPlaceholderPeer);
+export function hasRecoveryPlaceholderParticipant(state: PairFlowState): boolean {
+  return state.participants.some(isRecoveryPlaceholderParticipant);
 }
 
-export function haveAllPeersSubmittedCurrentPhase(state: PairFlowState): boolean {
+export function haveAllParticipantsSubmittedCurrentPhase(state: PairFlowState): boolean {
   if (state.phase === "idle") return false;
-  return state.peers.every((p) => Boolean(state.last_submission_by_participant[p.identity]?.commit_hash));
+  return state.participants.every((p) => Boolean(state.last_submission_by_participant[p.identity]?.commit_hash));
 }

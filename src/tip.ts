@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { haveAllPeersSubmittedCurrentPhase } from "./state.js";
+import { haveAllParticipantsSubmittedCurrentPhase } from "./state.js";
 import type { PairFlowState } from "./state.js";
 
 const HANDOFF_DIR = process.env.HANDOFF_DIR || "handoff";
@@ -10,9 +10,9 @@ function safe(s: string | null | undefined): string {
 }
 
 export function identityLabel(state: PairFlowState, identity: string): string {
-  const peer = state.peers.find((p) => p.identity === identity);
-  if (!peer) return `${safe(identity)}`;
-  const roleLabel = peer.role === "supervisor" ? "supervisor" : (peer.is_developer ? "developer" : "reviewer");
+  const participant = state.participants.find((p) => p.identity === identity);
+  if (!participant) return `${safe(identity)}`;
+  const roleLabel = participant.role === "supervisor" ? "supervisor" : (participant.is_developer ? "developer" : "reviewer");
   return `${safe(identity)}(${roleLabel})`;
 }
 
@@ -29,7 +29,7 @@ function outFile(state: PairFlowState, identity: string): string {
 
 function getAction(state: PairFlowState, identity: string): string {
   const taskPath = (state.task?.spec_file ?? "任务文档").replace(/\\/g, "/");
-  const other = state.peers.find((p) => p.identity !== identity);
+  const other = state.participants.find((p) => p.identity !== identity);
   const otherSubmit = other ? state.last_submission_by_participant[other.identity] : null;
   const otherIdent = other ? safe(other.identity) : "unknown";
 
@@ -39,7 +39,7 @@ function getAction(state: PairFlowState, identity: string): string {
     : "对方上一轮产出";
 
   if (state.phase === "idle") {
-    const isSup = state.peers.some((p) => p.identity === identity && p.role === "supervisor");
+    const isSup = state.participants.some((p) => p.identity === identity && p.role === "supervisor");
     if (isSup) return "双方已就位。作为监督者，调用 advance 开始工作流";
     return "等待监督者调用 advance 开始工作流";
   }
@@ -69,10 +69,10 @@ function getAction(state: PairFlowState, identity: string): string {
     return `未知的阶段/子阶段组合: phase=${state.phase}, sub_phase=${state.sub_phase}, round=1`;
   }
 
-  const isSupervisor = state.peers.some((p) => p.identity === identity && p.role === "supervisor");
+  const isSupervisor = state.participants.some((p) => p.identity === identity && p.role === "supervisor");
   const canSupervisorAdvance = isSupervisor
     && state.turn === identity
-    && haveAllPeersSubmittedCurrentPhase(state);
+    && haveAllParticipantsSubmittedCurrentPhase(state);
 
   // 监督者 advance 目标（按阶段定制）
   let advanceTarget = "";

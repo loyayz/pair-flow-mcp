@@ -1,6 +1,6 @@
 import { readdir, readFile, mkdir, access } from "node:fs/promises";
 import { join, resolve, relative } from "node:path";
-import { RECOVERY_REGISTERED_AT, defaultState, type PairFlowState, type Phase, type SubPhase, type Peer, type LastSubmission } from "./state.js";
+import { RECOVERY_REGISTERED_AT, defaultState, type PairFlowState, type Phase, type SubPhase, type Participant, type LastSubmission } from "./state.js";
 
 
 const HANDOFF_DIR = process.env.HANDOFF_DIR || "handoff";
@@ -66,15 +66,15 @@ export async function reconstructFromHandoff(
   // 1. Determine phase
   state.phase = await determinePhase(wfDir);
 
-  // 2. Reconstruct peers from filenames
+  // 2. Reconstruct participants from filenames
   const identities = await extractIdentities(wfDir);
-  if (identities.size === 0) return null; // can't recover without peers
+  if (identities.size === 0) return null; // can't recover without participants
 
   for (const id of identities) {
     // 角色由 confirm_task 入参覆盖——重建时用默认值
-    state.peers.push({
+    state.participants.push({
       identity: id,
-      role: "peer",
+      role: "participant",
       is_developer: false,
       registered_at: RECOVERY_REGISTERED_AT,
     });
@@ -118,12 +118,12 @@ export async function reconstructFromHandoff(
   }
 
   state.round = maxRound;
-  // Turn: next should be the one who hasn't submitted last, or the other peer
-  if (lastSubmitter && state.peers.length >= 2) {
-    const other = state.peers.find((p) => p.identity !== lastSubmitter);
+  // Turn: next should be the one who hasn't submitted last, or the other participant
+  if (lastSubmitter && state.participants.length >= 2) {
+    const other = state.participants.find((p) => p.identity !== lastSubmitter);
     state.turn = other?.identity ?? lastSubmitter;
-  } else if (state.peers.length > 0) {
-    state.turn = state.peers[0].identity;
+  } else if (state.participants.length > 0) {
+    state.turn = state.participants[0].identity;
   }
 
   // 4a. Recover sub_phase from filenames (retro-1 §2.2)
@@ -133,10 +133,10 @@ export async function reconstructFromHandoff(
 
   // 4b. Recover last_submission_by_participant from meta.json (retro-1 §2.2)
   try {
-    state.last_submission_by_participant = await reconstructLastSubmissionByParticipant(wfDirVar, state.peers, state.phase);
+    state.last_submission_by_participant = await reconstructLastSubmissionByParticipant(wfDirVar, state.participants, state.phase);
   } catch { /* keep empty if reconstruction fails */ }
 
-  console.log(`[pair-flow] Reconstructed state from handoff/${wfId}: phase=${state.phase}, peers=${state.peers.length}, round=${state.round}`);
+  console.log(`[pair-flow] Reconstructed state from handoff/${wfId}: phase=${state.phase}, participants=${state.participants.length}, round=${state.round}`);
   return state;
 }
 
@@ -176,12 +176,12 @@ function inferSubPhase(metaFiles: string[]): SubPhase {
   return null;
 }
 
-async function reconstructLastSubmissionByParticipant(wfDir: string, peers: Peer[], phase: string): Promise<Record<string, LastSubmission>> {
+async function reconstructLastSubmissionByParticipant(wfDir: string, participants: Participant[], phase: string): Promise<Record<string, LastSubmission>> {
   const lsp: Record<string, LastSubmission> = {};
   const empty: LastSubmission = { round: null, sub_phase: null, commit_hash: null, submitted_at: null, file_path: null };
 
-  // Initialize all peers with empty
-  for (const p of peers) lsp[p.identity] = { ...empty };
+  // Initialize all participants with empty
+  for (const p of participants) lsp[p.identity] = { ...empty };
 
   try {
     const phaseDir = join(wfDir, phase);

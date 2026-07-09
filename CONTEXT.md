@@ -54,4 +54,4 @@ Developer: "I have the turn in the implementation coding round, so I will make t
 
 Reviewer: "After your submission, the turn moves to me. I will review the code and submit my review artifact."
 
-Supervisor: "Both participants have submitted in this phase, and the disagreements are resolved. The phase has converged, so I can advance the workflow."
+Supervisor: "Both participants have submitted in this phase, the turn has returned to me, and the disagreements are resolved. The phase has converged, so I can advance the workflow."

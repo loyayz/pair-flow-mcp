@@ -20,15 +20,15 @@ describe("State management", () => {
   it("sets and gets state", () => {
     const state = defaultState();
     state.workflow_id = TEST_WF;
-    state.peers = [
+    state.participants = [
       { identity: "alice", role: "supervisor", is_developer: false, registered_at: new Date().toISOString() },
-      { identity: "bob", role: "peer", is_developer: true, registered_at: new Date().toISOString() },
+      { identity: "bob", role: "participant", is_developer: true, registered_at: new Date().toISOString() },
     ];
     setState(TEST_WF, state);
     const loaded = getState(TEST_WF);
     expect(loaded).toBeDefined();
-    expect(loaded!.peers.length).toBe(2);
-    expect(loaded!.peers[0].identity).toBe("alice");
+    expect(loaded!.participants.length).toBe(2);
+    expect(loaded!.participants[0].identity).toBe("alice");
   });
 
   it("deletes state", () => {
@@ -41,13 +41,13 @@ describe("State management", () => {
   it("initRequirementsPhase sets correct initial turn", () => {
     const state = defaultState();
     state.workflow_id = "20260627000000";
-    state.peers = [
+    state.participants = [
       { identity: "supervisor", role: "supervisor", is_developer: false, registered_at: "" },
-      { identity: "peer", role: "peer", is_developer: false, registered_at: "" },
+      { identity: "participant", role: "participant", is_developer: false, registered_at: "" },
     ];
-    const next = initRequirementsPhase(state, "peer", { spec_file: "test-task.md" });
+    const next = initRequirementsPhase(state, "participant", { spec_file: "test-task.md" });
     expect(next.phase).toBe("requirements");
-    expect(next.turn).toBe("peer");
+    expect(next.turn).toBe("participant");
     expect(next.workflow_id).toBe("20260627000000");
   });
 });
@@ -55,9 +55,9 @@ describe("State management", () => {
 describe("Role helpers", () => {
   it("identifies supervisor", () => {
     const state = defaultState();
-    state.peers = [
+    state.participants = [
       { identity: "admin", role: "supervisor", is_developer: false, registered_at: "" },
-      { identity: "user", role: "peer", is_developer: true, registered_at: "" },
+      { identity: "user", role: "participant", is_developer: true, registered_at: "" },
     ];
     expect(isSupervisor(state, "admin")).toBe(true);
     expect(isSupervisor(state, "user")).toBe(false);
@@ -65,9 +65,9 @@ describe("Role helpers", () => {
 
   it("gets other identity", () => {
     const state = defaultState();
-    state.peers = [
+    state.participants = [
       { identity: "a", role: "supervisor", is_developer: false, registered_at: "" },
-      { identity: "b", role: "peer", is_developer: true, registered_at: "" },
+      { identity: "b", role: "participant", is_developer: true, registered_at: "" },
     ];
     expect(getOtherIdentity(state, "a")).toBe("b");
     expect(getOtherIdentity(state, "b")).toBe("a");
@@ -83,9 +83,9 @@ describe("Tip guidance", () => {
       round: 2,
       turn: "supervisor",
       task: { spec_file: "C:/project/task.md", task_type: "development" },
-      peers: [
+      participants: [
         { identity: "supervisor", role: "supervisor", is_developer: true, registered_at: "" },
-        { identity: "reviewer", role: "peer", is_developer: false, registered_at: "" },
+        { identity: "reviewer", role: "participant", is_developer: false, registered_at: "" },
       ],
       last_submission_by_participant: {
         supervisor: { round: null, sub_phase: null, commit_hash: null, submitted_at: null, file_path: null },

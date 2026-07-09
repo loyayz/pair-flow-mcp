@@ -2,7 +2,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
 import { parseSession } from "../identity.js";
-import { getState, setState, getMutex, hasRecoveryPlaceholderPeer } from "../state.js";
+import { getState, setState, getMutex, hasRecoveryPlaceholderParticipant } from "../state.js";
 import { buildTip } from "../tip.js";
 import { err, ok } from "../response.js";
 
@@ -18,10 +18,10 @@ export async function waitForTurn(
 
   const initialState = getState(workflowId);
   if (!initialState) return err("workflow not found");
-  if (!initialState.peers.some((p) => p.identity === identity)) {
+  if (!initialState.participants.some((p) => p.identity === identity)) {
     return err("identity not registered");
   }
-  if (hasRecoveryPlaceholderPeer(initialState)) {
+  if (hasRecoveryPlaceholderParticipant(initialState)) {
     return err("workflow recovery incomplete — every recovered participant must call confirm_task before wait_for_turn");
   }
 
