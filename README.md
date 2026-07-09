@@ -39,7 +39,7 @@ Server 监听 `localhost:3100`，提供 HTTP MCP（`/mcp`）+ 健康检查（`/h
 cp -r skills/pairflow ~/.claude/skills/pairflow
 ```
 
-安装后对 AI 说"启动 pairflow"即可，skill 会自动引导完成 register + confirm_task 初始化。两个 AI 各执行一次，用相同 task_path 自动成对。
+安装后对 AI 说"启动 pairflow"即可，skill 会自动引导完成 register + confirm_task 初始化。两个 AI 各执行一次，用相同的规范化绝对 task_path 自动成对。
 
 **手动方式：**
 
@@ -48,9 +48,9 @@ cp -r skills/pairflow ~/.claude/skills/pairflow
 | 工具 | 说明 |
 |------|------|
 | `register` | 声明身份，获取 token |
-| `confirm_task` | 确认任务文档和角色（supervisor/developer），两个 AI 相同 task_path 成对 |
+| `confirm_task` | 确认任务文档和角色（supervisor/developer），两个 AI 相同规范化绝对 task_path 成对 |
 | `wait_for_turn` | 长轮询等待 turn 到自己（10s 间隔，600s 超时） |
-| `submit` | 提交产出（file_path + git_commit_hash） |
+| `submit` | 提交产出（绝对 file_path + git_commit_hash） |
 | `advance` | 监督者推进到下一阶段 |
 | `get_state` | 查看当前状态和行动指引 |
 | `get_archived_files` | 列出归档文件 |

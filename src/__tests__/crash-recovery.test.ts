@@ -3,7 +3,7 @@ import { writeFile, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import { reconstructFromHandoff, parseFilename, isWorkflowComplete } from "../crash-recovery.js";
+import { reconstructFromHandoff, parseFilename } from "../crash-recovery.js";
 import { defaultState } from "../state.js";
 
 const TEST_ROOT = join(tmpdir(), `pairflow-test-${randomUUID()}`);
@@ -42,6 +42,21 @@ describe("Handoff reconstruction", () => {
     expect(recovered).not.toBeNull();
     expect(recovered!.workflow_id).toBe(wfId);
   });
+
+  it("recovers summary when summary submissions exist", async () => {
+    const wfId = "20260622000004";
+    const requirementsDir = join(TEST_ROOT, HANDOFF_DIR, wfId, "requirements");
+    const summaryDir = join(TEST_ROOT, HANDOFF_DIR, wfId, "summary");
+    await mkdir(requirementsDir, { recursive: true });
+    await mkdir(summaryDir, { recursive: true });
+    await writeFile(join(requirementsDir, "r1_alice.meta.json"), JSON.stringify({ submitted_at: "2026-06-22T00:00:00.000Z" }));
+    await writeFile(join(summaryDir, "r1_alice.meta.json"), JSON.stringify({ submitted_at: "2026-06-22T00:01:00.000Z" }));
+    await writeFile(join(summaryDir, "r2_bob.meta.json"), JSON.stringify({ submitted_at: "2026-06-22T00:02:00.000Z" }));
+
+    const recovered = await reconstructFromHandoff(defaultState(), wfId);
+    expect(recovered).not.toBeNull();
+    expect(recovered!.phase).toBe("summary");
+  });
 });
 
 describe("parseFilename", () => {
@@ -74,34 +89,5 @@ describe("parseFilename", () => {
     expect(parseFilename("random.txt")).toBeNull();
     expect(parseFilename("r1_.md")).toBeNull();
     expect(parseFilename("")).toBeNull();
-  });
-});
-
-describe("isWorkflowComplete", () => {
-  beforeEach(resetStateDir);
-  afterEach(resetStateDir);
-
-  it("returns false when summary dir does not exist", async () => {
-    const complete = await isWorkflowComplete("99999999999999");
-    expect(complete).toBe(false);
-  });
-
-  it("returns true when summary dir has files", async () => {
-    const wfId = "20260622000002";
-    const summaryDir = join(TEST_ROOT, HANDOFF_DIR, wfId, "summary");
-    await mkdir(summaryDir, { recursive: true });
-    await writeFile(join(summaryDir, "r1_alice.md"), "# Summary");
-
-    const complete = await isWorkflowComplete(wfId);
-    expect(complete).toBe(true);
-  });
-
-  it("returns false when summary dir exists but is empty", async () => {
-    const wfId = "20260622000003";
-    const summaryDir = join(TEST_ROOT, HANDOFF_DIR, wfId, "summary");
-    await mkdir(summaryDir, { recursive: true });
-
-    const complete = await isWorkflowComplete(wfId);
-    expect(complete).toBe(false);
   });
 });

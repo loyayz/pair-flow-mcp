@@ -5,7 +5,7 @@ PairFlow coordinates two AI participants through a structured pairing workflow. 
 ## Language
 
 **Workflow**:
-A single collaboration cycle for one task document, from task confirmation through requirements, planning, implementation, and summary. A workflow has exactly two AI participants, and it ends only when the Supervisor advances it to the terminal idle state.
+A single collaboration cycle for one task document, from task confirmation through requirements, planning, implementation, and summary. A workflow has exactly two AI participants, and it ends only when the Supervisor advances it to the terminal idle state; recovery treats the task document's pid marker as the signal that the workflow is still unfinished.
 _Avoid_: Session, job, run
 
 **Task Document**:
@@ -13,19 +13,19 @@ The shared source document that names the work to be handled by a workflow. Both
 _Avoid_: Spec file, ticket
 
 **Participant**:
-One of the two AI identities taking part in a workflow. A participant may also hold the Supervisor or Developer responsibility.
+One of the two AI identities taking part in a workflow. A workflow may contain a given identity at most once, and a participant may also hold the Supervisor or Developer responsibility.
 _Avoid_: Client, agent, peer when speaking about the domain
 
 **Identity**:
-The name an AI uses when registering with PairFlow. An identity becomes a Participant only after it joins a workflow for a task document.
+The name an AI uses when registering with PairFlow. The same identity may register more than once and receive multiple tokens; an identity becomes a Participant only after it joins a workflow for a task document.
 _Avoid_: Account, user
 
 **Supervisor**:
-The participant responsible for deciding when a phase has converged and for moving the workflow forward when holding the turn. The Supervisor responsibility may be held by the same participant as the Developer responsibility, and it does not erase, override, or skip the other participant's contribution.
+The participant responsible for deciding when a phase has converged and for moving the workflow forward when holding the turn. A workflow has exactly one Supervisor; this responsibility may be held by the same participant as the Developer responsibility, and it does not erase, override, or skip the other participant's contribution.
 _Avoid_: Owner, approver
 
 **Developer**:
-The participant responsible for code changes during implementation coding rounds. The Developer responsibility may be combined with Supervisor; outside implementation, including requirements-only workflows, it does not define who may contribute.
+The participant responsible for code changes during implementation coding rounds. A workflow has exactly one Developer; this responsibility may be combined with Supervisor, and outside implementation, including requirements-only workflows, it does not define who may contribute.
 _Avoid_: Coder, implementer
 
 **Reviewer**:
@@ -45,7 +45,7 @@ The point where document-marked disagreements have been resolved or explicitly e
 _Avoid_: Completion, approval, sign-off
 
 **Archive**:
-The durable record of workflow artifacts and submission metadata for a workflow. Valid submissions belong inside the workflow archive; archive files alone do not decide whether a workflow has ended. The archive is the shared history of the collaboration, not a complete live-state checkpoint, issue tracker, or structured disagreement database.
+The durable record of workflow artifacts and submission metadata for a workflow. Valid submissions belong inside the workflow archive; archive files alone do not decide whether a workflow is unfinished or ended. Recovery can resume from the last successful Submission recorded in the archive, but the archive is not a complete live-state checkpoint, issue tracker, or structured disagreement database.
 _Avoid_: Output folder, history
 
 ## Example Dialogue

@@ -55,4 +55,10 @@ describe("sanitizeIdentity", () => {
     expect(() => sanitizeIdentity("a\\b")).toThrow("Invalid identity");
     expect(() => sanitizeIdentity("a:b")).toThrow("Invalid identity");
   });
+
+  it("rejects whitespace and punctuation", () => {
+    expect(() => sanitizeIdentity("bad identity")).toThrow("Invalid identity");
+    expect(() => sanitizeIdentity("bad.identity")).toThrow("Invalid identity");
+    expect(() => sanitizeIdentity("bad@identity")).toThrow("Invalid identity");
+  });
 });

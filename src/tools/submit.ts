@@ -1,5 +1,5 @@
 import { access, writeFile, mkdir } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
@@ -22,6 +22,8 @@ export async function submit(
 
   const filePath = args.file_path as string;
   if (!filePath) return err("file_path is required");
+  if (!isAbsolute(filePath)) return err("file_path must be an absolute path");
+  if (hasRelativeSegment(filePath)) return err("file_path must not contain . or .. path segments");
 
   const commitHash = args.git_commit_hash as string;
   if (!commitHash || !/^[a-f0-9]{7,40}$/i.test(commitHash)) {
@@ -130,7 +132,7 @@ function expectedSubmissionPath(
   const filename = phase === "implementation" && subPhase
     ? `r${round}_${subPhase}_${safeIdentity}.md`
     : `r${round}_${safeIdentity}.md`;
-  return join(HANDOFF_DIR, workflowId, phase, filename);
+  return resolve(HANDOFF_DIR, workflowId, phase, filename);
 }
 
 function safeSegment(value: string): string {
@@ -141,6 +143,10 @@ function samePath(left: string, right: string): boolean {
   return process.platform === "win32"
     ? left.toLowerCase() === right.toLowerCase()
     : left === right;
+}
+
+function hasRelativeSegment(path: string): boolean {
+  return path.split(/[\\/]+/).some((part) => part === "." || part === "..");
 }
 
 async function writeMetaJson(

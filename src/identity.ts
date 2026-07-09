@@ -19,8 +19,8 @@ export function parseSession(headers: IsomorphicHeaders | undefined): ParsedSess
 }
 
 export function sanitizeIdentity(identity: string): string {
-  if (/[\\/:]/.test(identity) || identity.includes("..")) {
-    throw new Error(`Invalid identity: must not contain path separators or ".."`);
+  if (!/^[a-zA-Z0-9_-]+$/.test(identity)) {
+    throw new Error("Invalid identity: only letters, numbers, underscores, and hyphens are allowed");
   }
   return identity;
 }

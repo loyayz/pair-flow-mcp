@@ -52,23 +52,9 @@ export function parseFilename(filename: string): ParsedFilename | null {
   return { round, sub_phase: subPhase, identity };
 }
 
-/**
- * Check whether a workflow is complete.
- * Complete = handoff/{wfId}/summary/ directory exists and contains at least one file.
- */
-export async function isWorkflowComplete(wfId: string): Promise<boolean> {
-  try {
-    const summaryDir = join(HANDOFF_DIR, wfId, "summary");
-    const entries = await readdir(summaryDir, { withFileTypes: true });
-    return entries.some((e) => e.isFile());
-  } catch {
-    return false;
-  }
-}
-
 // ── Handoff reconstruction (state.json deleted mid-session) ──
 
-const PHASE_PRIORITY: Phase[] = ["implementation", "planning", "requirements", "summary"];
+const PHASE_PRIORITY: Phase[] = ["summary", "implementation", "planning", "requirements"];
 
 export async function reconstructFromHandoff(
   state: PairFlowState,
@@ -247,8 +233,8 @@ async function findFiles(dir: string, suffix: string): Promise<string[]> {
         if (pp) {
           const relDir = pp.startsWith(absDir) ? pp.slice(absDir.length).replace(/^[\\/]/, "") : pp;
           results.push(relDir ? join(relDir, e.name) : e.name);
-        } else if ((e as { path?: string }).path) {
-          const relPath = relative(absDir, (e as { path: string }).path);
+        } else if ((e as unknown as { path?: string }).path) {
+          const relPath = relative(absDir, (e as unknown as { path: string }).path);
           results.push(relPath);
         } else {
           results.push(e.name);

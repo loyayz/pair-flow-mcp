@@ -1,5 +1,5 @@
 import { readdir, readFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join, resolve, sep } from "node:path";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { CallToolResult, ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
 import { err, ok } from "../response.js";
@@ -17,10 +17,12 @@ export async function getArchivedFiles(
   const { workflowId } = parseSession(extra.requestInfo?.headers);
   const state = workflowId ? getState(workflowId) : undefined;
   const suppliedId = args.workflow_id as string | undefined;
-  const wfId = suppliedId ? validatePathSegment(suppliedId) : (state?.workflow_id ?? workflowId);
+  const wfId = suppliedId ? tryValidatePathSegment(suppliedId) : (state?.workflow_id ?? workflowId);
+  if (wfId === null) return err("invalid workflow_id");
   if (!wfId) return ok({ files: [] });
 
-  const safeId = validatePathSegment(wfId);
+  const safeId = tryValidatePathSegment(wfId);
+  if (safeId === null) return err("invalid workflow_id");
   let dir = join(HANDOFF_DIR, safeId);
 
   const phase = args.phase as string | undefined;
@@ -28,9 +30,9 @@ export async function getArchivedFiles(
   if (phase && !VALID_PHASES.includes(phase)) {
     return err(`invalid phase: ${phase}. Must be one of: ${VALID_PHASES.join(", ")}`);
   }
-  if (phase) dir = join(dir, validatePathSegment(phase));
+  if (phase) dir = join(dir, phase);
 
-  if (!resolve(dir).startsWith(resolve(HANDOFF_DIR))) {
+  if (!isInside(resolve(dir), resolve(HANDOFF_DIR))) {
     return err("invalid path");
   }
 
@@ -50,6 +52,27 @@ function validatePathSegment(segment: string): string {
   return segment;
 }
 
+function tryValidatePathSegment(segment: string): string | null {
+  try {
+    return validatePathSegment(segment);
+  } catch {
+    return null;
+  }
+}
+
+function validateArchiveFilename(filename: string): string | null {
+  if (/[\\/]/.test(filename) || filename.includes("..") || filename === "." || filename === "..") {
+    return null;
+  }
+  if (!/^[a-zA-Z0-9_.-]+$/.test(filename)) return null;
+  if (!filename.endsWith(".md") && !filename.endsWith(".meta.json")) return null;
+  return filename;
+}
+
+function isInside(child: string, parent: string): boolean {
+  return child === parent || child.startsWith(parent.endsWith(sep) ? parent : parent + sep);
+}
+
 // ── get_archived_file_content ──
 
 export async function getArchivedFileContent(
@@ -59,6 +82,8 @@ export async function getArchivedFileContent(
   const { workflowId } = parseSession(extra.requestInfo?.headers);
   const filename = args.filename as string;
   if (!filename) return err("filename required");
+  const safeArchiveFilename = validateArchiveFilename(filename);
+  if (!safeArchiveFilename) return err("invalid filename");
 
   const state = workflowId ? getState(workflowId) : undefined;
   const wfId = state?.workflow_id ?? workflowId;
@@ -70,11 +95,12 @@ export async function getArchivedFileContent(
     return err(`invalid phase: ${phase}. Must be one of: ${VALID_PHASES.join(", ")}`);
   }
   const effectivePhase = phase ?? state?.phase ?? "requirements";
-  const safeFilename = join(validatePathSegment(effectivePhase), filename);
+  const safeFilename = join(effectivePhase, safeArchiveFilename);
 
-  const safeWfId = validatePathSegment(wfId);
+  const safeWfId = tryValidatePathSegment(wfId);
+  if (safeWfId === null) return err("invalid workflow_id");
   const filePath = join(HANDOFF_DIR, safeWfId, safeFilename);
-  if (!resolve(filePath).startsWith(resolve(join(HANDOFF_DIR, safeWfId)))) {
+  if (!isInside(resolve(filePath), resolve(join(HANDOFF_DIR, safeWfId)))) {
     return err("invalid filename");
   }
 
@@ -82,6 +108,6 @@ export async function getArchivedFileContent(
     const content = await readFile(filePath, "utf-8");
     return ok({ content });
   } catch {
-    return err(`file not found: ${filename}`);
+    return err(`file not found: ${safeArchiveFilename}`);
   }
 }

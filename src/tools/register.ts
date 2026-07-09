@@ -35,12 +35,12 @@ export async function register(
 
 confirm_task 入参：
 
-task_path   — 任务文档绝对路径。两个 AI 必须传相同值才能成对。
+task_path   — 任务文档绝对路径，不得包含 . 或 .. 路径段。两个 AI 必须传相同规范化路径才能成对。
 task_type   — 任务类型。"development"（开发）走完整四阶段流程；
               "requirements"（需求）只做需求分析+汇总，跳过 planning 和 implementation。
 supervisor  — 是否为监督者（true/false）。双方只能有一个监督者。
 developer   — 是否为开发者（true/false）。双方只能有一个开发者。
-work_dir    — 项目根目录绝对路径。两个 AI 必须一致。`;
+work_dir    — 项目根目录绝对路径，不得包含 . 或 .. 路径段。两个 AI 必须一致。`;
 
-  return ok({ ok: true, identity, token, phase: "idle" }, tip);
+  return ok({ ok: true, identity, token }, tip);
 }

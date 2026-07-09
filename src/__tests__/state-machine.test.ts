@@ -44,7 +44,7 @@ describe("State management", () => {
       { identity: "supervisor", role: "supervisor", is_developer: false, registered_at: "" },
       { identity: "peer", role: "peer", is_developer: false, registered_at: "" },
     ];
-    const next = initRequirementsPhase(state, "peer", { description: "test task" });
+    const next = initRequirementsPhase(state, "peer", { spec_file: "test-task.md" });
     expect(next.phase).toBe("requirements");
     expect(next.turn).toBe("peer");
     expect(next.workflow_id).toBe("20260627000000");

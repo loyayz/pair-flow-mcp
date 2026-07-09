@@ -1,11 +1,11 @@
 import { access, readFile, writeFile } from "node:fs/promises";
-import { resolve, sep } from "node:path";
+import { isAbsolute, resolve, sep } from "node:path";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
 import { parseSession } from "../identity.js";
-import { getState, setState, getAllStates, defaultState, formatWorkflowId } from "../state.js";
-import { reconstructFromHandoff, isWorkflowComplete } from "../crash-recovery.js";
+import { getState, setState, getAllStates, defaultState, formatWorkflowId, type Peer } from "../state.js";
+import { reconstructFromHandoff } from "../crash-recovery.js";
 import { err, ok } from "../response.js";
 import { bindWorkflow } from "../token-map.js";
 
@@ -24,10 +24,33 @@ async function readPidFile(taskPath: string): Promise<string | null> {
     const pidFile = `${taskPath}.pid`;
     const wfId = (await readFile(pidFile, "utf-8")).trim();
     if (!/^\d{14}$/.test(wfId)) return null;
-    if (await isWorkflowComplete(wfId)) return null;
     return wfId;
   } catch { /* .pid doesn't exist or is unreadable */ }
   return null;
+}
+
+function validateRoleUniqueness(peers: Peer[]): string | null {
+  const supervisorCount = peers.filter((p) => p.role === "supervisor").length;
+  const developerCount = peers.filter((p) => p.is_developer).length;
+  if (supervisorCount > 1) return "supervisor already exists for this task";
+  if (developerCount > 1) return "developer already exists for this task";
+  return null;
+}
+
+function samePath(left: string, right: string): boolean {
+  const resolvedLeft = resolve(left);
+  const resolvedRight = resolve(right);
+  return process.platform === "win32"
+    ? resolvedLeft.toLowerCase() === resolvedRight.toLowerCase()
+    : resolvedLeft === resolvedRight;
+}
+
+function posixPath(path: string): string {
+  return path.replace(/\\/g, "/");
+}
+
+function hasRelativeSegment(path: string): boolean {
+  return path.split(/[\\/]+/).some((part) => part === "." || part === "..");
 }
 
 export async function confirmTask(
@@ -39,6 +62,8 @@ export async function confirmTask(
 
   const taskPath = args.task_path as string;
   if (!taskPath) return err("task_path is required");
+  if (!isAbsolute(taskPath)) return err("task_path must be an absolute path");
+  if (hasRelativeSegment(taskPath)) return err("task_path must not contain . or .. path segments");
 
   // Task type
   const taskType = (args.task_type as string) || "development";
@@ -53,10 +78,10 @@ export async function confirmTask(
   // work_dir
   const workDir = (args.work_dir as string) || "";
   if (!workDir) return err("work_dir is required");
+  if (!isAbsolute(workDir)) return err("work_dir must be an absolute path");
+  if (hasRelativeSegment(workDir)) return err("work_dir must not contain . or .. path segments");
 
-  // Path traversal guard
   const resolvedTaskPath = resolve(taskPath);
-  if (taskPath.includes("..")) return err("task_path must not contain path traversal");
 
   // Validate task file is under work_dir
   const resolvedWorkDir = resolve(workDir);
@@ -102,7 +127,7 @@ export async function confirmTask(
       role: supervisor ? "supervisor" : "peer",
       is_developer: developer,
       registered_at: new Date().toISOString(),
-      work_dir: workDir,
+      work_dir: resolvedWorkDir,
     });
     setState(wfId, state);
     isFirst = true;
@@ -118,6 +143,12 @@ export async function confirmTask(
       if (raw) bindWorkflow(raw.trim(), wfId);
 
       const myPeer = state.peers.find(p => p.identity === identity)!;
+      const nextPeers = state.peers.map((p) => p.identity === identity
+        ? { ...p, role: supervisor ? "supervisor" as const : "peer" as const, is_developer: developer }
+        : p);
+      const roleError = validateRoleUniqueness(nextPeers);
+      if (roleError) return err(roleError);
+
       // 用确认时的入参覆盖重建推断的角色——调用者声明为准
       myPeer.role = supervisor ? "supervisor" : "peer";
       myPeer.is_developer = developer;
@@ -139,28 +170,24 @@ export async function confirmTask(
       return err("this task already has 2 peers — cannot join");
     }
 
-    // 角色校验
     const firstPeer = state.peers[0];
-    if (supervisor && firstPeer.role === "supervisor") {
-      return err("supervisor already exists for this task");
-    }
-    if (developer && firstPeer.is_developer) {
-      return err("developer already exists for this task");
-    }
-
-    // work_dir 一致性
-    if (firstPeer.work_dir !== workDir) {
-      return err(`work_dir mismatch: "${workDir}" vs "${firstPeer.work_dir}"`);
-    }
-
-    // 加入
-    state.peers.push({
+    const newPeer: Peer = {
       identity,
       role: supervisor ? "supervisor" : "peer",
       is_developer: developer,
       registered_at: new Date().toISOString(),
-      work_dir: workDir,
-    });
+      work_dir: resolvedWorkDir,
+    };
+    const roleError = validateRoleUniqueness([...state.peers, newPeer]);
+    if (roleError) return err(roleError);
+
+    // work_dir 一致性
+    if (firstPeer.work_dir && !samePath(firstPeer.work_dir, resolvedWorkDir)) {
+      return err(`work_dir mismatch: "${posixPath(resolvedWorkDir)}" vs "${posixPath(firstPeer.work_dir)}"`);
+    }
+
+    // 加入
+    state.peers.push(newPeer);
     // idle 阶段双方就位后，turn 切给监督者——使其 wait_for_turn 立即返回
     if (state.phase === "idle") {
       const sup = state.peers.find((p) => p.role === "supervisor");

@@ -1,5 +1,5 @@
 import { unlink } from "node:fs/promises";
-import { join, resolve, sep } from "node:path";
+import { resolve } from "node:path";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
@@ -7,6 +7,8 @@ import { parseSession } from "../identity.js";
 import { getState, setState, getMutex, isSupervisor, getOtherIdentity, initRequirementsPhase, initPlanningPhase, initImplementationPhase, initSummaryPhase, initIdleState } from "../state.js";
 
 import { err, ok } from "../response.js";
+
+const HANDOFF_DIR = process.env.HANDOFF_DIR || "handoff";
 
 export async function advance(
   args: Record<string, unknown>,
@@ -48,7 +50,7 @@ export async function advance(
       const next = initRequirementsPhase(state, nonSupervisor, state.task);
       setState(workflowId, next);
 
-      const reqFile = join("handoff", next.workflow_id!, "requirements", `r1_${nonSupervisor}.md`).replace(/\\/g, "/");
+      const reqFile = resolve(HANDOFF_DIR, next.workflow_id!, "requirements", `r1_${nonSupervisor}.md`).replace(/\\/g, "/");
       return ok({ ok: true, new_phase: "requirements", turn: nonSupervisor }, `[行动] 等待 ${nonSupervisor} 产出需求分析。对方调用 wait_for_turn 后将获得完整指引。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。\n\n[产出] ${nonSupervisor} 将产出到 ${reqFile}\n\n[当前] 你是 ${identity}（supervisor）。当前是第 1 轮需求分析，轮到 ${nonSupervisor} 了。`);
     }
 
@@ -57,7 +59,7 @@ export async function advance(
         const next = initSummaryPhase(state, identity);
         setState(workflowId, next);
 
-        const summaryFile = join("handoff", next.workflow_id!, "summary", `r1_${identity}.md`).replace(/\\/g, "/");
+        const summaryFile = resolve(HANDOFF_DIR, next.workflow_id!, "summary", `r1_${identity}.md`).replace(/\\/g, "/");
         return ok({ ok: true, new_phase: "summary", turn: identity }, `[行动] 产出汇总草稿，包含关键决策、遗留问题和后续建议。调用 wait_for_turn 获取完整指引。\n\n[产出] ${summaryFile}\n\n[当前] 你是 ${identity}（supervisor）。当前是第 1 轮汇总，轮到你了。`);
       }
       const reviewer = state.peers.find((p) => !p.is_developer);
@@ -66,7 +68,7 @@ export async function advance(
       setState(workflowId, next);
 
       const turnIsSelf = reviewer.identity === identity;
-      const planFile = join("handoff", next.workflow_id!, "planning", `r1_${reviewer.identity}.md`).replace(/\\/g, "/");
+      const planFile = resolve(HANDOFF_DIR, next.workflow_id!, "planning", `r1_${reviewer.identity}.md`).replace(/\\/g, "/");
       const planAction = turnIsSelf
         ? `产出实施计划。调用 wait_for_turn 获取完整指引。`
         : `等待 ${reviewer.identity} 产出实施计划。对方调用 wait_for_turn 后将获得完整指引。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。`;
@@ -81,7 +83,7 @@ export async function advance(
       setState(workflowId, next);
 
       const turnIsSelf = developer.identity === identity;
-      const implFile = join("handoff", next.workflow_id!, "implementation", `r1_coding_${developer.identity}.md`).replace(/\\/g, "/");
+      const implFile = resolve(HANDOFF_DIR, next.workflow_id!, "implementation", `r1_coding_${developer.identity}.md`).replace(/\\/g, "/");
       const implAction = turnIsSelf
         ? `进行代码实现(coding)。调用 wait_for_turn 获取完整指引。`
         : `等待 ${developer.identity} 产出代码实现(coding)。对方调用 wait_for_turn 后将获得完整指引。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。`;
@@ -93,7 +95,7 @@ export async function advance(
       const next = initSummaryPhase(state, identity);
       setState(workflowId, next);
 
-      const summaryFile = join("handoff", next.workflow_id!, "summary", `r1_${identity}.md`).replace(/\\/g, "/");
+      const summaryFile = resolve(HANDOFF_DIR, next.workflow_id!, "summary", `r1_${identity}.md`).replace(/\\/g, "/");
       return ok({ ok: true, new_phase: "summary", turn: identity }, `[行动] 产出汇总草稿，包含关键决策、遗留问题和后续建议。调用 wait_for_turn 获取完整指引。\n\n[产出] ${summaryFile}\n\n[当前] 你是 ${identity}（supervisor）。当前是第 1 轮汇总，轮到你了。`);
     }
 
@@ -104,10 +106,7 @@ export async function advance(
       }
       if (state.task?.spec_file) {
         const pidPath = resolve(`${state.task.spec_file}.pid`);
-        const projectRoot = resolve(".");
-        if (pidPath.startsWith(projectRoot + sep) || pidPath === projectRoot) {
-          try { await unlink(pidPath); } catch { /* .pid may not exist */ }
-        }
+        try { await unlink(pidPath); } catch { /* .pid may not exist */ }
       }
       const finishedId = state.workflow_id;
       const next = initIdleState(state);
