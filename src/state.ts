@@ -109,7 +109,6 @@ function resetPhaseBase(state: PairFlowState): PairFlowState {
 }
 
 export function initRequirementsPhase(state: PairFlowState, nonSupervisorId: string, task: Task): PairFlowState {
-  const now = new Date().toISOString();
   return {
     ...resetPhaseBase(state),
     task,
@@ -120,7 +119,6 @@ export function initRequirementsPhase(state: PairFlowState, nonSupervisorId: str
 }
 
 export function initPlanningPhase(state: PairFlowState, reviewerId: string): PairFlowState {
-  const now = new Date().toISOString();
   return {
     ...resetPhaseBase(state),
     phase: "planning",
@@ -131,7 +129,6 @@ export function initPlanningPhase(state: PairFlowState, reviewerId: string): Pai
 }
 
 export function initImplementationPhase(state: PairFlowState, developerId: string): PairFlowState {
-  const now = new Date().toISOString();
   return {
     ...resetPhaseBase(state),
     phase: "implementation",
@@ -142,7 +139,6 @@ export function initImplementationPhase(state: PairFlowState, developerId: strin
 }
 
 export function initSummaryPhase(state: PairFlowState, supervisorId: string): PairFlowState {
-  const now = new Date().toISOString();
   return {
     ...resetPhaseBase(state),
     phase: "summary",

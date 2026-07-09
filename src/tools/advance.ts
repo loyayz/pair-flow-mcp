@@ -103,10 +103,6 @@ export async function advance(
     }
 
     if (currentPhase === "summary") {
-      const summarySubmissions = Object.values(state.last_submission_by_participant).filter((s) => s.commit_hash);
-      if (summarySubmissions.length === 0) {
-        return err("no summary submissions yet — at least one peer must submit before advancing to IDLE");
-      }
       if (state.task?.spec_file) {
         const pidPath = resolve(`${state.task.spec_file}.pid`);
         try { await unlink(pidPath); } catch { /* .pid may not exist */ }

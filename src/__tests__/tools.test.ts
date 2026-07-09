@@ -36,7 +36,7 @@ function mcpRequest(name: string, args: Record<string, unknown> = {}, headers: R
   });
 }
 
-function mcpListTools(): Promise<Array<{ name: string }>> {
+function mcpListTools(): Promise<Array<{ name: string; inputSchema?: { required?: string[] } }>> {
   return new Promise((resolve, reject) => {
     const body = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} });
     const req = http.request({
@@ -120,11 +120,10 @@ describe("Register", () => {
   beforeAll(startServer, 15000);
   afterAll(stopServer);
 
-  it("rejects without identity in body", async () => {
+  it("rejects without identity in body at the MCP schema layer", async () => {
     const r = await mcpRequest("register", {});
-    expect(r.ok).toBe(false);
-    expect(r.tip).toContain("请求被拒绝");
-    expect(r.tip).toContain("identity");
+    expect(r.ok).not.toBe(true);
+    expect(JSON.stringify(r)).toContain("Input validation");
   });
   it("registers with identity in body", async () => {
     const r = await mcpRequest("register", { identity: "alice" });
@@ -142,6 +141,17 @@ describe("Register", () => {
   it("does not expose archive content reads", async () => {
     const tools = await mcpListTools();
     expect(tools.map((tool) => tool.name)).not.toContain("get_archived_file_content");
+  });
+  it("advertises required MCP input fields", async () => {
+    const tools = await mcpListTools();
+    const registerTool = tools.find((tool) => tool.name === "register");
+    const confirmTaskTool = tools.find((tool) => tool.name === "confirm_task");
+
+    expect(registerTool?.inputSchema?.required ?? []).toContain("identity");
+    expect(confirmTaskTool?.inputSchema?.required ?? []).toContain("task_path");
+    expect(confirmTaskTool?.inputSchema?.required ?? []).toContain("supervisor");
+    expect(confirmTaskTool?.inputSchema?.required ?? []).toContain("developer");
+    expect(confirmTaskTool?.inputSchema?.required ?? []).toContain("work_dir");
   });
 });
 
