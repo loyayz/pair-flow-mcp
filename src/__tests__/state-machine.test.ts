@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { defaultState, setState, getState, deleteState, initRequirementsPhase, initPlanningPhase, initImplementationPhase, isSupervisor, getOtherIdentity } from "../state.js";
 import type { PairFlowState } from "../state.js";
+import { buildTip } from "../tip.js";
 
 const TEST_WF = "20260701000001";
 
@@ -70,5 +71,31 @@ describe("Role helpers", () => {
     ];
     expect(getOtherIdentity(state, "a")).toBe("b");
     expect(getOtherIdentity(state, "b")).toBe("a");
+  });
+});
+
+describe("Tip guidance", () => {
+  it("does not tell supervisor to advance before both participants submitted", () => {
+    const state: PairFlowState = {
+      ...defaultState(),
+      workflow_id: TEST_WF,
+      phase: "planning",
+      round: 2,
+      turn: "supervisor",
+      task: { spec_file: "C:/project/task.md", task_type: "development" },
+      peers: [
+        { identity: "supervisor", role: "supervisor", is_developer: true, registered_at: "" },
+        { identity: "reviewer", role: "peer", is_developer: false, registered_at: "" },
+      ],
+      last_submission_by_participant: {
+        supervisor: { round: null, sub_phase: null, commit_hash: null, submitted_at: null, file_path: null },
+        reviewer: { round: 1, sub_phase: null, commit_hash: "abc1234", submitted_at: "2026-07-10T00:00:00.000Z", file_path: "handoff/wf/planning/r1_reviewer.md" },
+      },
+    };
+
+    const tip = buildTip(state, "supervisor");
+
+    expect(tip).not.toContain("可直接调用 advance");
+    expect(tip).toContain("调用 submit");
   });
 });

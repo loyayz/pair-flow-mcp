@@ -512,7 +512,7 @@ describe("Confirm task", () => {
     expect(s2.tip).toContain("当前是第 3 轮需求分析");
     expect(s2.tip).toContain("等待 req-dev");
     expect(blockedAdvance.ok).toBe(false);
-    expect(blockedAdvance.tip).toContain("turn has not returned to supervisor");
+    expect(blockedAdvance.tip).toContain("turn 尚未回到监督者");
     expect(s3.ok).toBe(true);
     expect(advanced.ok).toBe(true);
     expect(advanced.new_phase).toBe("summary");

@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { haveAllPeersSubmittedCurrentPhase } from "./state.js";
 import type { PairFlowState } from "./state.js";
 
 const HANDOFF_DIR = process.env.HANDOFF_DIR || "handoff";
@@ -69,10 +70,13 @@ function getAction(state: PairFlowState, identity: string): string {
   }
 
   const isSupervisor = state.peers.some((p) => p.identity === identity && p.role === "supervisor");
+  const canSupervisorAdvance = isSupervisor
+    && state.turn === identity
+    && haveAllPeersSubmittedCurrentPhase(state);
 
   // 监督者 advance 目标（按阶段定制）
   let advanceTarget = "";
-  if (isSupervisor) {
+  if (canSupervisorAdvance) {
     if (state.phase === "requirements") advanceTarget = "进入实施计划阶段";
     else if (state.phase === "planning") advanceTarget = "进入代码实现阶段";
     else if (state.phase === "implementation") advanceTarget = "进入汇总阶段";

@@ -34,7 +34,7 @@ export async function advance(
 
     if (state.turn !== "idle" && state.turn !== identity) {
       if (currentPhase !== "idle" && bothSubmitted) {
-        return err(`turn has not returned to supervisor — current turn: ${state.turn}. The current turn holder must submit or confirm before supervisor can advance`);
+        return err(`turn 尚未回到监督者 — 当前 turn: ${state.turn}。当前 turn 持有者需要继续处理或确认并 submit 后，监督者才能 advance`);
       }
       return err(`not your turn — current turn: ${state.turn}. Wait for the other peer to finish before advancing`);
     }
