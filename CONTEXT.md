@@ -41,7 +41,7 @@ A participant's declared completion of the current turn's artifact. A submission
 _Avoid_: Upload, save
 
 **Convergence**:
-The point where document-marked disagreements have been resolved or explicitly escalated, both participants have had a chance to contribute, and the turn has returned to the Supervisor. Summary convergence still requires participation from both AI participants.
+The point where document-marked disagreements have been resolved or explicitly escalated, both participants have had a chance to contribute, and the Turn has returned to the Supervisor. A phase cannot converge while another Participant still owns the Turn, because that participant may still continue their task.
 _Avoid_: Completion, approval, sign-off
 
 **Archive**:

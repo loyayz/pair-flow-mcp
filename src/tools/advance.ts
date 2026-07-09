@@ -32,7 +32,10 @@ export async function advance(
     const currentPhase = state.phase;
     const bothSubmitted = haveAllPeersSubmittedCurrentPhase(state);
 
-    if (state.turn !== "idle" && state.turn !== identity && !bothSubmitted) {
+    if (state.turn !== "idle" && state.turn !== identity) {
+      if (currentPhase !== "idle" && bothSubmitted) {
+        return err(`turn has not returned to supervisor — current turn: ${state.turn}. The current turn holder must submit or confirm before supervisor can advance`);
+      }
       return err(`not your turn — current turn: ${state.turn}. Wait for the other peer to finish before advancing`);
     }
 

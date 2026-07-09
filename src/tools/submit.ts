@@ -109,7 +109,9 @@ export async function submit(
     const bothSubmitted = haveAllPeersSubmittedCurrentPhase(state);
 
     let action: string;
-    if (bothSubmitted && currentPeer?.role === "supervisor" && state.phase === "summary") {
+    if (bothSubmitted && supervisorPeer && state.turn !== supervisorPeer.identity) {
+      action = `双方已提交，但 turn 已切给 ${state.turn}。等待 ${state.turn} 继续处理或确认后自然交还监督者 ${supervisorPeer.identity}`;
+    } else if (bothSubmitted && currentPeer?.role === "supervisor" && state.phase === "summary") {
       action = "双方已提交汇总。若确认汇总已收敛，可调用 advance 结束当前工作流";
     } else if (bothSubmitted && currentPeer?.role === "supervisor") {
       action = "双方已提交。若确认当前阶段目标已达成，可调用 advance 进入下一阶段";

@@ -478,6 +478,13 @@ describe("Confirm task", () => {
       file_path: supFile,
       git_commit_hash: "d4e5f6a",
     }, { "x-ai-identity": r1.token as string });
+    const blockedAdvance = await mcpRequest("advance", {}, { "x-ai-identity": r1.token as string });
+    const devConfirmFile = resolve(TEST_HANDOFF, wfId, "requirements", "r3_req-dev.md");
+    await writeFile(devConfirmFile, "# req-dev final confirmation", "utf-8");
+    const s3 = await mcpRequest("submit", {
+      file_path: devConfirmFile,
+      git_commit_hash: "f1e2d3c",
+    }, { "x-ai-identity": r2.token as string });
     const advanced = await mcpRequest("advance", {}, { "x-ai-identity": r1.token as string });
     const summarySupFile = resolve(TEST_HANDOFF, wfId, "summary", "r1_req-sup.md");
     await mkdir(dirname(summarySupFile), { recursive: true });
@@ -503,7 +510,10 @@ describe("Confirm task", () => {
     expect(s2.ok).toBe(true);
     expect(s2.tip).toContain("双方已提交");
     expect(s2.tip).toContain("当前是第 3 轮需求分析");
-    expect(s2.tip).toContain("advance");
+    expect(s2.tip).toContain("等待 req-dev");
+    expect(blockedAdvance.ok).toBe(false);
+    expect(blockedAdvance.tip).toContain("turn has not returned to supervisor");
+    expect(s3.ok).toBe(true);
     expect(advanced.ok).toBe(true);
     expect(advanced.new_phase).toBe("summary");
     expect(summary1.ok).toBe(true);
