@@ -9,7 +9,7 @@ import { register } from "./tools/register.js";
 import { advance } from "./tools/advance.js";
 import { getStateTool } from "./tools/get-state.js";
 import { submit } from "./tools/submit.js";
-import { getArchivedFiles, getArchivedFileContent } from "./tools/archive-tools.js";
+import { getArchivedFiles } from "./tools/archive-tools.js";
 import { waitForTurn } from "./tools/wait-for-turn.js";
 import { confirmTask } from "./tools/confirm-task.js";
 
@@ -33,7 +33,6 @@ function createServerWithTools() {
   mcp.registerTool("advance", { description: "推进到下一阶段。仅监督者可用。", inputSchema: {} }, advance);
   mcp.registerTool("get_state", { description: "返回当前执行指引（tip）。匿名可用。" }, getStateTool);
   mcp.registerTool("get_archived_files", { description: "列出归档文件。phase/workflow_id 可选过滤。", inputSchema: { phase: z.string().optional(), workflow_id: z.string().optional() } }, getArchivedFiles);
-  mcp.registerTool("get_archived_file_content", { description: "读取归档文件内容。phase 参数可选，用于指定子目录（requirements/planning/implementation/summary）。", inputSchema: { filename: z.string(), phase: z.string().optional() } }, getArchivedFileContent);
   mcp.registerTool("wait_for_turn", { description: "长轮询等待 turn 切换到调用方。10s 间隔，600s 超时。turn=自己时返回。" }, waitForTurn);
   mcp.registerTool(
     "submit",

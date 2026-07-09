@@ -41,6 +41,8 @@ export interface PairFlowState {
   last_submission_by_participant: Record<string, LastSubmission>;
 }
 
+export const RECOVERY_REGISTERED_AT = "1970-01-01T00:00:00.000Z";
+
 // ── In-memory state store ──
 
 const states = new Map<string, PairFlowState>();
@@ -179,4 +181,17 @@ export function getOtherIdentity(state: PairFlowState, identity: string): string
 
 export function getPeerByIdentity(state: PairFlowState, identity: string): Peer | undefined {
   return state.peers.find((p) => p.identity === identity);
+}
+
+export function isRecoveryPlaceholderPeer(peer: Peer): boolean {
+  return peer.registered_at === RECOVERY_REGISTERED_AT;
+}
+
+export function hasRecoveryPlaceholderPeer(state: PairFlowState): boolean {
+  return state.peers.some(isRecoveryPlaceholderPeer);
+}
+
+export function haveAllPeersSubmittedCurrentPhase(state: PairFlowState): boolean {
+  if (state.phase === "idle") return false;
+  return state.peers.every((p) => Boolean(state.last_submission_by_participant[p.identity]?.commit_hash));
 }

@@ -1,6 +1,6 @@
 import { readdir, readFile, mkdir, access } from "node:fs/promises";
 import { join, resolve, relative } from "node:path";
-import { defaultState, type PairFlowState, type Phase, type SubPhase, type Peer, type LastSubmission } from "./state.js";
+import { RECOVERY_REGISTERED_AT, defaultState, type PairFlowState, type Phase, type SubPhase, type Peer, type LastSubmission } from "./state.js";
 
 
 const HANDOFF_DIR = process.env.HANDOFF_DIR || "handoff";
@@ -20,12 +20,12 @@ function basename(path: string): string {
 }
 
 const KNOWN_EXTENSIONS = /\.(?:md|meta\.json)$/;
+const SAFE_IDENTITY = /^[A-Za-z0-9_-]+$/;
 
 /**
  * Parse a handoff filename into structured fields.
  * Accepts: r{N}_{identity}.md, r{N}_{subphase}_{identity}.md,
  *          r{N}_{identity}.meta.json, r{N}_{subphase}_{identity}.meta.json
- * Also handles optional _final suffix: r1_alice_final.md
  */
 export function parseFilename(filename: string): ParsedFilename | null {
   const base = filename.replace(KNOWN_EXTENSIONS, "");
@@ -35,6 +35,7 @@ export function parseFilename(filename: string): ParsedFilename | null {
   if (!match) return null;
 
   const round = parseInt(match[1], 10);
+  if (round < 1) return null;
   let identity = match[2];
   let subPhase: SubPhase = null;
 
@@ -46,8 +47,7 @@ export function parseFilename(filename: string): ParsedFilename | null {
     }
   }
 
-  identity = identity.replace(/_final$/, "");
-  if (!identity) return null;
+  if (!SAFE_IDENTITY.test(identity)) return null;
 
   return { round, sub_phase: subPhase, identity };
 }
@@ -76,7 +76,7 @@ export async function reconstructFromHandoff(
       identity: id,
       role: "peer",
       is_developer: false,
-      registered_at: "1970-01-01T00:00:00.000Z",
+      registered_at: RECOVERY_REGISTERED_AT,
     });
   }
 
@@ -110,18 +110,9 @@ export async function reconstructFromHandoff(
       const r = parseInt(roundMatch[1], 10);
       if (r > maxRound) maxRound = r;
       // Extract identity: r{N}_{identity}.meta.json or r{N}_{subphase}_{identity}.meta.json
-      const idMatch = base.match(/^r\d+_(.+)\.meta\.json$/);
-      if (idMatch) {
-        let identity = idMatch[1];
-        // Strip sub-phase prefix for IMPLEMENTATION files
-        const subPhases = ["coding", "review"];
-        for (const sp of subPhases) {
-          if (identity.startsWith(sp + "_")) {
-            identity = identity.slice(sp.length + 1);
-            break;
-          }
-        }
-        lastSubmitter = identity;
+      const parsed = parseFilename(base);
+      if (parsed) {
+        lastSubmitter = parsed.identity;
       }
     }
   }

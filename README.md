@@ -48,13 +48,12 @@ cp -r skills/pairflow ~/.claude/skills/pairflow
 | 工具 | 说明 |
 |------|------|
 | `register` | 声明身份，获取 token |
-| `confirm_task` | 确认任务文档和角色（supervisor/developer），两个 AI 相同规范化绝对 task_path 成对 |
+| `confirm_task` | 确认任务文档和角色组合，两个 AI 相同规范化绝对 task_path 成对 |
 | `wait_for_turn` | 长轮询等待 turn 到自己（10s 间隔，600s 超时） |
 | `submit` | 提交产出（绝对 file_path + git_commit_hash） |
 | `advance` | 监督者推进到下一阶段 |
 | `get_state` | 查看当前状态和行动指引 |
 | `get_archived_files` | 列出归档文件 |
-| `get_archived_file_content` | 读取归档文件内容 |
 
 所有请求通过 HTTP header `X-AI-Identity: <token>` 携带身份。register 返回 token，confirm_task 绑定 token 到工作流。
 

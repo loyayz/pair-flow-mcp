@@ -4,7 +4,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
 import { parseSession } from "../identity.js";
-import { getState, setState, getMutex, isCurrentHolder, getOtherIdentity } from "../state.js";
+import { getState, setState, getMutex, hasRecoveryPlaceholderPeer, haveAllPeersSubmittedCurrentPhase, isCurrentHolder, getOtherIdentity } from "../state.js";
 
 import { err, ok } from "../response.js";
 import { identityLabel, phaseLabel } from "../tip.js";
@@ -34,6 +34,9 @@ export async function submit(
     const state = getState(workflowId);
     if (!state) return err("workflow not found");
     if (!state.peers.some((p) => p.identity === identity)) return err("identity not registered");
+    if (hasRecoveryPlaceholderPeer(state)) {
+      return err("workflow recovery incomplete — every recovered participant must call confirm_task before submit");
+    }
     if (!isCurrentHolder(state, identity)) return err(`not your turn — current turn: ${state.turn}`);
 
     // IMPLEMENTATION role check
@@ -101,9 +104,18 @@ export async function submit(
     const nextPeer = state.peers.find((p) => p.identity === state.turn);
     const nextLabel = identityLabel(state, state.turn);
     const phaseText = phaseLabel(state.phase, state.sub_phase);
+    const currentPeer = state.peers.find((p) => p.identity === identity);
+    const supervisorPeer = state.peers.find((p) => p.role === "supervisor");
+    const bothSubmitted = haveAllPeersSubmittedCurrentPhase(state);
 
     let action: string;
-    if (state.phase === "summary" && nextPeer?.role === "supervisor") {
+    if (bothSubmitted && currentPeer?.role === "supervisor" && state.phase === "summary") {
+      action = "双方已提交汇总。若确认汇总已收敛，可调用 advance 结束当前工作流";
+    } else if (bothSubmitted && currentPeer?.role === "supervisor") {
+      action = "双方已提交。若确认当前阶段目标已达成，可调用 advance 进入下一阶段";
+    } else if (bothSubmitted && supervisorPeer) {
+      action = `双方已提交。等待监督者 ${supervisorPeer.identity} 判断是否调用 advance 推进`;
+    } else if (state.phase === "summary" && nextPeer?.role === "supervisor") {
       action = "调用 advance 结束当前工作流";
     } else if (state.phase === "summary") {
       action = "等待监督者调用 advance 结束工作流。调用 wait_for_turn（长轮询，10s 间隔，最多 600s）。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。";
@@ -115,7 +127,7 @@ export async function submit(
 
     const tip = `[行动] ${action}
 [产出] ${expectedFilePath.replace(/\\/g, "/")}（已提交）
-[当前] 你是 ${idLabel}。当前是第 ${state.round - 1} 轮${phaseText}，turn 已切给 ${nextLabel}。`;
+[当前] 你是 ${idLabel}。当前是第 ${state.round} 轮${phaseText}，turn 已切给 ${nextLabel}。`;
     return ok({ ok: true, next_turn: state.turn }, tip);
   });
 }

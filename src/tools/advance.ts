@@ -4,7 +4,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
 import { parseSession } from "../identity.js";
-import { getState, setState, getMutex, isSupervisor, getOtherIdentity, initRequirementsPhase, initPlanningPhase, initImplementationPhase, initSummaryPhase, initIdleState } from "../state.js";
+import { getState, setState, getMutex, hasRecoveryPlaceholderPeer, haveAllPeersSubmittedCurrentPhase, isSupervisor, getOtherIdentity, initRequirementsPhase, initPlanningPhase, initImplementationPhase, initSummaryPhase, initIdleState } from "../state.js";
 
 import { err, ok } from "../response.js";
 
@@ -21,20 +21,23 @@ export async function advance(
   return getMutex(workflowId).runExclusive(async () => {
     const state = getState(workflowId);
     if (!state) return err("workflow not found");
+    if (hasRecoveryPlaceholderPeer(state)) {
+      return err("workflow recovery incomplete — every recovered participant must call confirm_task before advance");
+    }
 
     if (!isSupervisor(state, identity)) {
       return err("only supervisor can advance");
     }
 
-    if (state.turn !== "idle" && state.turn !== identity) {
+    const currentPhase = state.phase;
+    const bothSubmitted = haveAllPeersSubmittedCurrentPhase(state);
+
+    if (state.turn !== "idle" && state.turn !== identity && !bothSubmitted) {
       return err(`not your turn — current turn: ${state.turn}. Wait for the other peer to finish before advancing`);
     }
 
-    const currentPhase = state.phase;
-
     // 非 idle 阶段：双方至少各 submit 一次才能 advance（§6 收敛）
     if (currentPhase !== "idle") {
-      const bothSubmitted = state.peers.every((p) => state.last_submission_by_participant[p.identity]?.commit_hash);
       if (!bothSubmitted) return err("both peers must submit at least once before advancing");
     }
 

@@ -36,6 +36,30 @@ function mcpRequest(name: string, args: Record<string, unknown> = {}, headers: R
   });
 }
 
+function mcpListTools(): Promise<Array<{ name: string }>> {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} });
+    const req = http.request({
+      hostname: "localhost", port: PORT, path: "/mcp", method: "POST",
+      headers: { "Content-Type": "application/json", "Accept": "application/json, text/event-stream" },
+    }, (res) => {
+      let data = "";
+      res.on("data", (c) => (data += c));
+      res.on("end", () => {
+        try {
+          const match = data.match(/data:\s*(\{.*\})/);
+          const json = match ? JSON.parse(match[1]) : JSON.parse(data);
+          resolve(json.result.tools);
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+    req.on("error", reject);
+    req.write(body); req.end();
+  });
+}
+
 async function startServer() {
   await rm(TEST_STATE, { recursive: true }).catch(() => {});
   await rm(TEST_HANDOFF, { recursive: true }).catch(() => {});
@@ -78,6 +102,20 @@ async function setup() {
   if (!adv.ok) throw new Error(`Advance failed: ${JSON.stringify(adv)}`);
 }
 
+async function seedRecoveredWorkflow(task: string, wfId: string, identities: string[]) {
+  const phaseDir = resolve(TEST_HANDOFF, wfId, "requirements");
+  await mkdir(phaseDir, { recursive: true });
+  await writeFile(`${task}.pid`, wfId, "utf-8");
+  const taskMeta = { spec_file: task, task_type: "development" };
+  for (const [index, identity] of identities.entries()) {
+    await writeFile(resolve(phaseDir, `r${index + 1}_${identity}.meta.json`), JSON.stringify({
+      submitted_at: `2026-07-09T10:0${index}:00.000Z`,
+      commit_hash: index === 0 ? "abc1234" : "def5678",
+      task: taskMeta,
+    }), "utf-8");
+  }
+}
+
 describe("Register", () => {
   beforeAll(startServer, 15000);
   afterAll(stopServer);
@@ -100,6 +138,10 @@ describe("Register", () => {
     const who = await mcpRequest("who_am_i", {}, { "x-ai-identity": token });
     expect(who.registered).toBe(true);
     expect(who.joined_workflow).toBe(false);
+  });
+  it("does not expose archive content reads", async () => {
+    const tools = await mcpListTools();
+    expect(tools.map((tool) => tool.name)).not.toContain("get_archived_file_content");
   });
 });
 
@@ -189,6 +231,279 @@ describe("Confirm task", () => {
     await rm(task, { force: true });
     await rm(`${task}.pid`, { force: true });
   });
+
+  it("rejects explicit task_type mismatch and allows omitted task_type to inherit", async () => {
+    const task = resolve(tmpdir(), "pairflow-task-type-task.md");
+    await writeFile(task, "# task type task", "utf-8");
+    const r1 = await mcpRequest("register", { identity: "tt-a" });
+    const r2 = await mcpRequest("register", { identity: "tt-b" });
+    const c1 = await mcpRequest("confirm_task", {
+      task_path: task,
+      task_type: "development",
+      supervisor: true,
+      developer: false,
+      work_dir: resolve(tmpdir()),
+    }, { "x-ai-identity": r1.token as string });
+    const mismatch = await mcpRequest("confirm_task", {
+      task_path: task,
+      task_type: "requirements",
+      supervisor: false,
+      developer: true,
+      work_dir: resolve(tmpdir()),
+    }, { "x-ai-identity": r2.token as string });
+    const inherited = await mcpRequest("confirm_task", {
+      task_path: task,
+      supervisor: false,
+      developer: true,
+      work_dir: resolve(tmpdir()),
+    }, { "x-ai-identity": r2.token as string });
+
+    expect(c1.ok).toBe(true);
+    expect(mismatch.ok).toBe(false);
+    expect(mismatch.tip).toContain("task_type mismatch");
+    expect(inherited.ok).toBe(true);
+    await rm(task, { force: true });
+    await rm(`${task}.pid`, { force: true });
+  });
+
+  it("rejects a complete workflow without a supervisor", async () => {
+    const task = resolve(tmpdir(), "pairflow-no-supervisor-task.md");
+    await writeFile(task, "# no supervisor task", "utf-8");
+    const r1 = await mcpRequest("register", { identity: "nosup-a" });
+    const r2 = await mcpRequest("register", { identity: "nosup-b" });
+    const c1 = await mcpRequest("confirm_task", {
+      task_path: task,
+      supervisor: false,
+      developer: true,
+      work_dir: resolve(tmpdir()),
+    }, { "x-ai-identity": r1.token as string });
+    const c2 = await mcpRequest("confirm_task", {
+      task_path: task,
+      supervisor: false,
+      developer: false,
+      work_dir: resolve(tmpdir()),
+    }, { "x-ai-identity": r2.token as string });
+
+    expect(c1.ok).toBe(true);
+    expect(c2.ok).toBe(false);
+    expect(c2.tip).toContain("exactly one supervisor");
+    await rm(task, { force: true });
+    await rm(`${task}.pid`, { force: true });
+  });
+
+  it("rejects a complete workflow without a developer", async () => {
+    const task = resolve(tmpdir(), "pairflow-no-developer-task.md");
+    await writeFile(task, "# no developer task", "utf-8");
+    const r1 = await mcpRequest("register", { identity: "nodev-a" });
+    const r2 = await mcpRequest("register", { identity: "nodev-b" });
+    const c1 = await mcpRequest("confirm_task", {
+      task_path: task,
+      supervisor: true,
+      developer: false,
+      work_dir: resolve(tmpdir()),
+    }, { "x-ai-identity": r1.token as string });
+    const c2 = await mcpRequest("confirm_task", {
+      task_path: task,
+      supervisor: false,
+      developer: false,
+      work_dir: resolve(tmpdir()),
+    }, { "x-ai-identity": r2.token as string });
+
+    expect(c1.ok).toBe(true);
+    expect(c2.ok).toBe(false);
+    expect(c2.tip).toContain("exactly one developer");
+    await rm(task, { force: true });
+    await rm(`${task}.pid`, { force: true });
+  });
+
+  it("allows supervisor and developer responsibilities on the same participant", async () => {
+    const task = resolve(tmpdir(), "pairflow-combined-role-task.md");
+    await writeFile(task, "# combined role task", "utf-8");
+    const r1 = await mcpRequest("register", { identity: "combo-a" });
+    const r2 = await mcpRequest("register", { identity: "combo-b" });
+    const c1 = await mcpRequest("confirm_task", {
+      task_path: task,
+      supervisor: true,
+      developer: true,
+      work_dir: resolve(tmpdir()),
+    }, { "x-ai-identity": r1.token as string });
+    const c2 = await mcpRequest("confirm_task", {
+      task_path: task,
+      supervisor: false,
+      developer: false,
+      work_dir: resolve(tmpdir()),
+    }, { "x-ai-identity": r2.token as string });
+
+    expect(c1.ok).toBe(true);
+    expect(c2.ok).toBe(true);
+    expect(c2.tip).toContain("combo-a（supervisor/developer）");
+    expect(c2.tip).toContain("combo-b（reviewer）");
+    await rm(task, { force: true });
+    await rm(`${task}.pid`, { force: true });
+  });
+
+  it("blocks workflow actions until all recovered participants re-confirm", async () => {
+    const task = resolve(tmpdir(), "pairflow-incomplete-recovery-task.md");
+    const wfId = "20260709191959";
+    await writeFile(task, "# incomplete recovery task", "utf-8");
+    await seedRecoveredWorkflow(task, wfId, ["rec-a", "rec-b"]);
+
+    const r1 = await mcpRequest("register", { identity: "rec-a" });
+    const c1 = await mcpRequest("confirm_task", {
+      task_path: task,
+      supervisor: true,
+      developer: false,
+      work_dir: resolve(tmpdir()),
+    }, { "x-ai-identity": r1.token as string });
+    const adv = await mcpRequest("advance", {}, { "x-ai-identity": r1.token as string });
+    const state = await mcpRequest("get_state", {}, { "x-ai-identity": r1.token as string });
+    const wait = await mcpRequest("wait_for_turn", {}, { "x-ai-identity": r1.token as string });
+    const submit = await mcpRequest("submit", {
+      file_path: task,
+      git_commit_hash: "fedcba9",
+    }, { "x-ai-identity": r1.token as string });
+
+    expect(c1.ok).toBe(true);
+    expect(c1.recovered).toBe(true);
+    expect(adv.ok).toBe(false);
+    expect(adv.tip).toContain("workflow recovery incomplete");
+    expect(state.ok).toBe(true);
+    expect(state.tip).toContain("工作流恢复未完成");
+    expect(wait.ok).toBe(false);
+    expect(wait.tip).toContain("workflow recovery incomplete");
+    expect(submit.ok).toBe(false);
+    expect(submit.tip).toContain("workflow recovery incomplete");
+    await rm(task, { force: true });
+    await rm(`${task}.pid`, { force: true });
+  });
+
+  it("enforces role completeness when the final recovered participant re-confirms", async () => {
+    const task = resolve(tmpdir(), "pairflow-recovery-role-task.md");
+    const wfId = "20260709192000";
+    await writeFile(task, "# recovery role task", "utf-8");
+    await seedRecoveredWorkflow(task, wfId, ["rec-role-a", "rec-role-b"]);
+
+    const r1 = await mcpRequest("register", { identity: "rec-role-a" });
+    const r2 = await mcpRequest("register", { identity: "rec-role-b" });
+    const c1 = await mcpRequest("confirm_task", {
+      task_path: task,
+      supervisor: false,
+      developer: false,
+      work_dir: resolve(tmpdir()),
+    }, { "x-ai-identity": r1.token as string });
+    const c2 = await mcpRequest("confirm_task", {
+      task_path: task,
+      supervisor: false,
+      developer: false,
+      work_dir: resolve(tmpdir()),
+    }, { "x-ai-identity": r2.token as string });
+
+    expect(c1.ok).toBe(true);
+    expect(c2.ok).toBe(false);
+    expect(c2.tip).toContain("exactly one supervisor");
+    await rm(task, { force: true });
+    await rm(`${task}.pid`, { force: true });
+  });
+
+  it("enforces work_dir consistency when recovered participants re-confirm", async () => {
+    const root = resolve(tmpdir(), "pairflow-recovery-workdir-root");
+    const nested = resolve(root, "nested");
+    const task = resolve(nested, "task.md");
+    const wfId = "20260709192001";
+    await mkdir(nested, { recursive: true });
+    await writeFile(task, "# recovery workdir task", "utf-8");
+    await seedRecoveredWorkflow(task, wfId, ["rec-wd-a", "rec-wd-b"]);
+
+    const r1 = await mcpRequest("register", { identity: "rec-wd-a" });
+    const r2 = await mcpRequest("register", { identity: "rec-wd-b" });
+    const c1 = await mcpRequest("confirm_task", {
+      task_path: task,
+      supervisor: true,
+      developer: false,
+      work_dir: root,
+    }, { "x-ai-identity": r1.token as string });
+    const c2 = await mcpRequest("confirm_task", {
+      task_path: task,
+      supervisor: false,
+      developer: true,
+      work_dir: nested,
+    }, { "x-ai-identity": r2.token as string });
+
+    expect(c1.ok).toBe(true);
+    expect(c2.ok).toBe(false);
+    expect(c2.tip).toContain("work_dir mismatch");
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it("skips planning and implementation for requirements-only workflows", async () => {
+    const task = resolve(tmpdir(), "pairflow-requirements-only-task.md");
+    await writeFile(task, "# requirements only task", "utf-8");
+    const r1 = await mcpRequest("register", { identity: "req-sup" });
+    const r2 = await mcpRequest("register", { identity: "req-dev" });
+    const c1 = await mcpRequest("confirm_task", {
+      task_path: task,
+      task_type: "requirements",
+      supervisor: true,
+      developer: false,
+      work_dir: resolve(tmpdir()),
+    }, { "x-ai-identity": r1.token as string });
+    const c2 = await mcpRequest("confirm_task", {
+      task_path: task,
+      supervisor: false,
+      developer: true,
+      work_dir: resolve(tmpdir()),
+    }, { "x-ai-identity": r2.token as string });
+    const started = await mcpRequest("advance", {}, { "x-ai-identity": r1.token as string });
+    const wfId = c1.workflow_id as string;
+    const devFile = resolve(TEST_HANDOFF, wfId, "requirements", "r1_req-dev.md");
+    await mkdir(dirname(devFile), { recursive: true });
+    await writeFile(devFile, "# req-dev requirements", "utf-8");
+    const s1 = await mcpRequest("submit", {
+      file_path: devFile,
+      git_commit_hash: "a1b2c3d",
+    }, { "x-ai-identity": r2.token as string });
+    const supFile = resolve(TEST_HANDOFF, wfId, "requirements", "r2_req-sup.md");
+    await writeFile(supFile, "# req-sup review", "utf-8");
+    const s2 = await mcpRequest("submit", {
+      file_path: supFile,
+      git_commit_hash: "d4e5f6a",
+    }, { "x-ai-identity": r1.token as string });
+    const advanced = await mcpRequest("advance", {}, { "x-ai-identity": r1.token as string });
+    const summarySupFile = resolve(TEST_HANDOFF, wfId, "summary", "r1_req-sup.md");
+    await mkdir(dirname(summarySupFile), { recursive: true });
+    await writeFile(summarySupFile, "# req-sup summary", "utf-8");
+    const summary1 = await mcpRequest("submit", {
+      file_path: summarySupFile,
+      git_commit_hash: "abcdef1",
+    }, { "x-ai-identity": r1.token as string });
+    const summaryDevFile = resolve(TEST_HANDOFF, wfId, "summary", "r2_req-dev.md");
+    await writeFile(summaryDevFile, "# req-dev summary review", "utf-8");
+    const summary2 = await mcpRequest("submit", {
+      file_path: summaryDevFile,
+      git_commit_hash: "abcdef2",
+    }, { "x-ai-identity": r2.token as string });
+    const finished = await mcpRequest("advance", {}, { "x-ai-identity": r1.token as string });
+    const finalState = await mcpRequest("get_state", {}, { "x-ai-identity": r1.token as string });
+
+    expect(c1.ok).toBe(true);
+    expect(c2.ok).toBe(true);
+    expect(started.new_phase).toBe("requirements");
+    expect(s1.ok).toBe(true);
+    expect(s1.tip).toContain("当前是第 2 轮需求分析");
+    expect(s2.ok).toBe(true);
+    expect(s2.tip).toContain("双方已提交");
+    expect(s2.tip).toContain("当前是第 3 轮需求分析");
+    expect(s2.tip).toContain("advance");
+    expect(advanced.ok).toBe(true);
+    expect(advanced.new_phase).toBe("summary");
+    expect(summary1.ok).toBe(true);
+    expect(summary2.ok).toBe(true);
+    expect(finished.ok).toBe(true);
+    expect(finished.new_phase).toBe("idle");
+    expect(finalState.tip).toContain("没有加入活跃工作流");
+    await rm(task, { force: true });
+    await rm(`${task}.pid`, { force: true });
+  });
 });
 
 describe("Wait for turn + submit", () => {
@@ -260,21 +575,36 @@ describe("Wait for turn + submit", () => {
     }, { "x-ai-identity": codebuddyToken });
     expect(r.ok).toBe(true);
   });
-  it("reads archived meta json content", async () => {
-    const r = await mcpRequest("get_archived_file_content", {
-      filename: "r1_codebuddy.meta.json",
+  it("lists only supported archive file types", async () => {
+    const phaseDir = resolve(TEST_HANDOFF, workflowId, "requirements");
+    await writeFile(resolve(phaseDir, "debug.json"), "{}", "utf-8");
+    await writeFile(resolve(phaseDir, "events.jsonl"), "{}", "utf-8");
+    const r = await mcpRequest("get_archived_files", {
       phase: "requirements",
     }, { "x-ai-identity": codebuddyToken });
+
     expect(r.ok).toBe(true);
-    expect(r.content).toContain("def7654321");
+    expect(r.files).toContain("r1_codebuddy.md");
+    expect(r.files).toContain("r1_codebuddy.meta.json");
+    expect(r.files).not.toContain("debug.json");
+    expect(r.files).not.toContain("events.jsonl");
   });
-  it("rejects archived file content path traversal", async () => {
-    const r = await mcpRequest("get_archived_file_content", {
-      filename: "../r1_codebuddy.md",
+  it("allows anonymous archive listing by explicit workflow_id", async () => {
+    const r = await mcpRequest("get_archived_files", {
+      workflow_id: workflowId,
       phase: "requirements",
-    }, { "x-ai-identity": codebuddyToken });
-    expect(r.ok).toBe(false);
-    expect(r.tip).toContain("invalid filename");
+    });
+    expect(r.ok).toBe(true);
+    expect(r.files).toContain("r1_codebuddy.md");
+    expect(r.files).toContain("r1_codebuddy.meta.json");
+  });
+  it("returns POSIX paths when listing an entire workflow archive", async () => {
+    const r = await mcpRequest("get_archived_files", {
+      workflow_id: workflowId,
+    });
+    expect(r.ok).toBe(true);
+    expect(r.files).toContain("requirements/r1_codebuddy.md");
+    expect((r.files as string[]).every((file) => !file.includes("\\"))).toBe(true);
   });
   it("rejects invalid archived workflow_id", async () => {
     const r = await mcpRequest("get_archived_files", {

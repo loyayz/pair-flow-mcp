@@ -57,6 +57,16 @@ describe("Handoff reconstruction", () => {
     expect(recovered).not.toBeNull();
     expect(recovered!.phase).toBe("summary");
   });
+
+  it("ignores archived filenames with invalid identity segments", async () => {
+    const wfId = "20260622000005";
+    const wfDir = join(TEST_ROOT, HANDOFF_DIR, wfId, "requirements");
+    await mkdir(wfDir, { recursive: true });
+    await writeFile(join(wfDir, "r1_bad.identity.meta.json"), JSON.stringify({ round: 1 }));
+
+    const recovered = await reconstructFromHandoff(defaultState(), wfId);
+    expect(recovered).toBeNull();
+  });
 });
 
 describe("parseFilename", () => {
@@ -80,14 +90,17 @@ describe("parseFilename", () => {
     expect(r).toEqual({ round: 3, sub_phase: "review", identity: "bob" });
   });
 
-  it("parses filename with _final suffix: r1_alice_final.md", () => {
+  it("parses underscore suffixes as part of the identity", () => {
     const r = parseFilename("r1_alice_final.md");
-    expect(r).toEqual({ round: 1, sub_phase: null, identity: "alice" });
+    expect(r).toEqual({ round: 1, sub_phase: null, identity: "alice_final" });
   });
 
   it("returns null for unrecognized format", () => {
     expect(parseFilename("random.txt")).toBeNull();
+    expect(parseFilename("r0_alice.md")).toBeNull();
     expect(parseFilename("r1_.md")).toBeNull();
+    expect(parseFilename("r1_bad.identity.md")).toBeNull();
+    expect(parseFilename("r1_bad@identity.md")).toBeNull();
     expect(parseFilename("")).toBeNull();
   });
 });
