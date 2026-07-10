@@ -27,7 +27,7 @@ function getTaskPathMutex(taskPath: string): Mutex {
 async function findWorkflowByTaskPath(taskPath: string): Promise<string | null> {
   // Search in-memory states
   for (const [wfId, state] of [...getAllStates()]) {
-    if (state.task?.spec_file === taskPath) return wfId;
+    if (state.task?.spec_file && samePath(state.task.spec_file, taskPath)) return wfId;
   }
   return null;
 }
@@ -74,11 +74,21 @@ function roleLabel(participant: Pick<Participant, "is_supervisor" | "is_develope
 }
 
 function samePath(left: string, right: string): boolean {
-  const resolvedLeft = resolve(left);
-  const resolvedRight = resolve(right);
-  return process.platform === "win32"
-    ? resolvedLeft.toLowerCase() === resolvedRight.toLowerCase()
-    : resolvedLeft === resolvedRight;
+  return comparablePath(left) === comparablePath(right);
+}
+
+function isSameOrDescendantPath(candidate: string, parent: string): boolean {
+  const comparableCandidate = comparablePath(candidate);
+  const comparableParent = comparablePath(parent);
+  const parentPrefix = comparableParent.endsWith(sep)
+    ? comparableParent
+    : `${comparableParent}${sep}`;
+  return comparableCandidate === comparableParent || comparableCandidate.startsWith(parentPrefix);
+}
+
+function comparablePath(path: string): string {
+  const resolvedPath = resolve(path);
+  return process.platform === "win32" ? resolvedPath.toLowerCase() : resolvedPath;
 }
 
 function posixPath(path: string): string {
@@ -132,7 +142,7 @@ export async function confirmTask(
 
   // Validate task file is under work_dir
   const resolvedWorkDir = resolve(workDir);
-  if (resolvedTaskPath !== resolvedWorkDir && !resolvedTaskPath.startsWith(resolvedWorkDir + sep)) {
+  if (!isSameOrDescendantPath(resolvedTaskPath, resolvedWorkDir)) {
     return err("task_path must be under work_dir");
   }
 

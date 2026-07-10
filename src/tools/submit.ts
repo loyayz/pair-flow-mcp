@@ -28,7 +28,7 @@ export async function submit(
 
   const commitHash = args.git_commit_hash as string;
   if (!commitHash || !/^[a-f0-9]{7,40}$/i.test(commitHash)) {
-    return err("invalid git_commit_hash format");
+    return err("git_commit_hash must contain 7 to 40 hexadecimal characters");
   }
 
   return getMutex(workflowId).runExclusive(async () => {

@@ -242,6 +242,56 @@ describe("Confirm task", () => {
     await rm(`${task}.pid`, { force: true });
   });
 
+  it("matches task_path containment case-insensitively on Windows", async () => {
+    if (process.platform !== "win32") return;
+
+    const task = resolve(tmpdir(), "pairflow-workdir-case-task.md");
+    const workDir = resolve(tmpdir());
+    const caseVariantWorkDir = workDir === workDir.toUpperCase()
+      ? workDir.toLowerCase()
+      : workDir.toUpperCase();
+    await writeFile(task, "# workdir case task", "utf-8");
+    const r = await mcpRequest("register", { identity: "wd-case" });
+    const c = await mcpRequest("confirm_task", {
+      task_path: task,
+      is_supervisor: true,
+      is_developer: false,
+      work_dir: caseVariantWorkDir,
+    }, { "x-ai-identity": r.token as string });
+
+    expect(c.ok).toBe(true);
+    await rm(task, { force: true });
+    await rm(`${task}.pid`, { force: true });
+  });
+
+  it("pairs task paths case-insensitively on Windows", async () => {
+    if (process.platform !== "win32") return;
+
+    const task = resolve(tmpdir(), "pairflow-task-path-case.md");
+    const caseVariantTask = task === task.toUpperCase() ? task.toLowerCase() : task.toUpperCase();
+    await writeFile(task, "# task path case", "utf-8");
+    const r1 = await mcpRequest("register", { identity: "task-case-a" });
+    const r2 = await mcpRequest("register", { identity: "task-case-b" });
+    const c1 = await mcpRequest("confirm_task", {
+      task_path: task,
+      is_supervisor: true,
+      is_developer: false,
+      work_dir: resolve(tmpdir()),
+    }, { "x-ai-identity": r1.token as string });
+    const c2 = await mcpRequest("confirm_task", {
+      task_path: caseVariantTask,
+      is_supervisor: false,
+      is_developer: true,
+      work_dir: resolve(tmpdir()),
+    }, { "x-ai-identity": r2.token as string });
+
+    expect(c1.ok).toBe(true);
+    expect(c2.ok).toBe(true);
+    expect(c2.tip).toContain("双方已就位");
+    await rm(task, { force: true });
+    await rm(`${task}.pid`, { force: true });
+  });
+
   it("pairs concurrent confirm_task calls for the same task_path into one workflow", async () => {
     const task = resolve(tmpdir(), "pairflow-concurrent-confirm-task.md");
     await writeFile(task, "# concurrent confirm task", "utf-8");
@@ -615,6 +665,14 @@ describe("Wait for turn + submit", () => {
     }, { "x-ai-identity": codebuddyToken });
     expect(r.ok).toBe(false);
     expect(r.tip).toContain("file_path must not contain . or .. path segments");
+  });
+  it("explains the accepted git_commit_hash format", async () => {
+    const r = await mcpRequest("submit", {
+      file_path: resolve(TEST_HANDOFF, workflowId, "requirements", "r1_codebuddy.md"),
+      git_commit_hash: "abc123",
+    }, { "x-ai-identity": codebuddyToken });
+    expect(r.ok).toBe(false);
+    expect(r.tip).toContain("7 to 40 hexadecimal characters");
   });
   it("submit works", async () => {
     const archiveFile = resolve(TEST_HANDOFF, workflowId, "requirements", "r1_codebuddy.md");
