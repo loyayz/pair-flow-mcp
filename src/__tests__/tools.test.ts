@@ -323,6 +323,36 @@ describe("Confirm task", () => {
     await rm(`${task}.pid`, { force: true });
   });
 
+  it("rejects rebinding an active token to a different task", async () => {
+    const firstTask = resolve(tmpdir(), "pairflow-active-token-first.md");
+    const secondTask = resolve(tmpdir(), "pairflow-active-token-second.md");
+    await writeFile(firstTask, "# first task", "utf-8");
+    await writeFile(secondTask, "# second task", "utf-8");
+    const registered = await mcpRequest("register", { identity: "active-token" });
+    const headers = { "x-ai-identity": registered.token as string };
+    const first = await mcpRequest("confirm_task", {
+      task_path: firstTask,
+      is_supervisor: true,
+      is_developer: false,
+      work_dir: resolve(tmpdir()),
+    }, headers);
+    const second = await mcpRequest("confirm_task", {
+      task_path: secondTask,
+      is_supervisor: true,
+      is_developer: false,
+      work_dir: resolve(tmpdir()),
+    }, headers);
+
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(false);
+    expect(second.tip).toContain("token is already joined to active workflow");
+    expect(second.tip).toContain("register a new token for parallel work");
+    await rm(firstTask, { force: true });
+    await rm(secondTask, { force: true });
+    await rm(`${firstTask}.pid`, { force: true });
+    await rm(`${secondTask}.pid`, { force: true });
+  });
+
   it("rejects explicit task_type mismatch and allows omitted task_type to inherit", async () => {
     const task = resolve(tmpdir(), "pairflow-task-type-task.md");
     await writeFile(task, "# task type task", "utf-8");

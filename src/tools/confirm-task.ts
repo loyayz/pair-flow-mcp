@@ -113,7 +113,7 @@ export async function confirmTask(
   args: Record<string, unknown>,
   extra: RequestHandlerExtra<ServerRequest, ServerNotification>
 ): Promise<CallToolResult> {
-  const { identity } = parseSession(extra.requestInfo?.headers);
+  const { identity, workflowId: boundWorkflowId } = parseSession(extra.requestInfo?.headers);
   if (identity === "unknown") return err("identity required");
 
   const taskPath = args.task_path as string;
@@ -139,6 +139,11 @@ export async function confirmTask(
   if (hasRelativeSegment(workDir)) return err("work_dir must not contain . or .. path segments");
 
   const resolvedTaskPath = resolve(taskPath);
+  const boundState = boundWorkflowId ? getState(boundWorkflowId) : undefined;
+  const isActiveParticipant = boundState?.participants.some((p) => p.identity === identity) ?? false;
+  if (isActiveParticipant && (!boundState?.task?.spec_file || !samePath(boundState.task.spec_file, resolvedTaskPath))) {
+    return err(`token is already joined to active workflow ${boundWorkflowId} — finish it before confirming another task, or register a new token for parallel work`);
+  }
 
   // Validate task file is under work_dir
   const resolvedWorkDir = resolve(workDir);

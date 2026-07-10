@@ -12,6 +12,7 @@ const TIMEOUT_MS = 600_000;
 export async function waitForTurn(
   extra: RequestHandlerExtra<ServerRequest, ServerNotification>
 ): Promise<CallToolResult> {
+  extra.signal.throwIfAborted();
   const { identity, workflowId } = parseSession(extra.requestInfo?.headers);
   if (identity === "unknown") return err("identity required");
   if (!workflowId) return err("not bound to a workflow — call confirm_task first");
@@ -28,6 +29,7 @@ export async function waitForTurn(
   const started = Date.now();
 
   while (Date.now() - started < TIMEOUT_MS) {
+    extra.signal.throwIfAborted();
     const state = getState(workflowId);
     if (!state) return err("workflow not found");
 
@@ -53,7 +55,7 @@ export async function waitForTurn(
         );
       }
     }
-    await sleep(POLL_INTERVAL_MS);
+    await sleep(POLL_INTERVAL_MS, extra.signal);
   }
 
   const state = getState(workflowId);
@@ -64,6 +66,21 @@ export async function waitForTurn(
   );
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(signal.reason ?? new Error("request cancelled"));
+      return;
+    }
+
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal.reason ?? new Error("request cancelled"));
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
 }

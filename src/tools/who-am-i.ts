@@ -20,6 +20,6 @@ export async function whoAmI(
     joined_workflow: !!participant,
     is_supervisor: participant?.is_supervisor ?? false,
     is_developer: participant?.is_developer ?? false,
-    workflow_id: workflowId,
+    workflow_id: participant ? workflowId : null,
   });
 }

@@ -12,7 +12,13 @@ function safe(s: string | null | undefined): string {
 export function identityLabel(state: PairFlowState, identity: string): string {
   const participant = state.participants.find((p) => p.identity === identity);
   if (!participant) return `${safe(identity)}`;
-  const roleLabel = participant.is_supervisor ? "supervisor" : (participant.is_developer ? "developer" : "reviewer");
+  const roleLabel = participant.is_supervisor && participant.is_developer
+    ? "supervisor/developer"
+    : participant.is_supervisor
+      ? "supervisor"
+      : participant.is_developer
+        ? "developer"
+        : "reviewer";
   return `${safe(identity)}(${roleLabel})`;
 }
 
@@ -31,7 +37,6 @@ function getAction(state: PairFlowState, identity: string): string {
   const taskPath = (state.task?.spec_file ?? "任务文档").replace(/\\/g, "/");
   const other = state.participants.find((p) => p.identity !== identity);
   const otherSubmit = other ? state.last_submission_by_participant[other.identity] : null;
-  const otherIdent = other ? safe(other.identity) : "unknown";
 
   const prevFile = otherSubmit?.file_path ?? null;
   const prevInfo = prevFile
@@ -112,7 +117,8 @@ function getAction(state: PairFlowState, identity: string): string {
   }
 
   if (state.phase === "implementation" && state.sub_phase === "review") {
-    const planFile = resolve(HANDOFF_DIR, safe(state.workflow_id), "planning", `r1_${otherIdent}.md`).replace(/\\/g, "/");
+    const reviewer = state.participants.find((p) => !p.is_developer);
+    const planFile = resolve(HANDOFF_DIR, safe(state.workflow_id), "planning", `r1_${safe(reviewer?.identity)}.md`).replace(/\\/g, "/");
     if (state.round > 2) {
       const myPrevReview = resolve(HANDOFF_DIR, safe(state.workflow_id), safe(state.phase), `r${state.round - 2}_review_${safe(identity)}.md`).replace(/\\/g, "/");
       return `${advancePrefix}结合实施计划 ${planFile}、上一轮你的评审文档 ${myPrevReview}，审阅对方的代码产出 ${prevInfo}。检查是否按计划实现、上一轮问题是否已解决、代码正确性和风格`;
@@ -143,18 +149,20 @@ export function phaseLabel(phase: string, subPhase: string | null): string {
 }
 
 export function buildTip(state: PairFlowState, identity: string): string {
-  const action = getAction(state, identity);
-  const file = outFile(state, identity);
+  const holdsTurn = state.turn === identity;
+  const action = state.phase !== "idle" && !holdsTurn
+    ? `等待 ${safe(state.turn)} 完成当前轮次。调用 wait_for_turn（长轮询，10s 间隔，最多 600s），turn 到你时会自动返回`
+    : getAction(state, identity);
   const label = identityLabel(state, identity);
   const phaseText = phaseLabel(safe(state.phase), state.sub_phase);
 
-  const turnOwner = state.turn === identity
+  const turnOwner = holdsTurn
     ? "轮到你了"
     : `轮到 ${safe(state.turn)} 了`;
 
-  const productLine = state.phase === "idle"
+  const productLine = state.phase === "idle" || !holdsTurn
     ? ""
-    : `\n[产出] 完成后 git commit，调用 submit，file_path = ${file}\n`;
+    : `\n[产出] 完成后 git commit，调用 submit，file_path = ${outFile(state, identity)}\n`;
 
   return `[行动] ${action}
 ${productLine}

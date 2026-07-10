@@ -58,6 +58,30 @@ describe("Handoff reconstruction", () => {
     expect(recovered!.phase).toBe("summary");
   });
 
+  it("recovers the state immediately after the latest implementation submission", async () => {
+    const wfId = "20260622000006";
+    const implementationDir = join(TEST_ROOT, HANDOFF_DIR, wfId, "implementation");
+    await mkdir(implementationDir, { recursive: true });
+    await writeFile(join(implementationDir, "r10_coding_alice.meta.json"), JSON.stringify({
+      submitted_at: "2026-06-22T00:10:00.000Z",
+      commit_hash: "abcdef1",
+      sub_phase: "coding",
+    }));
+    await writeFile(join(implementationDir, "r2_review_bob.meta.json"), JSON.stringify({
+      submitted_at: "2026-06-22T00:02:00.000Z",
+      commit_hash: "abcdef2",
+      sub_phase: "review",
+    }));
+
+    const recovered = await reconstructFromHandoff(defaultState(), wfId);
+
+    expect(recovered).not.toBeNull();
+    expect(recovered!.phase).toBe("implementation");
+    expect(recovered!.round).toBe(11);
+    expect(recovered!.turn).toBe("bob");
+    expect(recovered!.sub_phase).toBe("review");
+  });
+
   it("ignores archived filenames with invalid identity segments", async () => {
     const wfId = "20260622000005";
     const wfDir = join(TEST_ROOT, HANDOFF_DIR, wfId, "requirements");

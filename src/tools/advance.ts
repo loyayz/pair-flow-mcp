@@ -108,13 +108,19 @@ export async function advance(
     if (currentPhase === "summary") {
       if (state.task?.spec_file) {
         const pidPath = resolve(`${state.task.spec_file}.pid`);
-        try { await unlink(pidPath); } catch { /* .pid may not exist */ }
+        try {
+          await unlink(pidPath);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+            return err(`failed to delete pid file: ${pidPath.replace(/\\/g, "/")}`);
+          }
+        }
       }
       const finishedId = state.workflow_id;
       const next = initIdleState(state);
       setState(workflowId, next);
 
-      return ok({ ok: true, new_phase: "idle" }, `[行动] 工作流已结束。全部产出归档于 handoff/${finishedId}/。如需开始新任务，双方重新 register 后，监督者调用 confirm_task。\n\n[当前] 你是 ${identity}（supervisor）。工作流已结束。`);
+      return ok({ ok: true, new_phase: "idle" }, `[行动] 工作流已结束。全部产出归档于 handoff/${finishedId}/。如需开始新任务，在服务未重启且 token 仍可用时可复用当前 token；双方分别调用 confirm_task，并使用相同 task_path。服务重启或 token 丢失时先重新 register。\n\n[当前] 你是 ${identity}（supervisor）。工作流已结束。`);
     }
 
     return err(`unknown phase: ${currentPhase}`);

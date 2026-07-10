@@ -99,36 +99,30 @@ export async function reconstructFromHandoff(
   // 4. Determine round, turn
   const latestPhaseDir = join(wfDirVar, state.phase);
   const latestMetaFiles = await findFiles(latestPhaseDir, ".meta.json");
-  let maxRound = 1;
-  let lastSubmitter = "";
+  let latestSubmission: ParsedFilename | null = null;
 
   for (const mf of latestMetaFiles) {
-    const base = mf.includes("/") || mf.includes("\\") ? mf.replace(/^.*[/\\]/, "") : mf;
-    // Extract round from r{N}_ pattern
-    const roundMatch = base.match(/^r(\d+)_/);
-    if (roundMatch) {
-      const r = parseInt(roundMatch[1], 10);
-      if (r > maxRound) maxRound = r;
-      // Extract identity: r{N}_{identity}.meta.json or r{N}_{subphase}_{identity}.meta.json
-      const parsed = parseFilename(base);
-      if (parsed) {
-        lastSubmitter = parsed.identity;
-      }
+    const parsed = parseFilename(basename(mf));
+    if (parsed && (!latestSubmission || parsed.round > latestSubmission.round)) {
+      latestSubmission = parsed;
     }
   }
 
-  state.round = maxRound;
-  // Turn: next should be the one who hasn't submitted last, or the other participant
-  if (lastSubmitter && state.participants.length >= 2) {
-    const other = state.participants.find((p) => p.identity !== lastSubmitter);
-    state.turn = other?.identity ?? lastSubmitter;
+  state.round = latestSubmission ? latestSubmission.round + 1 : 1;
+  if (latestSubmission && state.participants.length >= 2) {
+    const other = state.participants.find((p) => p.identity !== latestSubmission.identity);
+    state.turn = other?.identity ?? latestSubmission.identity;
   } else if (state.participants.length > 0) {
     state.turn = state.participants[0].identity;
   }
 
   // 4a. Recover sub_phase from filenames (retro-1 §2.2)
   if (state.phase === "implementation") {
-    state.sub_phase = inferSubPhase(latestMetaFiles);
+    state.sub_phase = latestSubmission?.sub_phase === "coding"
+      ? "review"
+      : latestSubmission?.sub_phase === "review"
+        ? "coding"
+        : null;
   }
 
   // 4b. Recover last_submission_by_participant from meta.json (retro-1 §2.2)
@@ -167,15 +161,6 @@ async function extractIdentities(wfDir: string): Promise<Set<string>> {
 
 
 // ── Field recovery helpers (retro-1 §2.2 + retro-2 §4.1) ──
-function inferSubPhase(metaFiles: string[]): SubPhase {
-  for (const mf of metaFiles) {
-    const parsed = parseFilename(basename(mf));
-    if (parsed?.sub_phase) return parsed.sub_phase;
-  }
-  // P2-12: no submissions found — phase was advanced but no work started, don't assume "coding"
-  return null;
-}
-
 async function reconstructLastSubmissionByParticipant(wfDir: string, participants: Participant[], phase: string): Promise<Record<string, LastSubmission>> {
   const lsp: Record<string, LastSubmission> = {};
   const empty: LastSubmission = { round: null, sub_phase: null, commit_hash: null, submitted_at: null, file_path: null };
