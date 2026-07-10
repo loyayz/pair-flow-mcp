@@ -4,11 +4,10 @@ import { Mutex } from "async-mutex";
 
 export type Phase = "idle" | "requirements" | "planning" | "implementation" | "summary";
 export type SubPhase = "coding" | "review" | null;
-export type ParticipantRole = "supervisor" | "participant";
 
 export interface Participant {
   identity: string;
-  role: ParticipantRole;
+  is_supervisor: boolean;
   is_developer: boolean;
   registered_at: string;
   work_dir?: string;
@@ -167,7 +166,7 @@ export function isCurrentHolder(state: PairFlowState, identity: string): boolean
 }
 
 export function isSupervisor(state: PairFlowState, identity: string): boolean {
-  return state.participants.some((p) => p.identity === identity && p.role === "supervisor");
+  return state.participants.some((p) => p.identity === identity && p.is_supervisor);
 }
 
 export function getOtherIdentity(state: PairFlowState, identity: string): string | null {

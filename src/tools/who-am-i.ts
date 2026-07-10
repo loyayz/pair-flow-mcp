@@ -18,7 +18,7 @@ export async function whoAmI(
     identity,
     registered,
     joined_workflow: !!participant,
-    is_supervisor: participant?.role === "supervisor",
+    is_supervisor: participant?.is_supervisor ?? false,
     is_developer: participant?.is_developer ?? false,
     workflow_id: workflowId,
   });

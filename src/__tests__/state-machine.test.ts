@@ -21,8 +21,8 @@ describe("State management", () => {
     const state = defaultState();
     state.workflow_id = TEST_WF;
     state.participants = [
-      { identity: "alice", role: "supervisor", is_developer: false, registered_at: new Date().toISOString() },
-      { identity: "bob", role: "participant", is_developer: true, registered_at: new Date().toISOString() },
+      { identity: "alice", is_supervisor: true, is_developer: false, registered_at: new Date().toISOString() },
+      { identity: "bob", is_supervisor: false, is_developer: true, registered_at: new Date().toISOString() },
     ];
     setState(TEST_WF, state);
     const loaded = getState(TEST_WF);
@@ -42,8 +42,8 @@ describe("State management", () => {
     const state = defaultState();
     state.workflow_id = "20260627000000";
     state.participants = [
-      { identity: "supervisor", role: "supervisor", is_developer: false, registered_at: "" },
-      { identity: "participant", role: "participant", is_developer: false, registered_at: "" },
+      { identity: "supervisor", is_supervisor: true, is_developer: false, registered_at: "" },
+      { identity: "participant", is_supervisor: false, is_developer: false, registered_at: "" },
     ];
     const next = initRequirementsPhase(state, "participant", { spec_file: "test-task.md" });
     expect(next.phase).toBe("requirements");
@@ -56,8 +56,8 @@ describe("Role helpers", () => {
   it("identifies supervisor", () => {
     const state = defaultState();
     state.participants = [
-      { identity: "admin", role: "supervisor", is_developer: false, registered_at: "" },
-      { identity: "user", role: "participant", is_developer: true, registered_at: "" },
+      { identity: "admin", is_supervisor: true, is_developer: false, registered_at: "" },
+      { identity: "user", is_supervisor: false, is_developer: true, registered_at: "" },
     ];
     expect(isSupervisor(state, "admin")).toBe(true);
     expect(isSupervisor(state, "user")).toBe(false);
@@ -66,8 +66,8 @@ describe("Role helpers", () => {
   it("gets other identity", () => {
     const state = defaultState();
     state.participants = [
-      { identity: "a", role: "supervisor", is_developer: false, registered_at: "" },
-      { identity: "b", role: "participant", is_developer: true, registered_at: "" },
+      { identity: "a", is_supervisor: true, is_developer: false, registered_at: "" },
+      { identity: "b", is_supervisor: false, is_developer: true, registered_at: "" },
     ];
     expect(getOtherIdentity(state, "a")).toBe("b");
     expect(getOtherIdentity(state, "b")).toBe("a");
@@ -84,8 +84,8 @@ describe("Tip guidance", () => {
       turn: "supervisor",
       task: { spec_file: "C:/project/task.md", task_type: "development" },
       participants: [
-        { identity: "supervisor", role: "supervisor", is_developer: true, registered_at: "" },
-        { identity: "reviewer", role: "participant", is_developer: false, registered_at: "" },
+        { identity: "supervisor", is_supervisor: true, is_developer: true, registered_at: "" },
+        { identity: "reviewer", is_supervisor: false, is_developer: false, registered_at: "" },
       ],
       last_submission_by_participant: {
         supervisor: { round: null, sub_phase: null, commit_hash: null, submitted_at: null, file_path: null },

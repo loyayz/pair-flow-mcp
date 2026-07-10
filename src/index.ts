@@ -27,8 +27,8 @@ function createServerWithTools() {
 
   mcp.registerTool("ping", { description: "连通性检查。匿名可用。" }, ping);
   mcp.registerTool("who_am_i", { description: "身份确认 + 注册/工作流加入状态。解析 X-AI-Identity token。" }, whoAmI);
-  mcp.registerTool("register", { description: "注册身份并获取 token。identity 从 body 取，角色声明移至 confirm_task。", inputSchema: { identity: z.string() } }, register);
-  mcp.registerTool("confirm_task", { description: "确认任务文档路径，声明角色，两个 AI 以相同规范化绝对 task_path 成对。", inputSchema: { task_path: z.string(), task_type: z.enum(["requirements", "development"]).optional(), supervisor: z.boolean(), developer: z.boolean(), work_dir: z.string() } }, confirmTask);
+  mcp.registerTool("register", { description: "注册身份并获取 token。identity 从 body 取，职责声明移至 confirm_task。", inputSchema: { identity: z.string() } }, register);
+  mcp.registerTool("confirm_task", { description: "确认任务文档路径，声明职责，两个 AI 以相同规范化绝对 task_path 成对。", inputSchema: { task_path: z.string(), task_type: z.enum(["requirements", "development"]).optional(), is_supervisor: z.boolean(), is_developer: z.boolean(), work_dir: z.string() } }, confirmTask);
 
   mcp.registerTool("advance", { description: "推进到下一阶段。仅监督者可用。", inputSchema: {} }, advance);
   mcp.registerTool("get_state", { description: "返回当前执行指引（tip）。匿名可用。" }, getStateTool);

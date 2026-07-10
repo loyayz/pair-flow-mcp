@@ -31,15 +31,15 @@ export async function register(
 
   const tip = `Set X-AI-Identity: ${token} header on all subsequent requests。你已注册。
 询问用户以下信息后调用 confirm_task({...})。两个 AI 使用相同的 task_path 自动成对，
-服务端校验角色组合规则和 work_dir 一致性。
+服务端校验职责组合规则和 work_dir 一致性。
 
 confirm_task 入参：
 
 task_path   — 任务文档绝对路径，不得包含 . 或 .. 路径段。两个 AI 必须传相同规范化路径才能成对。
 task_type   — 任务类型。"development"（开发）走完整四阶段流程；
               "requirements"（需求）只做需求分析+汇总，跳过 planning 和 implementation。
-supervisor  — 是否为监督者（true/false）。双方就位后必须恰好一个监督者。
-developer   — 是否为开发者（true/false）。双方就位后必须恰好一个开发者，可与监督者为同一参与者。
+is_supervisor — 是否为监督者（true/false）。双方就位后必须恰好一个监督者。
+is_developer  — 是否为开发者（true/false）。双方就位后必须恰好一个开发者，可与监督者为同一参与者。
 work_dir    — 项目根目录绝对路径，不得包含 . 或 .. 路径段。两个 AI 必须一致。`;
 
   return ok({ ok: true, identity, token }, tip);

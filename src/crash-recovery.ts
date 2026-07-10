@@ -71,10 +71,10 @@ export async function reconstructFromHandoff(
   if (identities.size === 0) return null; // can't recover without participants
 
   for (const id of identities) {
-    // 角色由 confirm_task 入参覆盖——重建时用默认值
+    // 职责由 confirm_task 入参覆盖；重建时用默认值
     state.participants.push({
       identity: id,
-      role: "participant",
+      is_supervisor: false,
       is_developer: false,
       registered_at: RECOVERY_REGISTERED_AT,
     });

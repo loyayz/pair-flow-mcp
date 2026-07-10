@@ -12,7 +12,7 @@ function safe(s: string | null | undefined): string {
 export function identityLabel(state: PairFlowState, identity: string): string {
   const participant = state.participants.find((p) => p.identity === identity);
   if (!participant) return `${safe(identity)}`;
-  const roleLabel = participant.role === "supervisor" ? "supervisor" : (participant.is_developer ? "developer" : "reviewer");
+  const roleLabel = participant.is_supervisor ? "supervisor" : (participant.is_developer ? "developer" : "reviewer");
   return `${safe(identity)}(${roleLabel})`;
 }
 
@@ -39,7 +39,7 @@ function getAction(state: PairFlowState, identity: string): string {
     : "对方上一轮产出";
 
   if (state.phase === "idle") {
-    const isSup = state.participants.some((p) => p.identity === identity && p.role === "supervisor");
+    const isSup = state.participants.some((p) => p.identity === identity && p.is_supervisor);
     if (isSup) return "双方已就位。作为监督者，调用 advance 开始工作流";
     return "等待监督者调用 advance 开始工作流";
   }
@@ -69,7 +69,7 @@ function getAction(state: PairFlowState, identity: string): string {
     return `未知的阶段/子阶段组合: phase=${state.phase}, sub_phase=${state.sub_phase}, round=1`;
   }
 
-  const isSupervisor = state.participants.some((p) => p.identity === identity && p.role === "supervisor");
+  const isSupervisor = state.participants.some((p) => p.identity === identity && p.is_supervisor);
   const canSupervisorAdvance = isSupervisor
     && state.turn === identity
     && haveAllParticipantsSubmittedCurrentPhase(state);

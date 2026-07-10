@@ -1,15 +1,28 @@
-import { access, readFile, writeFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import { isAbsolute, resolve, sep } from "node:path";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
+import { Mutex } from "async-mutex";
 import { parseSession } from "../identity.js";
 import { getState, setState, getAllStates, defaultState, formatWorkflowId, isRecoveryPlaceholderParticipant, type Participant } from "../state.js";
 import { reconstructFromHandoff } from "../crash-recovery.js";
 import { err, ok } from "../response.js";
 import { bindWorkflow } from "../token-map.js";
+import { atomicWriteText } from "../atomic-write.js";
 
 const HANDOFF_DIR = process.env.HANDOFF_DIR || "handoff";
+const taskPathMutexes = new Map<string, Mutex>();
+
+function getTaskPathMutex(taskPath: string): Mutex {
+  const key = process.platform === "win32" ? resolve(taskPath).toLowerCase() : resolve(taskPath);
+  let mutex = taskPathMutexes.get(key);
+  if (!mutex) {
+    mutex = new Mutex();
+    taskPathMutexes.set(key, mutex);
+  }
+  return mutex;
+}
 
 async function findWorkflowByTaskPath(taskPath: string): Promise<string | null> {
   // Search in-memory states
@@ -30,7 +43,7 @@ async function readPidFile(taskPath: string): Promise<string | null> {
 }
 
 function validateParticipantCombination(participants: Participant[]): string | null {
-  const supervisorCount = participants.filter((p) => p.role === "supervisor").length;
+  const supervisorCount = participants.filter((p) => p.is_supervisor).length;
   const developerCount = participants.filter((p) => p.is_developer).length;
   if (supervisorCount > 1) return "supervisor already exists for this task";
   if (developerCount > 1) return "developer already exists for this task";
@@ -53,9 +66,9 @@ function validateParticipantCombination(participants: Participant[]): string | n
   return null;
 }
 
-function roleLabel(participant: Pick<Participant, "role" | "is_developer">): string {
-  if (participant.role === "supervisor" && participant.is_developer) return "supervisor/developer";
-  if (participant.role === "supervisor") return "supervisor";
+function roleLabel(participant: Pick<Participant, "is_supervisor" | "is_developer">): string {
+  if (participant.is_supervisor && participant.is_developer) return "supervisor/developer";
+  if (participant.is_supervisor) return "supervisor";
   if (participant.is_developer) return "developer";
   return "reviewer";
 }
@@ -74,6 +87,16 @@ function posixPath(path: string): string {
 
 function hasRelativeSegment(path: string): boolean {
   return path.split(/[\\/]+/).some((part) => part === "." || part === "..");
+}
+
+async function writePidFile(taskPath: string, wfId: string): Promise<string | null> {
+  const pidFile = `${taskPath}.pid`;
+  try {
+    await atomicWriteText(pidFile, wfId);
+    return null;
+  } catch {
+    return `failed to write pid file: ${pidFile.replace(/\\/g, "/")}`;
+  }
 }
 
 export async function confirmTask(
@@ -95,9 +118,9 @@ export async function confirmTask(
     return err(`invalid task_type "${taskType}" — must be "requirements" or "development"`);
   }
 
-  // Role declaration
-  const supervisor = args.supervisor === true;
-  const developer = args.developer === true;
+  // Responsibility declaration
+  const supervisor = args.is_supervisor === true;
+  const developer = args.is_developer === true;
 
   // work_dir
   const workDir = (args.work_dir as string) || "";
@@ -118,6 +141,7 @@ export async function confirmTask(
     return err(`task file not found: ${resolvedTaskPath.replace(/\\/g, "/")}`);
   }
 
+  return getTaskPathMutex(resolvedTaskPath).runExclusive(async () => {
   let wfId: string;
   let recovered = false;
   let isFirst = false;
@@ -148,11 +172,13 @@ export async function confirmTask(
     // 将当前调用者加入 participants
     state.participants.push({
       identity,
-      role: supervisor ? "supervisor" : "participant",
+      is_supervisor: supervisor,
       is_developer: developer,
       registered_at: new Date().toISOString(),
       work_dir: resolvedWorkDir,
     });
+    const pidError = await writePidFile(resolvedTaskPath, wfId);
+    if (pidError) return err(pidError);
     setState(wfId, state);
     isFirst = true;
   } else {
@@ -167,23 +193,24 @@ export async function confirmTask(
     // 当前调用者可能已经在工作流中（恢复场景）
     const alreadyIn = state.participants.some((p) => p.identity === identity);
     if (alreadyIn) {
-      const raw = extra.requestInfo?.headers?.["x-ai-identity"] as string;
-      if (raw) bindWorkflow(raw.trim(), wfId);
-
       const myParticipant = state.participants.find(p => p.identity === identity)!;
       const confirmedAt = new Date().toISOString();
       const nextParticipants = state.participants.map((p) => p.identity === identity
-        ? { ...p, role: supervisor ? "supervisor" as const : "participant" as const, is_developer: developer, registered_at: confirmedAt, work_dir: resolvedWorkDir }
+        ? { ...p, is_supervisor: supervisor, is_developer: developer, registered_at: confirmedAt, work_dir: resolvedWorkDir }
         : p);
       const roleError = validateParticipantCombination(nextParticipants);
       if (roleError) return err(roleError);
+      const pidError = await writePidFile(resolvedTaskPath, wfId);
+      if (pidError) return err(pidError);
 
-      // 用确认时的入参覆盖重建推断的角色——调用者声明为准
-      myParticipant.role = supervisor ? "supervisor" : "participant";
+      // 用确认时的入参覆盖重建推断的职责——调用者声明为准
+      myParticipant.is_supervisor = supervisor;
       myParticipant.is_developer = developer;
       myParticipant.registered_at = confirmedAt;
       myParticipant.work_dir = resolvedWorkDir;
       setState(wfId, state);
+      const raw = extra.requestInfo?.headers?.["x-ai-identity"] as string;
+      if (raw) bindWorkflow(raw.trim(), wfId);
 
       const turnIsSelf = state.turn === identity;
       const turnInfo = turnIsSelf ? `turn 在 ${state.turn}（你）` : `turn 在 ${state.turn}（对方）`;
@@ -204,7 +231,7 @@ export async function confirmTask(
     const firstParticipant = state.participants[0];
     const newParticipant: Participant = {
       identity,
-      role: supervisor ? "supervisor" : "participant",
+      is_supervisor: supervisor,
       is_developer: developer,
       registered_at: new Date().toISOString(),
       work_dir: resolvedWorkDir,
@@ -216,12 +243,14 @@ export async function confirmTask(
     if (firstParticipant.work_dir && !samePath(firstParticipant.work_dir, resolvedWorkDir)) {
       return err(`work_dir mismatch: "${posixPath(resolvedWorkDir)}" vs "${posixPath(firstParticipant.work_dir)}"`);
     }
+    const pidError = await writePidFile(resolvedTaskPath, wfId);
+    if (pidError) return err(pidError);
 
     // 加入
     state.participants.push(newParticipant);
     // idle 阶段双方就位后，turn 切给监督者——使其 wait_for_turn 立即返回
     if (state.phase === "idle") {
-      const sup = state.participants.find((p) => p.role === "supervisor");
+      const sup = state.participants.find((p) => p.is_supervisor);
       if (sup) state.turn = sup.identity;
     }
     setState(wfId, state);
@@ -231,12 +260,8 @@ export async function confirmTask(
   const raw = extra.requestInfo?.headers?.["x-ai-identity"] as string;
   if (raw) bindWorkflow(raw.trim(), wfId);
 
-  // 写 .pid
-  const pidFile = `${resolvedTaskPath}.pid`;
-  try { await writeFile(pidFile, wfId, "utf-8"); } catch { /* best effort */ }
-
   const curState = getState(wfId)!;
-  const myRoleLabel = roleLabel({ role: supervisor ? "supervisor" : "participant", is_developer: developer });
+  const myRoleLabel = roleLabel({ is_supervisor: supervisor, is_developer: developer });
   const phaseText = curState.phase !== "idle" ? `，${curState.phase} 阶段第 ${curState.round} 轮` : "，idle 阶段";
   const statusLine = `[当前] 你是 ${identity}（${myRoleLabel}）。工作流 ${wfId}${phaseText}。`;
 
@@ -255,4 +280,5 @@ export async function confirmTask(
     phase: curState.phase,
     recovered,
   }, `[行动] ${actionLine}\n\n${statusLine}`);
+  });
 }

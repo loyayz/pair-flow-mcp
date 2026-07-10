@@ -1,5 +1,5 @@
-import { access, writeFile, mkdir } from "node:fs/promises";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { access } from "node:fs/promises";
+import { isAbsolute, join, resolve } from "node:path";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
@@ -8,6 +8,7 @@ import { getState, setState, getMutex, hasRecoveryPlaceholderParticipant, haveAl
 
 import { err, ok } from "../response.js";
 import { identityLabel, phaseLabel } from "../tip.js";
+import { atomicWriteText } from "../atomic-write.js";
 
 const HANDOFF_DIR = process.env.HANDOFF_DIR || "handoff";
 const SAFE_SEGMENT = /^[a-zA-Z0-9_-]+$/;
@@ -73,55 +74,63 @@ export async function submit(
     const originalSubPhase = state.sub_phase;
 
     const now = new Date().toISOString();
-    state.last_submission_by_participant[identity] = {
-      round: state.round,
-      sub_phase: state.sub_phase,
+    const nextState = {
+      ...state,
+      last_submission_by_participant: { ...state.last_submission_by_participant },
+    };
+    nextState.last_submission_by_participant[identity] = {
+      round: nextState.round,
+      sub_phase: nextState.sub_phase,
       commit_hash: commitHash,
       submitted_at: now,
       file_path: expectedFilePath,
     };
     // IMPLEMENTATION sub_phase toggle
-    if (state.phase === "implementation" && state.sub_phase === "coding") {
-      state.sub_phase = "review";
-    } else if (state.phase === "implementation" && state.sub_phase === "review") {
-      state.sub_phase = "coding";
+    if (nextState.phase === "implementation" && nextState.sub_phase === "coding") {
+      nextState.sub_phase = "review";
+    } else if (nextState.phase === "implementation" && nextState.sub_phase === "review") {
+      nextState.sub_phase = "coding";
     }
 
-    state.round += 1;
-    const other = getOtherIdentity(state, identity);
-    if (other) state.turn = other;
+    nextState.round += 1;
+    const other = getOtherIdentity(nextState, identity);
+    if (other) nextState.turn = other;
 
-    if (state.turn !== originalTurn) {
-      state.turn_switched_at = new Date().toISOString();
-      state.turn_claimed_at = null;
+    if (nextState.turn !== originalTurn) {
+      nextState.turn_switched_at = new Date().toISOString();
+      nextState.turn_claimed_at = null;
     }
-    setState(workflowId, state);
 
+    try {
+      await writeMetaJson(expectedFilePath, commitHash, originalSubPhase, nextState.task);
+    } catch {
+      return err(`failed to write meta.json: ${expectedFilePath.replace(/\.md$/, ".meta.json").replace(/\\/g, "/")}`);
+    }
 
-    await writeMetaJson(expectedFilePath, commitHash, originalSubPhase, state.task);
+    setState(workflowId, nextState);
 
-    const idLabel = identityLabel(state, identity);
-    const nextParticipant = state.participants.find((p) => p.identity === state.turn);
-    const nextLabel = identityLabel(state, state.turn);
-    const phaseText = phaseLabel(state.phase, state.sub_phase);
-    const currentParticipant = state.participants.find((p) => p.identity === identity);
-    const supervisorParticipant = state.participants.find((p) => p.role === "supervisor");
-    const bothSubmitted = haveAllParticipantsSubmittedCurrentPhase(state);
+    const idLabel = identityLabel(nextState, identity);
+    const nextParticipant = nextState.participants.find((p) => p.identity === nextState.turn);
+    const nextLabel = identityLabel(nextState, nextState.turn);
+    const phaseText = phaseLabel(nextState.phase, nextState.sub_phase);
+    const currentParticipant = nextState.participants.find((p) => p.identity === identity);
+    const supervisorParticipant = nextState.participants.find((p) => p.is_supervisor);
+    const bothSubmitted = haveAllParticipantsSubmittedCurrentPhase(nextState);
 
     let action: string;
-    if (bothSubmitted && supervisorParticipant && state.turn !== supervisorParticipant.identity) {
-      action = `双方已提交，但 turn 已切给 ${state.turn}。等待 ${state.turn} 继续处理或确认后自然交还监督者 ${supervisorParticipant.identity}`;
-    } else if (bothSubmitted && currentParticipant?.role === "supervisor" && state.phase === "summary") {
+    if (bothSubmitted && supervisorParticipant && nextState.turn !== supervisorParticipant.identity) {
+      action = `双方已提交，但 turn 已切给 ${nextState.turn}。等待 ${nextState.turn} 继续处理或确认后自然交还监督者 ${supervisorParticipant.identity}`;
+    } else if (bothSubmitted && currentParticipant?.is_supervisor && nextState.phase === "summary") {
       action = "双方已提交汇总。若确认汇总已收敛，可调用 advance 结束当前工作流";
-    } else if (bothSubmitted && currentParticipant?.role === "supervisor") {
+    } else if (bothSubmitted && currentParticipant?.is_supervisor) {
       action = "双方已提交。若确认当前阶段目标已达成，可调用 advance 进入下一阶段";
     } else if (bothSubmitted && supervisorParticipant) {
       action = `双方已提交。等待监督者 ${supervisorParticipant.identity} 判断是否调用 advance 推进`;
-    } else if (state.phase === "summary" && nextParticipant?.role === "supervisor") {
+    } else if (nextState.phase === "summary" && nextParticipant?.is_supervisor) {
       action = "调用 advance 结束当前工作流";
-    } else if (state.phase === "summary") {
+    } else if (nextState.phase === "summary") {
       action = "等待监督者调用 advance 结束工作流。调用 wait_for_turn（长轮询，10s 间隔，最多 600s）。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。";
-    } else if (nextParticipant?.role === "supervisor") {
+    } else if (nextParticipant?.is_supervisor) {
       action = "若审阅后确认当前阶段目标已达成，可调用 advance 进入下一阶段";
     } else {
       action = "等待对方操作。调用 wait_for_turn（长轮询，10s 间隔，最多 600s）。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。";
@@ -129,8 +138,8 @@ export async function submit(
 
     const tip = `[行动] ${action}
 [产出] ${expectedFilePath.replace(/\\/g, "/")}（已提交）
-[当前] 你是 ${idLabel}。当前是第 ${state.round} 轮${phaseText}，turn 已切给 ${nextLabel}。`;
-    return ok({ ok: true, next_turn: state.turn }, tip);
+[当前] 你是 ${idLabel}。当前是第 ${nextState.round} 轮${phaseText}，turn 已切给 ${nextLabel}。`;
+    return ok({ ok: true, next_turn: nextState.turn }, tip);
   });
 }
 
@@ -169,14 +178,11 @@ async function writeMetaJson(
   subPhase: string | null,
   task: unknown,
 ): Promise<void> {
-  try {
-    const metaPath = filePath.replace(/\.md$/, ".meta.json");
-    await mkdir(dirname(metaPath), { recursive: true });
-    await writeFile(metaPath, JSON.stringify({
-      submitted_at: new Date().toISOString(),
-      commit_hash: commitHash,
-      sub_phase: subPhase,
-      task,
-    }, null, 2), "utf-8");
-  } catch { /* best-effort */ }
+  const metaPath = filePath.replace(/\.md$/, ".meta.json");
+  await atomicWriteText(metaPath, JSON.stringify({
+    submitted_at: new Date().toISOString(),
+    commit_hash: commitHash,
+    sub_phase: subPhase,
+    task,
+  }, null, 2));
 }
