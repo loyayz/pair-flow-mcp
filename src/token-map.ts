@@ -20,6 +20,12 @@ export function bindWorkflow(token: string, workflowId: string): void {
   }
 }
 
+export function unbindWorkflow(workflowId: string): void {
+  for (const session of tokenMap.values()) {
+    if (session.workflowId === workflowId) session.workflowId = null;
+  }
+}
+
 export function resolveSession(raw: string): Session | null {
   return tokenMap.get(raw) ?? null;
 }

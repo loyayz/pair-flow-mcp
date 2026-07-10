@@ -74,7 +74,7 @@ describe("advance summary completion", () => {
     expect(payload.tip).toContain("双方分别调用 confirm_task");
     expect(payload.tip).toContain("服务重启或 token 丢失时先重新 register");
     expect(payload.tip).not.toContain("双方重新 register");
-    expect(getState(TEST_WORKFLOW_ID)!.phase).toBe("idle");
+    expect(getState(TEST_WORKFLOW_ID)).toBeUndefined();
     expect(identityPayload.joined_workflow).toBe(false);
     expect(identityPayload.workflow_id).toBeNull();
   });

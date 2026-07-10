@@ -4,17 +4,18 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
 import { parseSession } from "../identity.js";
-import { getState, setState, getMutex, hasRecoveryPlaceholderParticipant, haveAllParticipantsSubmittedCurrentPhase, isSupervisor, getOtherIdentity, initRequirementsPhase, initPlanningPhase, initImplementationPhase, initSummaryPhase, initIdleState } from "../state.js";
+import { deleteState, getState, setState, getMutex, hasRecoveryPlaceholderParticipant, haveAllParticipantsSubmittedCurrentPhase, isSupervisor, getOtherIdentity, initRequirementsPhase, initPlanningPhase, initImplementationPhase, initSummaryPhase } from "../state.js";
 
 import { err, ok } from "../response.js";
 import { workflowArchivePath, workflowWorkDir } from "../archive-path.js";
+import { unbindWorkflow } from "../token-map.js";
 
 export async function advance(
   args: Record<string, unknown>,
   extra: RequestHandlerExtra<ServerRequest, ServerNotification>
 ): Promise<CallToolResult> {
-  const { identity, workflowId } = parseSession(extra.requestInfo?.headers);
-  if (identity === "unknown") return err("identity required");
+  const { identity, workflowId, registered } = parseSession(extra.requestInfo?.headers);
+  if (!registered) return err("valid registered token is required");
   if (!workflowId) return err("not bound to a workflow — call confirm_task first");
 
   return getMutex(workflowId).runExclusive(async () => {
@@ -118,8 +119,8 @@ export async function advance(
       }
       const finishedId = state.workflow_id;
       const finishedArchive = workflowArchivePath(state, finishedId!).replace(/\\/g, "/");
-      const next = initIdleState(state);
-      setState(workflowId, next);
+      deleteState(workflowId);
+      unbindWorkflow(workflowId);
 
       return ok({ ok: true, new_phase: "idle" }, `[行动] 工作流已结束。全部产出归档于 ${finishedArchive}/。如需开始新任务，在服务未重启且 token 仍可用时可复用当前 token；双方分别调用 confirm_task，并使用相同 task_path。服务重启或 token 丢失时先重新 register。\n\n[当前] 你是 ${identity}（supervisor）。工作流已结束。`);
     }

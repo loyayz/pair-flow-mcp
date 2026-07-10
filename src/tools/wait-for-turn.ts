@@ -13,8 +13,8 @@ export async function waitForTurn(
   extra: RequestHandlerExtra<ServerRequest, ServerNotification>
 ): Promise<CallToolResult> {
   extra.signal.throwIfAborted();
-  const { identity, workflowId } = parseSession(extra.requestInfo?.headers);
-  if (identity === "unknown") return err("identity required");
+  const { identity, workflowId, registered } = parseSession(extra.requestInfo?.headers);
+  if (!registered) return err("valid registered token is required");
   if (!workflowId) return err("not bound to a workflow — call confirm_task first");
 
   const initialState = getState(workflowId);

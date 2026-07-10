@@ -147,12 +147,6 @@ export function initSummaryPhase(state: PairFlowState, supervisorId: string): Pa
   };
 }
 
-export function initIdleState(state: PairFlowState): PairFlowState {
-  return {
-    ...defaultState(),
-  };
-}
-
 // ── Helpers ──
 
 export function formatWorkflowId(): string {

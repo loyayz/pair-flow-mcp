@@ -5,7 +5,7 @@ import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/proto
 import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
 import { Mutex } from "async-mutex";
 import { parseSession } from "../identity.js";
-import { getState, setState, getAllStates, defaultState, formatWorkflowId, isRecoveryPlaceholderParticipant, type Participant } from "../state.js";
+import { getState, setState, getAllStates, getMutex, defaultState, formatWorkflowId, isRecoveryPlaceholderParticipant, type Participant } from "../state.js";
 import { reconstructFromHandoff } from "../crash-recovery.js";
 import { err, ok } from "../response.js";
 import { bindWorkflow } from "../token-map.js";
@@ -111,8 +111,8 @@ export async function confirmTask(
   args: Record<string, unknown>,
   extra: RequestHandlerExtra<ServerRequest, ServerNotification>
 ): Promise<CallToolResult> {
-  const { identity, workflowId: boundWorkflowId } = parseSession(extra.requestInfo?.headers);
-  if (identity === "unknown") return err("identity required");
+  const { identity, workflowId: boundWorkflowId, registered } = parseSession(extra.requestInfo?.headers);
+  if (!registered) return err("valid registered token is required");
 
   const taskPath = args.task_path as string;
   if (!taskPath) return err("task_path is required");
@@ -151,6 +151,14 @@ export async function confirmTask(
   } catch {
     return err(`work_dir not found: ${posixPath(resolvedWorkDir)}`);
   }
+  try {
+    const gitMarkerStat = await stat(resolve(resolvedWorkDir, ".git"));
+    if (!gitMarkerStat.isDirectory() && !gitMarkerStat.isFile()) {
+      return err("work_dir must be a Git repository root containing a .git file or directory");
+    }
+  } catch {
+    return err("work_dir must be a Git repository root containing a .git file or directory");
+  }
   if (!isSameOrDescendantPath(resolvedTaskPath, resolvedWorkDir)) {
     return err("task_path must be under work_dir");
   }
@@ -176,7 +184,7 @@ export async function confirmTask(
     const pidWfId = await readPidFile(resolvedTaskPath);
     if (pidWfId) {
       const defState = defaultState();
-      const recoveredState = await reconstructFromHandoff(defState, pidWfId, resolvedWorkDir);
+      const recoveredState = await reconstructFromHandoff(defState, pidWfId, resolvedWorkDir, resolvedTaskPath);
       if (recoveredState) {
         setState(pidWfId, recoveredState);
         existing = pidWfId;
@@ -205,77 +213,81 @@ export async function confirmTask(
     isFirst = true;
   } else {
     wfId = existing;
-    const state = getState(wfId);
-    if (!state) return err("workflow state not found");
-    const existingTaskType = state.task?.task_type ?? "development";
-    if (suppliedTaskType && suppliedTaskType !== existingTaskType) {
-      return err(`task_type mismatch: "${suppliedTaskType}" vs "${existingTaskType}"`);
-    }
+    const existingResult = await getMutex(wfId).runExclusive(async (): Promise<CallToolResult | null> => {
+      const state = getState(wfId);
+      if (!state) return err("workflow state not found");
+      const existingTaskType = state.task?.task_type ?? "development";
+      if (suppliedTaskType && suppliedTaskType !== existingTaskType) {
+        return err(`task_type mismatch: "${suppliedTaskType}" vs "${existingTaskType}"`);
+      }
 
-    // 当前调用者可能已经在工作流中（恢复场景）
-    const alreadyIn = state.participants.some((p) => p.identity === identity);
-    if (alreadyIn) {
-      const myParticipant = state.participants.find(p => p.identity === identity)!;
-      const confirmedAt = new Date().toISOString();
-      const nextParticipants = state.participants.map((p) => p.identity === identity
-        ? { ...p, is_supervisor: supervisor, is_developer: developer, registered_at: confirmedAt, work_dir: resolvedWorkDir }
-        : p);
-      const responsibilityError = validateParticipantCombination(nextParticipants);
+      // 当前调用者可能已经在工作流中（恢复场景）
+      const alreadyIn = state.participants.some((p) => p.identity === identity);
+      if (alreadyIn) {
+        const myParticipant = state.participants.find(p => p.identity === identity)!;
+        const confirmedAt = new Date().toISOString();
+        const nextParticipants = state.participants.map((p) => p.identity === identity
+          ? { ...p, is_supervisor: supervisor, is_developer: developer, registered_at: confirmedAt, work_dir: resolvedWorkDir }
+          : p);
+        const responsibilityError = validateParticipantCombination(nextParticipants);
+        if (responsibilityError) return err(responsibilityError);
+        const pidError = await writePidFile(resolvedTaskPath, wfId);
+        if (pidError) return err(pidError);
+
+        // 用确认时的入参覆盖重建推断的职责——调用者声明为准
+        myParticipant.is_supervisor = supervisor;
+        myParticipant.is_developer = developer;
+        myParticipant.registered_at = confirmedAt;
+        myParticipant.work_dir = resolvedWorkDir;
+        setState(wfId, state);
+        const raw = extra.requestInfo?.headers?.["x-ai-identity"] as string;
+        if (raw) bindWorkflow(raw.trim(), wfId);
+
+        const turnIsSelf = state.turn === identity;
+        const turnInfo = turnIsSelf ? `turn 在 ${state.turn}（你）` : `turn 在 ${state.turn}（对方）`;
+        const tip = `[行动] 已重新加入工作流 ${wfId}。当前在 ${state.phase} 阶段第 ${state.round} 轮，${turnInfo}。调用 wait_for_turn（长轮询，10s 间隔，最多 600s）。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。\n\n[当前] 你是 ${identity}（${responsibilityLabel(myParticipant)}）。工作流 ${wfId}。`;
+        return ok({
+          task_path: resolvedTaskPath.replace(/\\/g, "/"),
+          workflow_id: wfId,
+          phase: state.phase,
+          recovered: true,
+        }, tip);
+      }
+
+      // 检查是否已满
+      if (state.participants.length >= 2) {
+        return err("this task already has 2 participants — cannot join");
+      }
+
+      const firstParticipant = state.participants[0];
+      const newParticipant: Participant = {
+        identity,
+        is_supervisor: supervisor,
+        is_developer: developer,
+        registered_at: new Date().toISOString(),
+        work_dir: resolvedWorkDir,
+      };
+      const responsibilityError = validateParticipantCombination([...state.participants, newParticipant]);
       if (responsibilityError) return err(responsibilityError);
+
+      // work_dir 一致性
+      if (firstParticipant.work_dir && !samePath(firstParticipant.work_dir, resolvedWorkDir)) {
+        return err(`work_dir mismatch: "${posixPath(resolvedWorkDir)}" vs "${posixPath(firstParticipant.work_dir)}"`);
+      }
       const pidError = await writePidFile(resolvedTaskPath, wfId);
       if (pidError) return err(pidError);
 
-      // 用确认时的入参覆盖重建推断的职责——调用者声明为准
-      myParticipant.is_supervisor = supervisor;
-      myParticipant.is_developer = developer;
-      myParticipant.registered_at = confirmedAt;
-      myParticipant.work_dir = resolvedWorkDir;
+      // 加入
+      state.participants.push(newParticipant);
+      // idle 阶段双方就位后，turn 切给监督者——使其 wait_for_turn 立即返回
+      if (state.phase === "idle") {
+        const sup = state.participants.find((p) => p.is_supervisor);
+        if (sup) state.turn = sup.identity;
+      }
       setState(wfId, state);
-      const raw = extra.requestInfo?.headers?.["x-ai-identity"] as string;
-      if (raw) bindWorkflow(raw.trim(), wfId);
-
-      const turnIsSelf = state.turn === identity;
-      const turnInfo = turnIsSelf ? `turn 在 ${state.turn}（你）` : `turn 在 ${state.turn}（对方）`;
-      const tip = `[行动] 已重新加入工作流 ${wfId}。当前在 ${state.phase} 阶段第 ${state.round} 轮，${turnInfo}。调用 wait_for_turn（长轮询，10s 间隔，最多 600s）。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。\n\n[当前] 你是 ${identity}（${responsibilityLabel(myParticipant)}）。工作流 ${wfId}。`;
-      return ok({
-        task_path: resolvedTaskPath.replace(/\\/g, "/"),
-        workflow_id: wfId,
-        phase: state.phase,
-        recovered: true,
-      }, tip);
-    }
-
-    // 检查是否已满
-    if (state.participants.length >= 2) {
-      return err("this task already has 2 participants — cannot join");
-    }
-
-    const firstParticipant = state.participants[0];
-    const newParticipant: Participant = {
-      identity,
-      is_supervisor: supervisor,
-      is_developer: developer,
-      registered_at: new Date().toISOString(),
-      work_dir: resolvedWorkDir,
-    };
-    const responsibilityError = validateParticipantCombination([...state.participants, newParticipant]);
-    if (responsibilityError) return err(responsibilityError);
-
-    // work_dir 一致性
-    if (firstParticipant.work_dir && !samePath(firstParticipant.work_dir, resolvedWorkDir)) {
-      return err(`work_dir mismatch: "${posixPath(resolvedWorkDir)}" vs "${posixPath(firstParticipant.work_dir)}"`);
-    }
-    const pidError = await writePidFile(resolvedTaskPath, wfId);
-    if (pidError) return err(pidError);
-
-    // 加入
-    state.participants.push(newParticipant);
-    // idle 阶段双方就位后，turn 切给监督者——使其 wait_for_turn 立即返回
-    if (state.phase === "idle") {
-      const sup = state.participants.find((p) => p.is_supervisor);
-      if (sup) state.turn = sup.identity;
-    }
-    setState(wfId, state);
+      return null;
+    });
+    if (existingResult) return existingResult;
   }
 
   // 绑定 token → workflow

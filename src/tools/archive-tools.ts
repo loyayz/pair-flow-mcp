@@ -13,7 +13,8 @@ export async function getArchivedFiles(
   args: Record<string, unknown>,
   extra: RequestHandlerExtra<ServerRequest, ServerNotification>,
 ): Promise<CallToolResult> {
-  const { identity, workflowId } = parseSession(extra.requestInfo?.headers);
+  const { identity, workflowId, registered } = parseSession(extra.requestInfo?.headers);
+  if (!registered) return err("valid registered token is required");
   const state = workflowId ? getState(workflowId) : undefined;
   const participant = state?.participants.find((candidate) => candidate.identity === identity);
   const activeWorkflowId = participant ? state?.workflow_id : null;
@@ -39,7 +40,7 @@ export async function getArchivedFiles(
       ? participant?.work_dir
       : undefined;
   if (!workDir) {
-    return err("work_dir is required when listing a historical or anonymous workflow_id");
+    return err("work_dir is required when listing a historical workflow_id");
   }
   const resolvedWorkDir = resolve(workDir);
   try {
@@ -47,6 +48,14 @@ export async function getArchivedFiles(
     if (!workDirStat.isDirectory()) return err("work_dir must be a directory");
   } catch {
     return err(`work_dir not found: ${resolvedWorkDir.replace(/\\/g, "/")}`);
+  }
+  try {
+    const gitMarkerStat = await stat(resolve(resolvedWorkDir, ".git"));
+    if (!gitMarkerStat.isDirectory() && !gitMarkerStat.isFile()) {
+      return err("work_dir must be a Git repository root containing a .git file or directory");
+    }
+  } catch {
+    return err("work_dir must be a Git repository root containing a .git file or directory");
   }
 
   const root = archiveRoot(resolvedWorkDir);

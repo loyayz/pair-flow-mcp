@@ -3,13 +3,14 @@ import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/proto
 import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
 import { parseSession } from "../identity.js";
 import { getState, hasRecoveryPlaceholderParticipant } from "../state.js";
-import { ok } from "../response.js";
+import { err, ok } from "../response.js";
 import { buildTip } from "../tip.js";
 
 export async function getStateTool(
   extra: RequestHandlerExtra<ServerRequest, ServerNotification>
 ): Promise<CallToolResult> {
-  const { identity, workflowId } = parseSession(extra.requestInfo?.headers);
+  const { identity, workflowId, registered } = parseSession(extra.requestInfo?.headers);
+  if (!registered) return err("valid registered token is required");
   const state = workflowId ? getState(workflowId) : undefined;
   if (!state) return ok({ tip: `[行动] 你还未绑定到任何工作流。调用 confirm_task 确认任务文档并声明职责。` });
   if (!state.participants.some((p) => p.identity === identity)) {

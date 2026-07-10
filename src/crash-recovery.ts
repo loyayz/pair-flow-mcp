@@ -1,5 +1,5 @@
 import { readdir, readFile, mkdir, access } from "node:fs/promises";
-import { join, resolve, relative } from "node:path";
+import { isAbsolute, join, resolve, relative } from "node:path";
 import { RECOVERY_REGISTERED_AT, defaultState, type PairFlowState, type Phase, type SubPhase, type Participant, type LastSubmission } from "./state.js";
 import { archivePath } from "./archive-path.js";
 import { isValidIdentity } from "./identity.js";
@@ -10,6 +10,24 @@ interface ParsedFilename {
   round: number;
   sub_phase: SubPhase;
   identity: string;
+}
+
+type RecoverablePhase = Exclude<Phase, "idle">;
+
+interface SubmissionMeta {
+  submitted_at: string;
+  commit_hash: string;
+  sub_phase: SubPhase;
+  task: {
+    spec_file: string;
+    task_type: "requirements" | "development";
+  };
+}
+
+interface RecoveredSubmission extends ParsedFilename {
+  phase: RecoverablePhase;
+  meta: SubmissionMeta;
+  meta_path: string;
 }
 
 function basename(path: string): string {
@@ -52,22 +70,27 @@ export function parseFilename(filename: string): ParsedFilename | null {
 
 // ── Handoff reconstruction (state.json deleted mid-session) ──
 
-const PHASE_PRIORITY: Phase[] = ["summary", "implementation", "planning", "requirements"];
+const PHASE_PRIORITY: RecoverablePhase[] = ["summary", "implementation", "planning", "requirements"];
 
 export async function reconstructFromHandoff(
   state: PairFlowState,
   wfId: string,
   workDir: string,
+  taskPath: string,
 ): Promise<PairFlowState | null> {
   const wfDir = archivePath(workDir, wfId);
   state.workflow_id = wfId;
+  state.task = { spec_file: resolve(taskPath) };
 
-  // 1. Determine phase
-  state.phase = await determinePhase(wfDir);
+  const submissions = await collectValidSubmissions(wfDir);
+  if (submissions.length === 0) return null;
 
-  // 2. Reconstruct participants from filenames
-  const identities = await extractIdentities(wfDir);
-  if (identities.size === 0) return null; // can't recover without participants
+  // 1. Determine phase from valid submissions only.
+  state.phase = determinePhase(submissions);
+
+  // 2. Reconstruct participants from valid submissions.
+  const identities = new Set(submissions.map((submission) => submission.identity));
+  if (identities.size > 2) return null; // workflow domain permits exactly two participants
 
   for (const id of identities) {
     // 职责由 confirm_task 入参覆盖；重建时用默认值
@@ -79,31 +102,21 @@ export async function reconstructFromHandoff(
     });
   }
 
-  // 3. Scan meta.json for task recovery
-  const wfDirVar = wfDir; // capture for closures
-  try {
-    const metaFiles = await findFiles(wfDirVar, ".meta.json");
-    for (const mf of metaFiles) {
-      try {
-        const raw = await readFile(join(wfDirVar, mf), "utf-8");
-        const meta = JSON.parse(raw);
-        // P1-14: restore task from first meta.json that contains it
-        if (!state.task && meta.task && meta.task.spec_file) {
-          state.task = meta.task;
-        }
-      } catch { /* skip corrupt */ }
-    }
-  } catch { /* */ }
+  // 3. Recover immutable task type; current confirm_task supplies the authoritative path.
+  const recoveredTaskTypes = new Set(submissions.map((submission) => submission.meta.task.task_type));
+  if (recoveredTaskTypes.size > 1) return null;
+  state.task.task_type = recoveredTaskTypes.values().next().value ?? "development";
 
   // 4. Determine round, turn
-  const latestPhaseDir = join(wfDirVar, state.phase);
-  const latestMetaFiles = await findFiles(latestPhaseDir, ".meta.json");
-  let latestSubmission: ParsedFilename | null = null;
+  const currentPhaseSubmissions = submissions.filter((submission) => submission.phase === state.phase);
+  let latestSubmission: RecoveredSubmission | null = null;
+  const recoveredRounds = new Set<number>();
 
-  for (const mf of latestMetaFiles) {
-    const parsed = parseFilename(basename(mf));
-    if (parsed && (!latestSubmission || parsed.round > latestSubmission.round)) {
-      latestSubmission = parsed;
+  for (const submission of currentPhaseSubmissions) {
+    if (recoveredRounds.has(submission.round)) return null;
+    recoveredRounds.add(submission.round);
+    if (!latestSubmission || submission.round > latestSubmission.round) {
+      latestSubmission = submission;
     }
   }
 
@@ -115,7 +128,7 @@ export async function reconstructFromHandoff(
     state.turn = state.participants[0].identity;
   }
 
-  // 4a. Recover sub_phase from filenames (retro-1 §2.2)
+  // 4a. Recover sub_phase from the latest validated filename.
   if (state.phase === "implementation") {
     state.sub_phase = latestSubmission?.sub_phase === "coding"
       ? "review"
@@ -124,74 +137,85 @@ export async function reconstructFromHandoff(
         : null;
   }
 
-  // 4b. Recover last_submission_by_participant from meta.json (retro-1 §2.2)
-  try {
-    state.last_submission_by_participant = await reconstructLastSubmissionByParticipant(wfDirVar, state.participants, state.phase);
-  } catch { /* keep empty if reconstruction fails */ }
+  // 4b. Recover last_submission_by_participant from validated metadata.
+  state.last_submission_by_participant = reconstructLastSubmissionByParticipant(
+    currentPhaseSubmissions,
+    state.participants,
+  );
 
   console.log(`[pair-flow] Reconstructed state from ${wfDir}: phase=${state.phase}, participants=${state.participants.length}, round=${state.round}`);
   return state;
 }
 
-async function determinePhase(wfDir: string): Promise<Phase> {
+function determinePhase(submissions: RecoveredSubmission[]): RecoverablePhase {
   for (const phase of PHASE_PRIORITY) {
-    try {
-      const phasePath = join(wfDir, phase);
-      const files = await findFiles(phasePath, ".meta.json");
-      if (files.length > 0) return phase;
-    } catch { /* */ }
+    if (submissions.some((submission) => submission.phase === phase)) return phase;
   }
-  return "idle";
+  return "requirements";
 }
 
-async function extractIdentities(wfDir: string): Promise<Set<string>> {
-  const ids = new Set<string>();
+async function collectValidSubmissions(wfDir: string): Promise<RecoveredSubmission[]> {
+  const submissions: RecoveredSubmission[] = [];
   for (const phase of PHASE_PRIORITY) {
-    try {
-      const files = await findFiles(join(wfDir, phase), ".meta.json");
-      for (const f of files) {
-        const parsed = parseFilename(basename(f));
-        if (parsed) ids.add(parsed.identity);
-      }
-    } catch { /* */ }
+    const phaseDir = join(wfDir, phase);
+    const files = await findFiles(phaseDir, ".meta.json");
+    for (const file of files) {
+      const parsed = parseFilename(basename(file));
+      if (!parsed) continue;
+      try {
+        const meta = JSON.parse(await readFile(join(phaseDir, file), "utf-8"));
+        if (!isValidSubmissionMeta(meta, phase, parsed)) continue;
+        submissions.push({ ...parsed, phase, meta, meta_path: join(phaseDir, file) });
+      } catch { /* ignore corrupt metadata */ }
+    }
   }
-  return ids;
+  return submissions;
 }
 
+function isValidSubmissionMeta(
+  value: unknown,
+  phase: RecoverablePhase,
+  parsed: ParsedFilename,
+): value is SubmissionMeta {
+  if (!value || typeof value !== "object") return false;
+  const meta = value as Record<string, unknown>;
+  if (typeof meta.submitted_at !== "string" || Number.isNaN(Date.parse(meta.submitted_at))) return false;
+  if (typeof meta.commit_hash !== "string" || !/^[0-9a-fA-F]{7,40}$/.test(meta.commit_hash)) return false;
+  if (!meta.task || typeof meta.task !== "object") return false;
+  const task = meta.task as Record<string, unknown>;
+  if (typeof task.spec_file !== "string" || !isAbsolute(task.spec_file)) return false;
+  if (task.task_type !== "requirements" && task.task_type !== "development") return false;
+
+  if (phase === "implementation") {
+    const expectedSubPhase: SubPhase = parsed.round % 2 === 1 ? "coding" : "review";
+    return parsed.sub_phase === expectedSubPhase && meta.sub_phase === expectedSubPhase;
+  }
+  return parsed.sub_phase === null && meta.sub_phase === null;
+}
 
 // ── Field recovery helpers (retro-1 §2.2 + retro-2 §4.1) ──
-async function reconstructLastSubmissionByParticipant(wfDir: string, participants: Participant[], phase: string): Promise<Record<string, LastSubmission>> {
+function reconstructLastSubmissionByParticipant(
+  submissions: RecoveredSubmission[],
+  participants: Participant[],
+): Record<string, LastSubmission> {
   const lsp: Record<string, LastSubmission> = {};
   const empty: LastSubmission = { round: null, sub_phase: null, commit_hash: null, submitted_at: null, file_path: null };
 
   // Initialize all participants with empty
   for (const p of participants) lsp[p.identity] = { ...empty };
 
-  try {
-    const phaseDir = join(wfDir, phase);
-    const metaFiles = await findFiles(phaseDir, ".meta.json");
-    for (const mf of metaFiles) {
-      const base = basename(mf);
-      const parsed = parseFilename(base);
-      if (!parsed) continue;
-      if (!lsp[parsed.identity]) continue;
-
-      try {
-        const raw = await readFile(join(phaseDir, mf), "utf-8");
-        const meta = JSON.parse(raw);
-        // Only update if this submission is more recent than what we already have
-        if (meta.submitted_at && (!lsp[parsed.identity].submitted_at || meta.submitted_at > lsp[parsed.identity].submitted_at!)) {
-          lsp[parsed.identity] = {
-            round: parsed.round,
-            sub_phase: meta.sub_phase ?? parsed.sub_phase,
-            commit_hash: meta.commit_hash ?? null,
-            submitted_at: meta.submitted_at ?? null,
-            file_path: join(phaseDir, base.replace(/\.meta\.json$/, ".md")),
-          };
-        }
-      } catch { /* skip corrupt meta */ }
+  for (const submission of submissions) {
+    if (!lsp[submission.identity]) continue;
+    if (lsp[submission.identity].round === null || submission.round > lsp[submission.identity].round!) {
+      lsp[submission.identity] = {
+        round: submission.round,
+        sub_phase: submission.sub_phase,
+        commit_hash: submission.meta.commit_hash,
+        submitted_at: submission.meta.submitted_at,
+        file_path: submission.meta_path.replace(/\.meta\.json$/, ".md"),
+      };
     }
-  } catch { /* phase dir missing */ }
+  }
 
   return lsp;
 }

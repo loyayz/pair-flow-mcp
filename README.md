@@ -26,7 +26,7 @@ npx tsx src/index.ts
 ```
 
 Server 仅监听 `127.0.0.1:3100`，提供 HTTP MCP（`/mcp`）+ 健康检查（`/health`）。
-每个 workflow 的产出归档固定写入目标项目的 `<work_dir>/handoff/{workflow_id}/`。
+每个 workflow 的产出归档固定写入目标项目的 `<work_dir>/handoff/{workflow_id}/`。`work_dir` 必须是含 `.git` 文件或目录的 Git 仓库根，支持普通仓库和 linked worktree。
 
 ### 3. 使用
 
@@ -53,9 +53,9 @@ cp -r skills/pairflow ~/.claude/skills/pairflow
 | `wait_for_turn` | 长轮询等待 turn 到自己（10s 间隔，600s 超时） |
 | `submit` | 提交产出（绝对 file_path + git_commit_hash） |
 | `advance` | 监督者推进到下一阶段 |
-| `get_state` | 查看当前状态和行动指引 |
-| `get_archived_files` | 列出归档文件；历史或匿名查询需同时提供 workflow_id 与绝对 work_dir |
+| `get_state` | 查看当前状态和行动指引；需要有效注册 token |
+| `get_archived_files` | 列出归档文件；需要有效注册 token，历史查询需同时提供 workflow_id 与绝对 work_dir |
 
-所有请求通过 HTTP header `X-AI-Identity: <token>` 携带身份。register 返回 token，confirm_task 绑定 token 到工作流。
+除 `ping`、`who_am_i`、`register` 外，所有工具都要求通过 HTTP header `X-AI-Identity: <token>` 携带有效注册 token。register 返回 token，confirm_task 绑定 token 到工作流。
 
 完整设计文档见 `docs/design.md`。

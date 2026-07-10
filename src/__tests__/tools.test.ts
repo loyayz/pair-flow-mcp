@@ -19,7 +19,7 @@ function mcpRequest(name: string, args: Record<string, unknown> = {}, headers: R
   return new Promise((resolve, reject) => {
     const body = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } });
     const req = http.request({
-      hostname: "localhost", port: PORT, path: "/mcp", method: "POST",
+      hostname: "127.0.0.1", port: PORT, path: "/mcp", method: "POST",
       headers: { "Content-Type": "application/json", "Accept": "application/json, text/event-stream", ...headers },
     }, (res) => {
       let data = "";
@@ -40,7 +40,7 @@ function mcpListTools(): Promise<Array<{ name: string; inputSchema?: { required?
   return new Promise((resolve, reject) => {
     const body = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} });
     const req = http.request({
-      hostname: "localhost", port: PORT, path: "/mcp", method: "POST",
+      hostname: "127.0.0.1", port: PORT, path: "/mcp", method: "POST",
       headers: { "Content-Type": "application/json", "Accept": "application/json, text/event-stream" },
     }, (res) => {
       let data = "";
@@ -63,12 +63,22 @@ function mcpListTools(): Promise<Array<{ name: string; inputSchema?: { required?
 async function startServer() {
   await rm(TEST_STATE, { recursive: true }).catch(() => {});
   await rm(TEST_WORK_DIR, { recursive: true }).catch(() => {});
-  await mkdir(TEST_WORK_DIR, { recursive: true });
+  await createGitWorkDir(TEST_WORK_DIR);
   server = spawn(process.execPath, ["--import", "tsx/esm", "src/index.ts"], {
     env: { ...process.env, PORT: String(PORT), STATE_DIR: TEST_STATE },
     stdio: "pipe",
   });
   await new Promise((r) => setTimeout(r, 2000));
+}
+
+async function createGitWorkDir(path: string, marker: "directory" | "file" = "directory") {
+  await mkdir(path, { recursive: true });
+  const gitMarker = resolve(path, ".git");
+  if (marker === "file") {
+    await writeFile(gitMarker, "gitdir: ../linked-git-dir\n", "utf-8");
+  } else {
+    await mkdir(gitMarker, { recursive: true });
+  }
 }
 
 async function stopServer() {
@@ -111,6 +121,7 @@ async function seedRecoveredWorkflow(workDir: string, task: string, wfId: string
     await writeFile(resolve(phaseDir, `r${index + 1}_${identity}.meta.json`), JSON.stringify({
       submitted_at: `2026-07-09T10:0${index}:00.000Z`,
       commit_hash: index === 0 ? "abc1234" : "def5678",
+      sub_phase: null,
       task: taskMeta,
     }), "utf-8");
   }
@@ -137,6 +148,22 @@ describe("Register", () => {
     const who = await mcpRequest("who_am_i", {}, { "x-ai-identity": token });
     expect(who.registered).toBe(true);
     expect(who.joined_workflow).toBe(false);
+  });
+  it("requires a valid registered token for every protected tool", async () => {
+    const protectedCalls: Array<[string, Record<string, unknown>]> = [
+      ["confirm_task", { task_path: TEST_TASK, is_supervisor: true, is_developer: false, work_dir: TEST_WORK_DIR }],
+      ["advance", {}],
+      ["get_state", {}],
+      ["get_archived_files", { workflow_id: "20260710123456", work_dir: TEST_WORK_DIR }],
+      ["wait_for_turn", {}],
+      ["submit", { file_path: TEST_TASK, git_commit_hash: "abc1234" }],
+    ];
+
+    for (const [name, args] of protectedCalls) {
+      const r = await mcpRequest(name, args);
+      expect(r.ok, name).toBe(false);
+      expect(r.tip, name).toContain("valid registered token is required");
+    }
   });
   it("does not expose archive content reads", async () => {
     const tools = await mcpListTools();
@@ -218,6 +245,41 @@ describe("Confirm task", () => {
     expect(confirmed.tip).toContain("work_dir must be a directory");
     await rm(file, { force: true });
     await rm(`${file}.pid`, { force: true });
+  });
+
+  it("rejects a work_dir without a .git marker", async () => {
+    const workDir = resolve(TEST_WORK_DIR, "not-a-git-root");
+    const task = resolve(workDir, "task.md");
+    await mkdir(workDir, { recursive: true });
+    await writeFile(task, "# not a git root", "utf-8");
+    const registered = await mcpRequest("register", { identity: "non-git-root" });
+    const confirmed = await mcpRequest("confirm_task", {
+      task_path: task,
+      is_supervisor: true,
+      is_developer: false,
+      work_dir: workDir,
+    }, { "x-ai-identity": registered.token as string });
+
+    expect(confirmed.ok).toBe(false);
+    expect(confirmed.tip).toContain("work_dir must be a Git repository root");
+    await rm(workDir, { recursive: true, force: true });
+  });
+
+  it("accepts a .git file for a linked worktree root", async () => {
+    const workDir = resolve(TEST_WORK_DIR, "linked-worktree-root");
+    const task = resolve(workDir, "task.md");
+    await createGitWorkDir(workDir, "file");
+    await writeFile(task, "# linked worktree task", "utf-8");
+    const registered = await mcpRequest("register", { identity: "linked-worktree" });
+    const confirmed = await mcpRequest("confirm_task", {
+      task_path: task,
+      is_supervisor: true,
+      is_developer: false,
+      work_dir: workDir,
+    }, { "x-ai-identity": registered.token as string });
+
+    expect(confirmed.ok).toBe(true);
+    await rm(workDir, { recursive: true, force: true });
   });
 
   it("rejects a directory used as task_path", async () => {
@@ -565,7 +627,8 @@ describe("Confirm task", () => {
     const nested = resolve(root, "nested");
     const task = resolve(nested, "task.md");
     const wfId = "20260709192001";
-    await mkdir(nested, { recursive: true });
+    await createGitWorkDir(root);
+    await createGitWorkDir(nested);
     await writeFile(task, "# recovery workdir task", "utf-8");
     await seedRecoveredWorkflow(root, task, wfId, ["rec-wd-a", "rec-wd-b"]);
 
@@ -595,7 +658,8 @@ describe("Confirm task", () => {
     const newWorkDir = resolve(oldWorkDir, "nested");
     const task = resolve(newWorkDir, "task.md");
     const oldWorkflowId = "20000101000000";
-    await mkdir(newWorkDir, { recursive: true });
+    await createGitWorkDir(oldWorkDir);
+    await createGitWorkDir(newWorkDir);
     await writeFile(task, "# moved workdir task", "utf-8");
     await seedRecoveredWorkflow(oldWorkDir, task, oldWorkflowId, ["old-participant"]);
 
@@ -612,6 +676,43 @@ describe("Confirm task", () => {
     expect(confirmed.workflow_id).not.toBe(oldWorkflowId);
     expect(await readFile(`${task}.pid`, "utf-8")).toBe(confirmed.workflow_id);
     await rm(oldWorkDir, { recursive: true, force: true });
+  });
+
+  it("starts a new workflow when archived task types conflict", async () => {
+    const task = resolve(TEST_WORK_DIR, "conflicting-task-type.md");
+    const oldWorkflowId = "20000101000001";
+    const phaseDir = resolve(TEST_HANDOFF, oldWorkflowId, "requirements");
+    await mkdir(phaseDir, { recursive: true });
+    await writeFile(task, "# conflicting task type", "utf-8");
+    await writeFile(`${task}.pid`, oldWorkflowId, "utf-8");
+    await writeFile(resolve(phaseDir, "r1_old-a.meta.json"), JSON.stringify({
+      submitted_at: "2026-07-09T10:00:00.000Z",
+      commit_hash: "abc1234",
+      sub_phase: null,
+      task: { spec_file: task, task_type: "requirements" },
+    }));
+    await writeFile(resolve(phaseDir, "r2_old-b.meta.json"), JSON.stringify({
+      submitted_at: "2026-07-09T10:01:00.000Z",
+      commit_hash: "def5678",
+      sub_phase: null,
+      task: { spec_file: task, task_type: "development" },
+    }));
+
+    const registered = await mcpRequest("register", { identity: "task-type-conflict" });
+    const confirmed = await mcpRequest("confirm_task", {
+      task_path: task,
+      is_supervisor: true,
+      is_developer: false,
+      work_dir: TEST_WORK_DIR,
+    }, { "x-ai-identity": registered.token as string });
+
+    expect(confirmed.ok).toBe(true);
+    expect(confirmed.recovered).toBe(false);
+    expect(confirmed.workflow_id).not.toBe(oldWorkflowId);
+    expect(await readFile(`${task}.pid`, "utf-8")).toBe(confirmed.workflow_id);
+    expect(await readFile(resolve(phaseDir, "r1_old-a.meta.json"), "utf-8")).toContain("requirements");
+    await rm(task, { force: true });
+    await rm(`${task}.pid`, { force: true });
   });
 
   it("skips planning and implementation for requirements-only workflows", async () => {
@@ -689,7 +790,7 @@ describe("Confirm task", () => {
     expect(summary2.ok).toBe(true);
     expect(finished.ok).toBe(true);
     expect(finished.new_phase).toBe("idle");
-    expect(finalState.tip).toContain("没有加入活跃工作流");
+    expect(finalState.tip).toContain("还未绑定到任何工作流");
     await rm(task, { force: true });
     await rm(`${task}.pid`, { force: true });
   });
@@ -804,11 +905,11 @@ describe("Wait for turn + submit", () => {
     expect(r.files).not.toContain("events.jsonl");
     expect(r.files).not.toContain("fake.md");
   });
-  it("requires work_dir for anonymous archive listing", async () => {
+  it("requires work_dir for historical archive listing", async () => {
     const r = await mcpRequest("get_archived_files", {
-      workflow_id: workflowId,
+      workflow_id: `${workflowId}0`,
       phase: "requirements",
-    });
+    }, { "x-ai-identity": codebuddyToken });
     expect(r.ok).toBe(false);
     expect(r.tip).toContain("work_dir is required");
   });
@@ -816,7 +917,7 @@ describe("Wait for turn + submit", () => {
     const r = await mcpRequest("get_archived_files", {
       workflow_id: workflowId,
       work_dir: ".",
-    });
+    }, { "x-ai-identity": codebuddyToken });
     expect(r.ok).toBe(false);
     expect(r.tip).toContain("work_dir must be an absolute path");
   });
@@ -824,7 +925,7 @@ describe("Wait for turn + submit", () => {
     const r = await mcpRequest("get_archived_files", {
       workflow_id: workflowId,
       work_dir: `${TEST_WORK_DIR}/./`,
-    });
+    }, { "x-ai-identity": codebuddyToken });
     expect(r.ok).toBe(false);
     expect(r.tip).toContain("work_dir must not contain . or .. path segments");
   });
@@ -833,7 +934,7 @@ describe("Wait for turn + submit", () => {
     const r = await mcpRequest("get_archived_files", {
       workflow_id: workflowId,
       work_dir: missingWorkDir,
-    });
+    }, { "x-ai-identity": codebuddyToken });
     expect(r.ok).toBe(false);
     expect(r.tip).toContain("work_dir not found");
   });
@@ -843,17 +944,45 @@ describe("Wait for turn + submit", () => {
     const r = await mcpRequest("get_archived_files", {
       workflow_id: workflowId,
       work_dir: file,
-    });
+    }, { "x-ai-identity": codebuddyToken });
     expect(r.ok).toBe(false);
     expect(r.tip).toContain("work_dir must be a directory");
     await rm(file, { force: true });
   });
-  it("allows anonymous archive listing by explicit workflow_id and work_dir", async () => {
+  it("rejects an archive work_dir without a .git marker", async () => {
+    const workDir = resolve(TEST_WORK_DIR, "archive-non-git-root");
+    await mkdir(workDir, { recursive: true });
+    const r = await mcpRequest("get_archived_files", {
+      workflow_id: workflowId,
+      work_dir: workDir,
+    }, { "x-ai-identity": codebuddyToken });
+
+    expect(r.ok).toBe(false);
+    expect(r.tip).toContain("work_dir must be a Git repository root");
+    await rm(workDir, { recursive: true, force: true });
+  });
+  it("accepts a linked worktree root for historical archive listing", async () => {
+    const workDir = resolve(TEST_WORK_DIR, "archive-linked-worktree");
+    const phaseDir = resolve(workDir, "handoff", workflowId, "requirements");
+    await createGitWorkDir(workDir, "file");
+    await mkdir(phaseDir, { recursive: true });
+    await writeFile(resolve(phaseDir, "r1_codebuddy.md"), "# archived requirements", "utf-8");
+    const r = await mcpRequest("get_archived_files", {
+      workflow_id: workflowId,
+      work_dir: workDir,
+      phase: "requirements",
+    }, { "x-ai-identity": codebuddyToken });
+
+    expect(r.ok).toBe(true);
+    expect(r.files).toContain("r1_codebuddy.md");
+    await rm(workDir, { recursive: true, force: true });
+  });
+  it("allows registered historical archive listing by explicit workflow_id and work_dir", async () => {
     const r = await mcpRequest("get_archived_files", {
       workflow_id: workflowId,
       work_dir: TEST_WORK_DIR,
       phase: "requirements",
-    });
+    }, { "x-ai-identity": codebuddyToken });
     expect(r.ok).toBe(true);
     expect(r.files).toContain("r1_codebuddy.md");
     expect(r.files).toContain("r1_codebuddy.meta.json");
@@ -862,7 +991,7 @@ describe("Wait for turn + submit", () => {
     const r = await mcpRequest("get_archived_files", {
       workflow_id: workflowId,
       work_dir: TEST_WORK_DIR,
-    });
+    }, { "x-ai-identity": codebuddyToken });
     expect(r.ok).toBe(true);
     expect(r.files).toContain("requirements/r1_codebuddy.md");
     expect((r.files as string[]).every((file) => !file.includes("\\"))).toBe(true);

@@ -16,8 +16,8 @@ export async function submit(
   args: Record<string, unknown>,
   extra: RequestHandlerExtra<ServerRequest, ServerNotification>
 ): Promise<CallToolResult> {
-  const { identity, workflowId } = parseSession(extra.requestInfo?.headers);
-  if (identity === "unknown") return err("identity required");
+  const { identity, workflowId, registered } = parseSession(extra.requestInfo?.headers);
+  if (!registered) return err("valid registered token is required");
   if (!workflowId) return err("not bound to a workflow — call confirm_task first");
 
   const filePath = args.file_path as string;
@@ -66,7 +66,7 @@ export async function submit(
     // Reject if no new work
     const lastHash = Object.values(state.last_submission_by_participant)
       .filter((s) => s.commit_hash)
-      .sort((a, b) => (b.submitted_at ?? "").localeCompare(a.submitted_at ?? ""))[0]?.commit_hash;
+      .sort((a, b) => (b.round ?? -1) - (a.round ?? -1))[0]?.commit_hash;
     if (lastHash && lastHash === commitHash) {
       return err("git_commit_hash unchanged since last submission — no new work detected");
     }

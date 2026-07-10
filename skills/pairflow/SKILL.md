@@ -17,7 +17,7 @@ description: 启动 PairFlow MCP Server 并完成 register + confirm_task 结对
 
 **c) 身份名** — "你的身份名是什么？" 建议用工具名（如 `"claude"`、`"codex"`），长度 1–64，只能包含字母、数字、下划线、连字符；不得使用保留字 `unknown` 或 `idle`（大小写不敏感）。
 
-**d) 项目根目录** — "项目根目录绝对路径？" 必须是已存在的目录，建议用当前 git 仓库根（`git rev-parse --show-toplevel`）。
+**d) 项目根目录** — "Git 仓库根目录绝对路径？" 必须是含 `.git` 文件或目录的已存在仓库根，可用当前 git 仓库根（`git rev-parse --show-toplevel`）。
 
 **e) 任务文档路径** — "任务文档绝对路径是什么？" 必须是位于 work_dir 下的已存在文件，且不得包含 `.` 或 `..` 路径段。
 
