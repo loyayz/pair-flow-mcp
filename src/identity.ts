@@ -1,6 +1,9 @@
 import type { IsomorphicHeaders } from "@modelcontextprotocol/sdk/types.js";
 import { resolveSession } from "./token-map.js";
 
+const IDENTITY_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/;
+const RESERVED_IDENTITIES = new Set(["unknown", "idle"]);
+
 export interface ParsedSession {
   identity: string;
   workflowId: string | null;
@@ -19,8 +22,15 @@ export function parseSession(headers: IsomorphicHeaders | undefined): ParsedSess
 }
 
 export function sanitizeIdentity(identity: string): string {
-  if (!/^[a-zA-Z0-9_-]+$/.test(identity)) {
-    throw new Error("Invalid identity: only letters, numbers, underscores, and hyphens are allowed");
+  if (!IDENTITY_PATTERN.test(identity)) {
+    throw new Error("Invalid identity: use 1 to 64 letters, numbers, underscores, or hyphens");
+  }
+  if (RESERVED_IDENTITIES.has(identity.toLowerCase())) {
+    throw new Error('Invalid identity: "unknown" and "idle" are reserved');
   }
   return identity;
+}
+
+export function isValidIdentity(identity: string): boolean {
+  return IDENTITY_PATTERN.test(identity) && !RESERVED_IDENTITIES.has(identity.toLowerCase());
 }

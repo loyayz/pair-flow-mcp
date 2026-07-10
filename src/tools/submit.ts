@@ -1,17 +1,16 @@
-import { access } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
 import { parseSession } from "../identity.js";
-import { getState, setState, getMutex, hasRecoveryPlaceholderParticipant, haveAllParticipantsSubmittedCurrentPhase, isCurrentHolder, getOtherIdentity } from "../state.js";
+import { getState, setState, getMutex, hasRecoveryPlaceholderParticipant, haveAllParticipantsSubmittedCurrentPhase, isCurrentHolder, getOtherIdentity, type PairFlowState } from "../state.js";
 
 import { err, ok } from "../response.js";
 import { identityLabel, phaseLabel } from "../tip.js";
 import { atomicWriteText } from "../atomic-write.js";
-
-const HANDOFF_DIR = process.env.HANDOFF_DIR || "handoff";
-const SAFE_SEGMENT = /^[a-zA-Z0-9_-]+$/;
+import { workflowArchivePath, workflowWorkDir } from "../archive-path.js";
+const SAFE_SEGMENT = /^[a-zA-Z0-9_-]{1,64}$/;
 
 export async function submit(
   args: Record<string, unknown>,
@@ -38,9 +37,10 @@ export async function submit(
     if (hasRecoveryPlaceholderParticipant(state)) {
       return err("workflow recovery incomplete — every recovered participant must call confirm_task before submit");
     }
+    if (!workflowWorkDir(state)) return err("workflow work_dir is missing");
     if (!isCurrentHolder(state, identity)) return err(`not your turn — current turn: ${state.turn}`);
 
-    // IMPLEMENTATION role check
+    // IMPLEMENTATION responsibility check
     const isDeveloper = state.participants.some((p) => p.identity === identity && p.is_developer);
     if (state.phase === "implementation" && state.sub_phase === "coding" && !isDeveloper) {
       return err("only the developer can submit during coding sub_phase");
@@ -49,7 +49,7 @@ export async function submit(
       return err("only the reviewer can submit during review sub_phase");
     }
 
-    const expectedFilePath = expectedSubmissionPath(state.workflow_id, state.phase, state.round, state.sub_phase, identity);
+    const expectedFilePath = expectedSubmissionPath(state, identity);
     if (!expectedFilePath) return err("cannot submit while workflow is idle");
     const resolvedFilePath = resolve(filePath);
     const resolvedExpected = resolve(expectedFilePath);
@@ -57,7 +57,8 @@ export async function submit(
       return err(`file_path must be ${expectedFilePath.replace(/\\/g, "/")}`);
     }
     try {
-      await access(resolvedExpected);
+      const fileStat = await stat(resolvedExpected);
+      if (!fileStat.isFile()) return err("file_path must be a file");
     } catch {
       return err(`file_path does not exist: ${expectedFilePath.replace(/\\/g, "/")}`);
     }
@@ -144,18 +145,15 @@ export async function submit(
 }
 
 function expectedSubmissionPath(
-  workflowId: string | null,
-  phase: string,
-  round: number,
-  subPhase: string | null,
+  state: PairFlowState,
   identity: string,
 ): string | null {
-  if (!workflowId || phase === "idle") return null;
+  if (!state.workflow_id || state.phase === "idle") return null;
   const safeIdentity = safeSegment(identity);
-  const filename = phase === "implementation" && subPhase
-    ? `r${round}_${subPhase}_${safeIdentity}.md`
-    : `r${round}_${safeIdentity}.md`;
-  return resolve(HANDOFF_DIR, workflowId, phase, filename);
+  const filename = state.phase === "implementation" && state.sub_phase
+    ? `r${state.round}_${state.sub_phase}_${safeIdentity}.md`
+    : `r${state.round}_${safeIdentity}.md`;
+  return workflowArchivePath(state, state.workflow_id, state.phase, filename);
 }
 
 function safeSegment(value: string): string {

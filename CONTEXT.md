@@ -1,6 +1,6 @@
 # PairFlow
 
-PairFlow coordinates two AI participants through a structured pairing workflow. Its language is about collaboration roles, turn ownership, and archived workflow artifacts.
+PairFlow coordinates two AI participants through a structured pairing workflow. Its language is about collaboration responsibilities, turn ownership, and archived workflow artifacts.
 
 ## Language
 

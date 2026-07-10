@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { resolve } from "node:path";
 import { defaultState, setState, getState, deleteState, initRequirementsPhase, initPlanningPhase, initImplementationPhase, isSupervisor, getOtherIdentity } from "../state.js";
 import type { PairFlowState } from "../state.js";
 import { buildTip, identityLabel } from "../tip.js";
@@ -84,6 +85,27 @@ describe("Role helpers", () => {
 });
 
 describe("Tip guidance", () => {
+  it("places workflow artifacts under work_dir/handoff", () => {
+    const workDir = resolve("target-project");
+    const state: PairFlowState = {
+      ...defaultState(),
+      workflow_id: TEST_WF,
+      phase: "requirements",
+      round: 1,
+      turn: "alice",
+      task: { spec_file: resolve(workDir, "task.md"), task_type: "development" },
+      participants: [
+        { identity: "alice", is_supervisor: false, is_developer: true, registered_at: "", work_dir: workDir },
+        { identity: "bob", is_supervisor: true, is_developer: false, registered_at: "", work_dir: workDir },
+      ],
+    };
+
+    const tip = buildTip(state, "alice");
+    const expected = resolve(workDir, "handoff", TEST_WF, "requirements", "r1_alice.md").replace(/\\/g, "/");
+
+    expect(tip).toContain(expected);
+  });
+
   it("points implementation review to the reviewer's planning document", () => {
     const state: PairFlowState = {
       ...defaultState(),
@@ -94,8 +116,8 @@ describe("Tip guidance", () => {
       turn: "reviewer",
       task: { spec_file: "C:/project/task.md", task_type: "development" },
       participants: [
-        { identity: "developer", is_supervisor: false, is_developer: true, registered_at: "" },
-        { identity: "reviewer", is_supervisor: true, is_developer: false, registered_at: "" },
+        { identity: "developer", is_supervisor: false, is_developer: true, registered_at: "", work_dir: resolve("project") },
+        { identity: "reviewer", is_supervisor: true, is_developer: false, registered_at: "", work_dir: resolve("project") },
       ],
       last_submission_by_participant: {
         developer: { round: 1, sub_phase: "coding", commit_hash: "abc1234", submitted_at: "2026-07-10T00:00:00.000Z", file_path: "handoff/wf/implementation/r1_coding_developer.md" },
@@ -118,8 +140,8 @@ describe("Tip guidance", () => {
       round: 2,
       turn: "reviewer",
       participants: [
-        { identity: "developer", is_supervisor: false, is_developer: true, registered_at: "" },
-        { identity: "reviewer", is_supervisor: true, is_developer: false, registered_at: "" },
+        { identity: "developer", is_supervisor: false, is_developer: true, registered_at: "", work_dir: resolve("project") },
+        { identity: "reviewer", is_supervisor: true, is_developer: false, registered_at: "", work_dir: resolve("project") },
       ],
       last_submission_by_participant: {},
     };
@@ -141,8 +163,8 @@ describe("Tip guidance", () => {
       turn: "supervisor",
       task: { spec_file: "C:/project/task.md", task_type: "development" },
       participants: [
-        { identity: "supervisor", is_supervisor: true, is_developer: true, registered_at: "" },
-        { identity: "reviewer", is_supervisor: false, is_developer: false, registered_at: "" },
+        { identity: "supervisor", is_supervisor: true, is_developer: true, registered_at: "", work_dir: resolve("project") },
+        { identity: "reviewer", is_supervisor: false, is_developer: false, registered_at: "", work_dir: resolve("project") },
       ],
       last_submission_by_participant: {
         supervisor: { round: null, sub_phase: null, commit_hash: null, submitted_at: null, file_path: null },

@@ -1,9 +1,8 @@
-import { resolve } from "node:path";
 import { haveAllParticipantsSubmittedCurrentPhase } from "./state.js";
 import type { PairFlowState } from "./state.js";
+import { workflowArchivePath } from "./archive-path.js";
 
-const HANDOFF_DIR = process.env.HANDOFF_DIR || "handoff";
-const SAFE_ID = /^[a-zA-Z0-9_-]+$/;
+const SAFE_ID = /^[a-zA-Z0-9_-]{1,64}$/;
 
 function safe(s: string | null | undefined): string {
   return (s && SAFE_ID.test(s)) ? s : "unknown";
@@ -12,14 +11,14 @@ function safe(s: string | null | undefined): string {
 export function identityLabel(state: PairFlowState, identity: string): string {
   const participant = state.participants.find((p) => p.identity === identity);
   if (!participant) return `${safe(identity)}`;
-  const roleLabel = participant.is_supervisor && participant.is_developer
+  const responsibilityLabel = participant.is_supervisor && participant.is_developer
     ? "supervisor/developer"
     : participant.is_supervisor
       ? "supervisor"
       : participant.is_developer
         ? "developer"
         : "reviewer";
-  return `${safe(identity)}(${roleLabel})`;
+  return `${safe(identity)}(${responsibilityLabel})`;
 }
 
 function outFile(state: PairFlowState, identity: string): string {
@@ -30,7 +29,7 @@ function outFile(state: PairFlowState, identity: string): string {
     ? `r${state.round}_${state.sub_phase}_${ident}`
     : `r${state.round}_${ident}`;
   // P7: 统一使用 POSIX 正斜杠
-  return resolve(HANDOFF_DIR, wfId, phase, `${filePrefix}.md`).replace(/\\/g, "/");
+  return workflowArchivePath(state, wfId, phase, `${filePrefix}.md`).replace(/\\/g, "/");
 }
 
 function getAction(state: PairFlowState, identity: string): string {
@@ -111,16 +110,16 @@ function getAction(state: PairFlowState, identity: string): string {
     const r1Submitter = Object.entries(state.last_submission_by_participant)
       .find(([_, s]) => s.round === 1 && s.commit_hash)?.[0];
     const planDoc = r1Submitter
-      ? resolve(HANDOFF_DIR, safe(state.workflow_id), "planning", `r1_${safe(r1Submitter)}.md`).replace(/\\/g, "/")
+      ? workflowArchivePath(state, safe(state.workflow_id), "planning", `r1_${safe(r1Submitter)}.md`).replace(/\\/g, "/")
       : "计划文档";
     return `${advancePrefix}基于计划文档 ${planDoc}，审阅 ${prevInfo}。所有观点需注明提出人。双方均同意的点直接修改计划文档；不同意的点在产出文件中标注原因和建议`;
   }
 
   if (state.phase === "implementation" && state.sub_phase === "review") {
     const reviewer = state.participants.find((p) => !p.is_developer);
-    const planFile = resolve(HANDOFF_DIR, safe(state.workflow_id), "planning", `r1_${safe(reviewer?.identity)}.md`).replace(/\\/g, "/");
+    const planFile = workflowArchivePath(state, safe(state.workflow_id), "planning", `r1_${safe(reviewer?.identity)}.md`).replace(/\\/g, "/");
     if (state.round > 2) {
-      const myPrevReview = resolve(HANDOFF_DIR, safe(state.workflow_id), safe(state.phase), `r${state.round - 2}_review_${safe(identity)}.md`).replace(/\\/g, "/");
+      const myPrevReview = workflowArchivePath(state, safe(state.workflow_id), safe(state.phase), `r${state.round - 2}_review_${safe(identity)}.md`).replace(/\\/g, "/");
       return `${advancePrefix}结合实施计划 ${planFile}、上一轮你的评审文档 ${myPrevReview}，审阅对方的代码产出 ${prevInfo}。检查是否按计划实现、上一轮问题是否已解决、代码正确性和风格`;
     }
     return `${advancePrefix}结合实施计划 ${planFile}，审阅对方的代码产出 ${prevInfo}。检查是否按计划实现、代码正确性和风格`;

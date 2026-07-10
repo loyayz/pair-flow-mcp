@@ -61,4 +61,17 @@ describe("sanitizeIdentity", () => {
     expect(() => sanitizeIdentity("bad.identity")).toThrow("Invalid identity");
     expect(() => sanitizeIdentity("bad@identity")).toThrow("Invalid identity");
   });
+
+  it("limits identity to 64 characters", () => {
+    const longestValidIdentity = "a".repeat(64);
+
+    expect(sanitizeIdentity(longestValidIdentity)).toBe(longestValidIdentity);
+    expect(() => sanitizeIdentity("a".repeat(65))).toThrow("Invalid identity");
+  });
+
+  it("rejects reserved identity values case-insensitively", () => {
+    for (const identity of ["unknown", "UNKNOWN", "idle", "Idle"]) {
+      expect(() => sanitizeIdentity(identity)).toThrow("reserved");
+    }
+  });
 });

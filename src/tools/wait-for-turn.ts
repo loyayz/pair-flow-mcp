@@ -35,15 +35,20 @@ export async function waitForTurn(
 
     if (state.turn === identity) {
       // 记录 turn 领取时间并返回完整指引
+      let claimed = false;
       await getMutex(workflowId).runExclusive(async () => {
         const s = getState(workflowId);
-        if (s && s.turn === identity) {
+        if (!extra.signal.aborted && s && s.turn === identity) {
           s.turn_claimed_at = new Date().toISOString();
           setState(workflowId, s);
+          claimed = true;
         }
       });
-      const tip = buildTip(getState(workflowId)!, identity);
-      return ok({ turn: state.turn, phase: state.phase, round: state.round }, tip);
+      if (!claimed) continue;
+      const claimedState = getState(workflowId);
+      if (!claimedState) return err("workflow not found");
+      const tip = buildTip(claimedState, identity);
+      return ok({ turn: claimedState.turn, phase: claimedState.phase, round: claimedState.round }, tip);
     }
 
     if (state.turn_switched_at && !state.turn_claimed_at) {

@@ -11,15 +11,15 @@ description: 启动 PairFlow MCP Server 并完成 register + confirm_task 结对
 
 向用户收集以下信息（一问一答，不要一口气全问）：
 
-**a) 监督者** — "你是监督者吗？监督者控制流程推进（advance）、处理 P0 升级、汇总阶段负责最终报告。"
+**a) 监督者** — "你是监督者吗？监督者控制流程推进（advance）、判断分歧是否升级用户、汇总阶段负责最终报告。"
 
 **b) 开发者** — "你是开发者吗？开发者在实现阶段负责代码产出。"
 
-**c) 身份名** — "你的身份名是什么？" 建议用工具名（如 `"claude"`、`"codex"`）。
+**c) 身份名** — "你的身份名是什么？" 建议用工具名（如 `"claude"`、`"codex"`），长度 1–64，只能包含字母、数字、下划线、连字符；不得使用保留字 `unknown` 或 `idle`（大小写不敏感）。
 
-**d) 项目根目录** — "项目根目录绝对路径？" 建议用当前 git 仓库根（`git rev-parse --show-toplevel`）。
+**d) 项目根目录** — "项目根目录绝对路径？" 必须是已存在的目录，建议用当前 git 仓库根（`git rev-parse --show-toplevel`）。
 
-**e) 任务文档路径** — "任务文档相对于项目根目录的路径是什么？"（如 `docs/task/xxx.md`）。调用 confirm_task 时拼装为 `<work_dir>/<task_path>`。
+**e) 任务文档路径** — "任务文档绝对路径是什么？" 必须是位于 work_dir 下的已存在文件，且不得包含 `.` 或 `..` 路径段。
 
 **f) 任务类型** — "任务类型是 development（开发，完整四阶段）还是 requirements（需求，跳过 planning 和 implementation）？" 默认 development。
 
@@ -65,7 +65,7 @@ curl -s -X POST http://127.0.0.1:3100/mcp \
   -H "Accept: application/json, text/event-stream" \
   -H "X-AI-Identity: <token>" \
   --noproxy "*" \
-  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"confirm_task","arguments":{"task_path":"<work_dir>/<task_path>","task_type":"<development|requirements>","supervisor":<true|false>,"developer":<true|false>,"work_dir":"<项目根目录>"}}}'
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"confirm_task","arguments":{"task_path":"<任务文档绝对路径>","task_type":"<development|requirements>","is_supervisor":<true|false>,"is_developer":<true|false>,"work_dir":"<项目根目录绝对路径>"}}}'
 ```
 
 ## 5. 处理响应

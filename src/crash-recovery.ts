@@ -1,9 +1,8 @@
 import { readdir, readFile, mkdir, access } from "node:fs/promises";
 import { join, resolve, relative } from "node:path";
 import { RECOVERY_REGISTERED_AT, defaultState, type PairFlowState, type Phase, type SubPhase, type Participant, type LastSubmission } from "./state.js";
-
-
-const HANDOFF_DIR = process.env.HANDOFF_DIR || "handoff";
+import { archivePath } from "./archive-path.js";
+import { isValidIdentity } from "./identity.js";
 
 // ── Filename parsing ──
 
@@ -20,7 +19,6 @@ function basename(path: string): string {
 }
 
 const KNOWN_EXTENSIONS = /\.(?:md|meta\.json)$/;
-const SAFE_IDENTITY = /^[A-Za-z0-9_-]+$/;
 
 /**
  * Parse a handoff filename into structured fields.
@@ -47,7 +45,7 @@ export function parseFilename(filename: string): ParsedFilename | null {
     }
   }
 
-  if (!SAFE_IDENTITY.test(identity)) return null;
+  if (!isValidIdentity(identity)) return null;
 
   return { round, sub_phase: subPhase, identity };
 }
@@ -58,9 +56,10 @@ const PHASE_PRIORITY: Phase[] = ["summary", "implementation", "planning", "requi
 
 export async function reconstructFromHandoff(
   state: PairFlowState,
-  wfId: string
+  wfId: string,
+  workDir: string,
 ): Promise<PairFlowState | null> {
-  const wfDir = join(HANDOFF_DIR, wfId);
+  const wfDir = archivePath(workDir, wfId);
   state.workflow_id = wfId;
 
   // 1. Determine phase
@@ -130,7 +129,7 @@ export async function reconstructFromHandoff(
     state.last_submission_by_participant = await reconstructLastSubmissionByParticipant(wfDirVar, state.participants, state.phase);
   } catch { /* keep empty if reconstruction fails */ }
 
-  console.log(`[pair-flow] Reconstructed state from handoff/${wfId}: phase=${state.phase}, participants=${state.participants.length}, round=${state.round}`);
+  console.log(`[pair-flow] Reconstructed state from ${wfDir}: phase=${state.phase}, participants=${state.participants.length}, round=${state.round}`);
   return state;
 }
 

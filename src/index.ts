@@ -14,6 +14,7 @@ import { waitForTurn } from "./tools/wait-for-turn.js";
 import { confirmTask } from "./tools/confirm-task.js";
 
 const PORT = parseInt(process.env.PORT || "3100", 10);
+const HOST = "127.0.0.1";
 
 // Gate: reject MCP requests until crash-recovery completes. Prevents phantom
 // session creation during the listen→recovery race window.
@@ -32,7 +33,7 @@ function createServerWithTools() {
 
   mcp.registerTool("advance", { description: "推进到下一阶段。仅监督者可用。", inputSchema: {} }, advance);
   mcp.registerTool("get_state", { description: "返回当前执行指引（tip）。匿名可用。" }, getStateTool);
-  mcp.registerTool("get_archived_files", { description: "列出归档文件。phase/workflow_id 可选过滤。", inputSchema: { phase: z.string().optional(), workflow_id: z.string().optional() } }, getArchivedFiles);
+  mcp.registerTool("get_archived_files", { description: "列出归档文件。phase/workflow_id/work_dir 可选过滤；历史或匿名查询需同时提供 workflow_id 和 work_dir。", inputSchema: { phase: z.string().optional(), workflow_id: z.string().optional(), work_dir: z.string().optional() } }, getArchivedFiles);
   mcp.registerTool("wait_for_turn", { description: "长轮询等待 turn 切换到调用方。10s 间隔，600s 超时。turn=自己时返回。" }, waitForTurn);
   mcp.registerTool(
     "submit",
@@ -89,10 +90,10 @@ const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse
   res.writeHead(404).end("Not Found");
 });
 
-httpServer.listen(PORT, () => {
+httpServer.listen(PORT, HOST, () => {
   ready = true;
-  console.log(`[pair-flow] HTTP MCP Server listening on http://localhost:${PORT}/mcp`);
-  console.log(`[pair-flow] Health check: http://localhost:${PORT}/health`);
+  console.log(`[pair-flow] HTTP MCP Server listening on http://${HOST}:${PORT}/mcp`);
+  console.log(`[pair-flow] Health check: http://${HOST}:${PORT}/health`);
 });
 
 process.on("SIGTERM", () => { process.exit(0); });

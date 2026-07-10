@@ -1,21 +1,18 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { spawn, type ChildProcess } from "node:child_process";
-import { rm } from "node:fs/promises";
-import { resolve } from "node:path";
 import { execSync } from "node:child_process";
+import { get } from "node:http";
+import { networkInterfaces } from "node:os";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { createClientTransport } from "../client-transport.js";
 
 const PORT = 3197;
-const TEST_HANDOFF = resolve(".pairflow-test-transport-handoff");
-const TEST_STATE = resolve(".pairflow-test-transport");
 let server: ChildProcess;
 
 async function startServer() {
-  await rm(TEST_STATE, { recursive: true }).catch(() => {});
-  await rm(TEST_HANDOFF, { recursive: true }).catch(() => {});
   server = spawn(process.execPath, ["--import", "tsx/esm", "src/index.ts"], {
-    env: { ...process.env, PORT: String(PORT), STATE_DIR: TEST_STATE, HANDOFF_DIR: TEST_HANDOFF },
+    env: { ...process.env, PORT: String(PORT) },
     stdio: "pipe",
   });
   await new Promise((r) => setTimeout(r, 2000));
@@ -32,8 +29,6 @@ async function stopServer() {
     } catch { /* already dead */ }
   }
   await new Promise((r) => setTimeout(r, 500));
-  await rm(TEST_HANDOFF, { recursive: true }).catch(() => {});
-  await rm(TEST_STATE, { recursive: true }).catch(() => {});
 }
 
 async function call(client: Client, name: string, args: Record<string, unknown> = {}) {
@@ -41,22 +36,48 @@ async function call(client: Client, name: string, args: Record<string, unknown> 
   return JSON.parse((r.content as Array<{ type: string; text: string }>)[0].text);
 }
 
+function requestHealth(host: string): Promise<number | undefined> {
+  return new Promise((resolve, reject) => {
+    const request = get({ host, port: PORT, path: "/health", timeout: 1000 }, (response) => {
+      response.resume();
+      resolve(response.statusCode);
+    });
+    request.on("timeout", () => request.destroy(new Error("request timed out")));
+    request.on("error", reject);
+  });
+}
+
 describe("Client transport with identity injection", () => {
   beforeAll(startServer, 15000);
   afterAll(stopServer);
 
-  it("registers with identity via header", async () => {
-    const t = createClientTransport(`http://localhost:${PORT}/mcp`, "claude");
-    const c = new Client({ name: "test", version: "1" }, {});
-    await c.connect(t);
-    const r = await call(c, "register", { identity: "claude" });
-    expect(r.ok).toBe(true);
-    expect(r.identity).toBe("claude");
-    await c.close();
+  it("does not accept connections through a non-loopback interface", async () => {
+    const nonLoopback = Object.values(networkInterfaces())
+      .flat()
+      .find((address) => address?.family === "IPv4" && !address.internal)?.address;
+    if (!nonLoopback) return;
+
+    await expect(requestHealth(nonLoopback)).rejects.toBeDefined();
+  });
+
+  it("injects the registered token into subsequent requests", async () => {
+    const url = `http://127.0.0.1:${PORT}/mcp`;
+    const anonymousClient = new Client({ name: "register-test", version: "1" }, {});
+    await anonymousClient.connect(new StreamableHTTPClientTransport(new URL(url)));
+    const registration = await call(anonymousClient, "register", { identity: "claude" });
+    await anonymousClient.close();
+
+    const authenticatedClient = new Client({ name: "identity-test", version: "1" }, {});
+    await authenticatedClient.connect(createClientTransport(url, registration.token));
+    const identity = await call(authenticatedClient, "who_am_i");
+
+    expect(identity.identity).toBe("claude");
+    expect(identity.registered).toBe(true);
+    await authenticatedClient.close();
   });
 
   it("who_am_i returns unknown before token registration", async () => {
-    const t = createClientTransport(`http://localhost:${PORT}/mcp`, "codebuddy");
+    const t = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${PORT}/mcp`));
     const c = new Client({ name: "test2", version: "1" }, {});
     await c.connect(t);
     const r = await call(c, "who_am_i", {});

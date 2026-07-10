@@ -8,7 +8,7 @@ import { defaultState } from "../state.js";
 
 const TEST_ROOT = join(tmpdir(), `pairflow-test-${randomUUID()}`);
 const origCwd = process.cwd();
-const HANDOFF_DIR = process.env.HANDOFF_DIR || "handoff";
+const HANDOFF_DIR = "handoff";
 
 async function resetStateDir() {
   await mkdir(TEST_ROOT, { recursive: true });
@@ -26,7 +26,7 @@ describe("Handoff reconstruction", () => {
 
   it("returns null when no handoff exists", async () => {
     const st = defaultState();
-    const recovered = await reconstructFromHandoff(st, "00000000000000");
+    const recovered = await reconstructFromHandoff(st, "00000000000000", TEST_ROOT);
     expect(recovered).toBeNull();
   });
 
@@ -38,7 +38,7 @@ describe("Handoff reconstruction", () => {
     await writeFile(join(wfDir, "r1_bob.meta.json"), JSON.stringify({ round: 1 }));
 
     const st = defaultState();
-    const recovered = await reconstructFromHandoff(st, wfId);
+    const recovered = await reconstructFromHandoff(st, wfId, TEST_ROOT);
     expect(recovered).not.toBeNull();
     expect(recovered!.workflow_id).toBe(wfId);
   });
@@ -53,7 +53,7 @@ describe("Handoff reconstruction", () => {
     await writeFile(join(summaryDir, "r1_alice.meta.json"), JSON.stringify({ submitted_at: "2026-06-22T00:01:00.000Z" }));
     await writeFile(join(summaryDir, "r2_bob.meta.json"), JSON.stringify({ submitted_at: "2026-06-22T00:02:00.000Z" }));
 
-    const recovered = await reconstructFromHandoff(defaultState(), wfId);
+    const recovered = await reconstructFromHandoff(defaultState(), wfId, TEST_ROOT);
     expect(recovered).not.toBeNull();
     expect(recovered!.phase).toBe("summary");
   });
@@ -73,7 +73,7 @@ describe("Handoff reconstruction", () => {
       sub_phase: "review",
     }));
 
-    const recovered = await reconstructFromHandoff(defaultState(), wfId);
+    const recovered = await reconstructFromHandoff(defaultState(), wfId, TEST_ROOT);
 
     expect(recovered).not.toBeNull();
     expect(recovered!.phase).toBe("implementation");
@@ -88,7 +88,7 @@ describe("Handoff reconstruction", () => {
     await mkdir(wfDir, { recursive: true });
     await writeFile(join(wfDir, "r1_bad.identity.meta.json"), JSON.stringify({ round: 1 }));
 
-    const recovered = await reconstructFromHandoff(defaultState(), wfId);
+    const recovered = await reconstructFromHandoff(defaultState(), wfId, TEST_ROOT);
     expect(recovered).toBeNull();
   });
 });
@@ -125,6 +125,9 @@ describe("parseFilename", () => {
     expect(parseFilename("r1_.md")).toBeNull();
     expect(parseFilename("r1_bad.identity.md")).toBeNull();
     expect(parseFilename("r1_bad@identity.md")).toBeNull();
+    expect(parseFilename(`r1_${"a".repeat(65)}.md`)).toBeNull();
+    expect(parseFilename("r1_unknown.md")).toBeNull();
+    expect(parseFilename("r1_IDLE.md")).toBeNull();
     expect(parseFilename("")).toBeNull();
   });
 });

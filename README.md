@@ -8,7 +8,7 @@
 IDLE → 需求分析 → 实施计划 → 代码实现(coding↔review) → 汇总 → IDLE
 ```
 
-两个 AI 交替产出与评审，监督者控制阶段推进。完整四阶段覆盖从需求到交付的软件开发生命周期。
+两个 AI 交替产出与评审，监督者控制阶段推进。development 任务执行完整四阶段；requirements 任务在需求分析后直接进入汇总。
 
 ## 快速开始
 
@@ -25,7 +25,8 @@ npm install
 npx tsx src/index.ts
 ```
 
-Server 监听 `localhost:3100`，提供 HTTP MCP（`/mcp`）+ 健康检查（`/health`）。
+Server 仅监听 `127.0.0.1:3100`，提供 HTTP MCP（`/mcp`）+ 健康检查（`/health`）。
+每个 workflow 的产出归档固定写入目标项目的 `<work_dir>/handoff/{workflow_id}/`。
 
 ### 3. 使用
 
@@ -48,12 +49,12 @@ cp -r skills/pairflow ~/.claude/skills/pairflow
 | 工具 | 说明 |
 |------|------|
 | `register` | 声明身份，获取 token |
-| `confirm_task` | 确认任务文档和角色组合，两个 AI 相同规范化绝对 task_path 成对 |
+| `confirm_task` | 确认任务文档和职责组合，两个 AI 相同规范化绝对 task_path 成对 |
 | `wait_for_turn` | 长轮询等待 turn 到自己（10s 间隔，600s 超时） |
 | `submit` | 提交产出（绝对 file_path + git_commit_hash） |
 | `advance` | 监督者推进到下一阶段 |
 | `get_state` | 查看当前状态和行动指引 |
-| `get_archived_files` | 列出归档文件 |
+| `get_archived_files` | 列出归档文件；历史或匿名查询需同时提供 workflow_id 与绝对 work_dir |
 
 所有请求通过 HTTP header `X-AI-Identity: <token>` 携带身份。register 返回 token，confirm_task 绑定 token 到工作流。
 

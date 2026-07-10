@@ -27,8 +27,8 @@ function setupSummaryWorkflow(): RequestHandlerExtra<ServerRequest, ServerNotifi
     turn: "alice",
     task: { spec_file: "C:/project/task.md", task_type: "development" },
     participants: [
-      { identity: "alice", is_supervisor: true, is_developer: false, registered_at: "now" },
-      { identity: "bob", is_supervisor: false, is_developer: true, registered_at: "now" },
+      { identity: "alice", is_supervisor: true, is_developer: false, registered_at: "now", work_dir: "C:/project" },
+      { identity: "bob", is_supervisor: false, is_developer: true, registered_at: "now", work_dir: "C:/project" },
     ],
     last_submission_by_participant: {
       alice: { round: 1, sub_phase: null, commit_hash: "abcdef1", submitted_at: "now", file_path: "alice.md" },

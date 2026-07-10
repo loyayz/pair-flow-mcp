@@ -5,12 +5,12 @@ import { sanitizeIdentity } from "../identity.js";
 import { err, ok } from "../response.js";
 import { registerToken } from "../token-map.js";
 
-const REGISTER_CURL = `curl -s -X POST http://localhost:3100/mcp \\
+const REGISTER_CURL = `curl -s -X POST http://127.0.0.1:3100/mcp \\
   -H "Content-Type: application/json" \\
   -H "Accept: application/json, text/event-stream" \\
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"register","arguments":{"identity":"<你的身份名>"}}}'
 
-- identity: 你的身份名称，如 "claude"。只能包含字母、数字、下划线、连字符`;
+- identity: 你的身份名称，如 "claude"。长度 1–64，只能包含字母、数字、下划线、连字符；unknown 和 idle 为保留字`;
 
 function badParam(paramName: string, reason: "缺失" | "非法"): string {
   return `${paramName} 参数${reason}。正确格式参考（尖括号内为变量）：

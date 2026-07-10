@@ -1,4 +1,4 @@
-import { access, readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { isAbsolute, resolve, sep } from "node:path";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
@@ -10,8 +10,6 @@ import { reconstructFromHandoff } from "../crash-recovery.js";
 import { err, ok } from "../response.js";
 import { bindWorkflow } from "../token-map.js";
 import { atomicWriteText } from "../atomic-write.js";
-
-const HANDOFF_DIR = process.env.HANDOFF_DIR || "handoff";
 const taskPathMutexes = new Map<string, Mutex>();
 
 function getTaskPathMutex(taskPath: string): Mutex {
@@ -66,7 +64,7 @@ function validateParticipantCombination(participants: Participant[]): string | n
   return null;
 }
 
-function roleLabel(participant: Pick<Participant, "is_supervisor" | "is_developer">): string {
+function responsibilityLabel(participant: Pick<Participant, "is_supervisor" | "is_developer">): string {
   if (participant.is_supervisor && participant.is_developer) return "supervisor/developer";
   if (participant.is_supervisor) return "supervisor";
   if (participant.is_developer) return "developer";
@@ -147,12 +145,21 @@ export async function confirmTask(
 
   // Validate task file is under work_dir
   const resolvedWorkDir = resolve(workDir);
+  try {
+    const workDirStat = await stat(resolvedWorkDir);
+    if (!workDirStat.isDirectory()) return err("work_dir must be a directory");
+  } catch {
+    return err(`work_dir not found: ${posixPath(resolvedWorkDir)}`);
+  }
   if (!isSameOrDescendantPath(resolvedTaskPath, resolvedWorkDir)) {
     return err("task_path must be under work_dir");
   }
 
   // Validate task file exists
-  try { await access(resolvedTaskPath); } catch {
+  try {
+    const taskStat = await stat(resolvedTaskPath);
+    if (!taskStat.isFile()) return err("task_path must be a file");
+  } catch {
     return err(`task file not found: ${resolvedTaskPath.replace(/\\/g, "/")}`);
   }
 
@@ -169,7 +176,7 @@ export async function confirmTask(
     const pidWfId = await readPidFile(resolvedTaskPath);
     if (pidWfId) {
       const defState = defaultState();
-      const recoveredState = await reconstructFromHandoff(defState, pidWfId);
+      const recoveredState = await reconstructFromHandoff(defState, pidWfId, resolvedWorkDir);
       if (recoveredState) {
         setState(pidWfId, recoveredState);
         existing = pidWfId;
@@ -213,8 +220,8 @@ export async function confirmTask(
       const nextParticipants = state.participants.map((p) => p.identity === identity
         ? { ...p, is_supervisor: supervisor, is_developer: developer, registered_at: confirmedAt, work_dir: resolvedWorkDir }
         : p);
-      const roleError = validateParticipantCombination(nextParticipants);
-      if (roleError) return err(roleError);
+      const responsibilityError = validateParticipantCombination(nextParticipants);
+      if (responsibilityError) return err(responsibilityError);
       const pidError = await writePidFile(resolvedTaskPath, wfId);
       if (pidError) return err(pidError);
 
@@ -229,7 +236,7 @@ export async function confirmTask(
 
       const turnIsSelf = state.turn === identity;
       const turnInfo = turnIsSelf ? `turn 在 ${state.turn}（你）` : `turn 在 ${state.turn}（对方）`;
-      const tip = `[行动] 已重新加入工作流 ${wfId}。当前在 ${state.phase} 阶段第 ${state.round} 轮，${turnInfo}。调用 wait_for_turn（长轮询，10s 间隔，最多 600s）。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。\n\n[当前] 你是 ${identity}（${roleLabel(myParticipant)}）。工作流 ${wfId}。`;
+      const tip = `[行动] 已重新加入工作流 ${wfId}。当前在 ${state.phase} 阶段第 ${state.round} 轮，${turnInfo}。调用 wait_for_turn（长轮询，10s 间隔，最多 600s）。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。\n\n[当前] 你是 ${identity}（${responsibilityLabel(myParticipant)}）。工作流 ${wfId}。`;
       return ok({
         task_path: resolvedTaskPath.replace(/\\/g, "/"),
         workflow_id: wfId,
@@ -251,8 +258,8 @@ export async function confirmTask(
       registered_at: new Date().toISOString(),
       work_dir: resolvedWorkDir,
     };
-    const roleError = validateParticipantCombination([...state.participants, newParticipant]);
-    if (roleError) return err(roleError);
+    const responsibilityError = validateParticipantCombination([...state.participants, newParticipant]);
+    if (responsibilityError) return err(responsibilityError);
 
     // work_dir 一致性
     if (firstParticipant.work_dir && !samePath(firstParticipant.work_dir, resolvedWorkDir)) {
@@ -276,16 +283,16 @@ export async function confirmTask(
   if (raw) bindWorkflow(raw.trim(), wfId);
 
   const curState = getState(wfId)!;
-  const myRoleLabel = roleLabel({ is_supervisor: supervisor, is_developer: developer });
+  const myResponsibilityLabel = responsibilityLabel({ is_supervisor: supervisor, is_developer: developer });
   const phaseText = curState.phase !== "idle" ? `，${curState.phase} 阶段第 ${curState.round} 轮` : "，idle 阶段";
-  const statusLine = `[当前] 你是 ${identity}（${myRoleLabel}）。工作流 ${wfId}${phaseText}。`;
+  const statusLine = `[当前] 你是 ${identity}（${myResponsibilityLabel}）。工作流 ${wfId}${phaseText}。`;
 
   let actionLine: string;
   if (isFirst) {
     actionLine = `${recovered ? "已恢复" : "已创建"}工作流 ${wfId}。等待对方 AI 以相同 task_path 调用 confirm_task 加入。调用 wait_for_turn（长轮询，10s 间隔，最多 600s）。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。`;
   } else {
     const p = curState.participants;
-    const names = p.map((x) => `${x.identity}（${roleLabel(x)}）`).join(" + ");
+    const names = p.map((x) => `${x.identity}（${responsibilityLabel(x)}）`).join(" + ");
     actionLine = `已加入工作流 ${wfId}。双方已就位：${names}。调用 wait_for_turn（长轮询，10s 间隔，最多 600s）。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。`;
   }
 

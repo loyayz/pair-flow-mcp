@@ -7,8 +7,7 @@ import { parseSession } from "../identity.js";
 import { getState, setState, getMutex, hasRecoveryPlaceholderParticipant, haveAllParticipantsSubmittedCurrentPhase, isSupervisor, getOtherIdentity, initRequirementsPhase, initPlanningPhase, initImplementationPhase, initSummaryPhase, initIdleState } from "../state.js";
 
 import { err, ok } from "../response.js";
-
-const HANDOFF_DIR = process.env.HANDOFF_DIR || "handoff";
+import { workflowArchivePath, workflowWorkDir } from "../archive-path.js";
 
 export async function advance(
   args: Record<string, unknown>,
@@ -24,6 +23,7 @@ export async function advance(
     if (hasRecoveryPlaceholderParticipant(state)) {
       return err("workflow recovery incomplete — every recovered participant must call confirm_task before advance");
     }
+    if (!workflowWorkDir(state)) return err("workflow work_dir is missing");
 
     if (!isSupervisor(state, identity)) {
       return err("only supervisor can advance");
@@ -56,7 +56,7 @@ export async function advance(
       const next = initRequirementsPhase(state, nonSupervisor, state.task);
       setState(workflowId, next);
 
-      const reqFile = resolve(HANDOFF_DIR, next.workflow_id!, "requirements", `r1_${nonSupervisor}.md`).replace(/\\/g, "/");
+      const reqFile = workflowArchivePath(next, next.workflow_id!, "requirements", `r1_${nonSupervisor}.md`).replace(/\\/g, "/");
       return ok({ ok: true, new_phase: "requirements", turn: nonSupervisor }, `[行动] 等待 ${nonSupervisor} 产出需求分析。对方调用 wait_for_turn 后将获得完整指引。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。\n\n[产出] ${nonSupervisor} 将产出到 ${reqFile}\n\n[当前] 你是 ${identity}（supervisor）。当前是第 1 轮需求分析，轮到 ${nonSupervisor} 了。`);
     }
 
@@ -65,7 +65,7 @@ export async function advance(
         const next = initSummaryPhase(state, identity);
         setState(workflowId, next);
 
-        const summaryFile = resolve(HANDOFF_DIR, next.workflow_id!, "summary", `r1_${identity}.md`).replace(/\\/g, "/");
+        const summaryFile = workflowArchivePath(next, next.workflow_id!, "summary", `r1_${identity}.md`).replace(/\\/g, "/");
         return ok({ ok: true, new_phase: "summary", turn: identity }, `[行动] 产出汇总草稿，包含关键决策、遗留问题和后续建议。调用 wait_for_turn 获取完整指引。\n\n[产出] ${summaryFile}\n\n[当前] 你是 ${identity}（supervisor）。当前是第 1 轮汇总，轮到你了。`);
       }
       const reviewer = state.participants.find((p) => !p.is_developer);
@@ -74,7 +74,7 @@ export async function advance(
       setState(workflowId, next);
 
       const turnIsSelf = reviewer.identity === identity;
-      const planFile = resolve(HANDOFF_DIR, next.workflow_id!, "planning", `r1_${reviewer.identity}.md`).replace(/\\/g, "/");
+      const planFile = workflowArchivePath(next, next.workflow_id!, "planning", `r1_${reviewer.identity}.md`).replace(/\\/g, "/");
       const planAction = turnIsSelf
         ? `产出实施计划。调用 wait_for_turn 获取完整指引。`
         : `等待 ${reviewer.identity} 产出实施计划。对方调用 wait_for_turn 后将获得完整指引。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。`;
@@ -89,7 +89,7 @@ export async function advance(
       setState(workflowId, next);
 
       const turnIsSelf = developer.identity === identity;
-      const implFile = resolve(HANDOFF_DIR, next.workflow_id!, "implementation", `r1_coding_${developer.identity}.md`).replace(/\\/g, "/");
+      const implFile = workflowArchivePath(next, next.workflow_id!, "implementation", `r1_coding_${developer.identity}.md`).replace(/\\/g, "/");
       const implAction = turnIsSelf
         ? `进行代码实现(coding)。调用 wait_for_turn 获取完整指引。`
         : `等待 ${developer.identity} 产出代码实现(coding)。对方调用 wait_for_turn 后将获得完整指引。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。`;
@@ -101,7 +101,7 @@ export async function advance(
       const next = initSummaryPhase(state, identity);
       setState(workflowId, next);
 
-      const summaryFile = resolve(HANDOFF_DIR, next.workflow_id!, "summary", `r1_${identity}.md`).replace(/\\/g, "/");
+      const summaryFile = workflowArchivePath(next, next.workflow_id!, "summary", `r1_${identity}.md`).replace(/\\/g, "/");
       return ok({ ok: true, new_phase: "summary", turn: identity }, `[行动] 产出汇总草稿，包含关键决策、遗留问题和后续建议。调用 wait_for_turn 获取完整指引。\n\n[产出] ${summaryFile}\n\n[当前] 你是 ${identity}（supervisor）。当前是第 1 轮汇总，轮到你了。`);
     }
 
@@ -117,10 +117,11 @@ export async function advance(
         }
       }
       const finishedId = state.workflow_id;
+      const finishedArchive = workflowArchivePath(state, finishedId!).replace(/\\/g, "/");
       const next = initIdleState(state);
       setState(workflowId, next);
 
-      return ok({ ok: true, new_phase: "idle" }, `[行动] 工作流已结束。全部产出归档于 handoff/${finishedId}/。如需开始新任务，在服务未重启且 token 仍可用时可复用当前 token；双方分别调用 confirm_task，并使用相同 task_path。服务重启或 token 丢失时先重新 register。\n\n[当前] 你是 ${identity}（supervisor）。工作流已结束。`);
+      return ok({ ok: true, new_phase: "idle" }, `[行动] 工作流已结束。全部产出归档于 ${finishedArchive}/。如需开始新任务，在服务未重启且 token 仍可用时可复用当前 token；双方分别调用 confirm_task，并使用相同 task_path。服务重启或 token 丢失时先重新 register。\n\n[当前] 你是 ${identity}（supervisor）。工作流已结束。`);
     }
 
     return err(`unknown phase: ${currentPhase}`);

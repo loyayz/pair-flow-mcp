@@ -1,15 +1,15 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
 import http from "node:http";
 
 const PORT = 3199;
-const TEST_HANDOFF = resolve(".pairflow-test-handoff");
+const TEST_WORK_DIR = resolve(".pairflow-test-workdir");
+const TEST_HANDOFF = resolve(TEST_WORK_DIR, "handoff");
 const TEST_STATE = resolve(".pairflow-test");
-const TEST_TASK = resolve(tmpdir(), "pairflow-test-task.md");
+const TEST_TASK = resolve(TEST_WORK_DIR, "pairflow-test-task.md");
 let server: ChildProcess;
 let claudeToken = "";
 let codebuddyToken = "";
@@ -62,9 +62,10 @@ function mcpListTools(): Promise<Array<{ name: string; inputSchema?: { required?
 
 async function startServer() {
   await rm(TEST_STATE, { recursive: true }).catch(() => {});
-  await rm(TEST_HANDOFF, { recursive: true }).catch(() => {});
+  await rm(TEST_WORK_DIR, { recursive: true }).catch(() => {});
+  await mkdir(TEST_WORK_DIR, { recursive: true });
   server = spawn(process.execPath, ["--import", "tsx/esm", "src/index.ts"], {
-    env: { ...process.env, PORT: String(PORT), STATE_DIR: TEST_STATE, HANDOFF_DIR: TEST_HANDOFF },
+    env: { ...process.env, PORT: String(PORT), STATE_DIR: TEST_STATE },
     stdio: "pipe",
   });
   await new Promise((r) => setTimeout(r, 2000));
@@ -81,7 +82,7 @@ async function stopServer() {
     } catch { /* already dead */ }
   }
   await new Promise((r) => setTimeout(r, 500));
-  await rm(TEST_HANDOFF, { recursive: true }).catch(() => {});
+  await rm(TEST_WORK_DIR, { recursive: true }).catch(() => {});
   await rm(TEST_STATE, { recursive: true }).catch(() => {});
 }
 
@@ -92,18 +93,17 @@ async function setup() {
   if (!r1.ok || !r2.ok) throw new Error(`Setup failed: ${JSON.stringify(r1)} ${JSON.stringify(r2)}`);
   claudeToken = r1.token as string;
   codebuddyToken = r2.token as string;
-  const workDir = resolve(tmpdir());
-  const c1 = await mcpRequest("confirm_task", { task_path: TEST_TASK, is_supervisor: true, is_developer: false, work_dir: workDir }, { "x-ai-identity": claudeToken });
+  const c1 = await mcpRequest("confirm_task", { task_path: TEST_TASK, is_supervisor: true, is_developer: false, work_dir: TEST_WORK_DIR }, { "x-ai-identity": claudeToken });
   if (!c1.ok) throw new Error(`confirm_task(claude) failed: ${JSON.stringify(c1)}`);
   workflowId = c1.workflow_id as string;
-  const c2 = await mcpRequest("confirm_task", { task_path: TEST_TASK, is_supervisor: false, is_developer: true, work_dir: workDir }, { "x-ai-identity": codebuddyToken });
+  const c2 = await mcpRequest("confirm_task", { task_path: TEST_TASK, is_supervisor: false, is_developer: true, work_dir: TEST_WORK_DIR }, { "x-ai-identity": codebuddyToken });
   if (!c2.ok) throw new Error(`confirm_task(codebuddy) failed: ${JSON.stringify(c2)}`);
   const adv = await mcpRequest("advance", {}, { "x-ai-identity": claudeToken });
   if (!adv.ok) throw new Error(`Advance failed: ${JSON.stringify(adv)}`);
 }
 
-async function seedRecoveredWorkflow(task: string, wfId: string, identities: string[]) {
-  const phaseDir = resolve(TEST_HANDOFF, wfId, "requirements");
+async function seedRecoveredWorkflow(workDir: string, task: string, wfId: string, identities: string[]) {
+  const phaseDir = resolve(workDir, "handoff", wfId, "requirements");
   await mkdir(phaseDir, { recursive: true });
   await writeFile(`${task}.pid`, wfId, "utf-8");
   const taskMeta = { spec_file: task, task_type: "development" };
@@ -165,21 +165,21 @@ describe("Confirm task", () => {
       task_path: "docs/task.md",
       is_supervisor: true,
       is_developer: false,
-      work_dir: resolve(tmpdir()),
+      work_dir: TEST_WORK_DIR,
     }, { "x-ai-identity": r.token as string });
     expect(c.ok).toBe(false);
     expect(c.tip).toContain("task_path must be an absolute path");
   });
 
   it("rejects task_path with relative path segments", async () => {
-    const task = resolve(tmpdir(), "pairflow-dot-task.md");
+    const task = resolve(TEST_WORK_DIR, "pairflow-dot-task.md");
     await writeFile(task, "# dot task", "utf-8");
     const r = await mcpRequest("register", { identity: "dot-task" });
     const c = await mcpRequest("confirm_task", {
-      task_path: `${resolve(tmpdir())}/./pairflow-dot-task.md`,
+      task_path: `${TEST_WORK_DIR}/./pairflow-dot-task.md`,
       is_supervisor: true,
       is_developer: false,
-      work_dir: resolve(tmpdir()),
+      work_dir: TEST_WORK_DIR,
     }, { "x-ai-identity": r.token as string });
     expect(c.ok).toBe(false);
     expect(c.tip).toContain("task_path must not contain . or .. path segments");
@@ -188,7 +188,7 @@ describe("Confirm task", () => {
   });
 
   it("rejects relative work_dir", async () => {
-    const task = resolve(tmpdir(), "pairflow-relative-workdir-task.md");
+    const task = resolve(TEST_WORK_DIR, "pairflow-relative-workdir-task.md");
     await writeFile(task, "# relative workdir task", "utf-8");
     const r = await mcpRequest("register", { identity: "rel-workdir" });
     const c = await mcpRequest("confirm_task", {
@@ -203,15 +203,49 @@ describe("Confirm task", () => {
     await rm(`${task}.pid`, { force: true });
   });
 
+  it("rejects a file used as work_dir", async () => {
+    const file = resolve(TEST_WORK_DIR, "pairflow-file-workdir.md");
+    await writeFile(file, "# not a directory", "utf-8");
+    const registered = await mcpRequest("register", { identity: "file-workdir" });
+    const confirmed = await mcpRequest("confirm_task", {
+      task_path: file,
+      is_supervisor: true,
+      is_developer: false,
+      work_dir: file,
+    }, { "x-ai-identity": registered.token as string });
+
+    expect(confirmed.ok).toBe(false);
+    expect(confirmed.tip).toContain("work_dir must be a directory");
+    await rm(file, { force: true });
+    await rm(`${file}.pid`, { force: true });
+  });
+
+  it("rejects a directory used as task_path", async () => {
+    const taskDirectory = resolve(TEST_WORK_DIR, "pairflow-task-directory");
+    await mkdir(taskDirectory, { recursive: true });
+    const registered = await mcpRequest("register", { identity: "directory-task" });
+    const confirmed = await mcpRequest("confirm_task", {
+      task_path: taskDirectory,
+      is_supervisor: true,
+      is_developer: false,
+      work_dir: TEST_WORK_DIR,
+    }, { "x-ai-identity": registered.token as string });
+
+    expect(confirmed.ok).toBe(false);
+    expect(confirmed.tip).toContain("task_path must be a file");
+    await rm(taskDirectory, { recursive: true, force: true });
+    await rm(`${taskDirectory}.pid`, { force: true });
+  });
+
   it("rejects work_dir with relative path segments", async () => {
-    const task = resolve(tmpdir(), "pairflow-dot-workdir-task.md");
+    const task = resolve(TEST_WORK_DIR, "pairflow-dot-workdir-task.md");
     await writeFile(task, "# dot workdir task", "utf-8");
     const r = await mcpRequest("register", { identity: "dot-workdir" });
     const c = await mcpRequest("confirm_task", {
       task_path: task,
       is_supervisor: true,
       is_developer: false,
-      work_dir: `${resolve(tmpdir())}/./`,
+      work_dir: `${TEST_WORK_DIR}/./`,
     }, { "x-ai-identity": r.token as string });
     expect(c.ok).toBe(false);
     expect(c.tip).toContain("work_dir must not contain . or .. path segments");
@@ -220,7 +254,7 @@ describe("Confirm task", () => {
   });
 
   it("matches work_dir by resolved absolute path", async () => {
-    const task = resolve(tmpdir(), "pairflow-workdir-task.md");
+    const task = resolve(TEST_WORK_DIR, "pairflow-workdir-task.md");
     await writeFile(task, "# workdir task", "utf-8");
     const r1 = await mcpRequest("register", { identity: "wd-a" });
     const r2 = await mcpRequest("register", { identity: "wd-b" });
@@ -228,13 +262,13 @@ describe("Confirm task", () => {
       task_path: task,
       is_supervisor: true,
       is_developer: false,
-      work_dir: resolve(tmpdir()),
+      work_dir: TEST_WORK_DIR,
     }, { "x-ai-identity": r1.token as string });
     const c2 = await mcpRequest("confirm_task", {
       task_path: task,
       is_supervisor: false,
       is_developer: true,
-      work_dir: resolve(tmpdir()),
+      work_dir: TEST_WORK_DIR,
     }, { "x-ai-identity": r2.token as string });
     expect(c1.ok).toBe(true);
     expect(c2.ok).toBe(true);
@@ -245,8 +279,8 @@ describe("Confirm task", () => {
   it("matches task_path containment case-insensitively on Windows", async () => {
     if (process.platform !== "win32") return;
 
-    const task = resolve(tmpdir(), "pairflow-workdir-case-task.md");
-    const workDir = resolve(tmpdir());
+    const task = resolve(TEST_WORK_DIR, "pairflow-workdir-case-task.md");
+    const workDir = TEST_WORK_DIR;
     const caseVariantWorkDir = workDir === workDir.toUpperCase()
       ? workDir.toLowerCase()
       : workDir.toUpperCase();
@@ -267,7 +301,7 @@ describe("Confirm task", () => {
   it("pairs task paths case-insensitively on Windows", async () => {
     if (process.platform !== "win32") return;
 
-    const task = resolve(tmpdir(), "pairflow-task-path-case.md");
+    const task = resolve(TEST_WORK_DIR, "pairflow-task-path-case.md");
     const caseVariantTask = task === task.toUpperCase() ? task.toLowerCase() : task.toUpperCase();
     await writeFile(task, "# task path case", "utf-8");
     const r1 = await mcpRequest("register", { identity: "task-case-a" });
@@ -276,13 +310,13 @@ describe("Confirm task", () => {
       task_path: task,
       is_supervisor: true,
       is_developer: false,
-      work_dir: resolve(tmpdir()),
+      work_dir: TEST_WORK_DIR,
     }, { "x-ai-identity": r1.token as string });
     const c2 = await mcpRequest("confirm_task", {
       task_path: caseVariantTask,
       is_supervisor: false,
       is_developer: true,
-      work_dir: resolve(tmpdir()),
+      work_dir: TEST_WORK_DIR,
     }, { "x-ai-identity": r2.token as string });
 
     expect(c1.ok).toBe(true);
@@ -293,7 +327,7 @@ describe("Confirm task", () => {
   });
 
   it("pairs concurrent confirm_task calls for the same task_path into one workflow", async () => {
-    const task = resolve(tmpdir(), "pairflow-concurrent-confirm-task.md");
+    const task = resolve(TEST_WORK_DIR, "pairflow-concurrent-confirm-task.md");
     await writeFile(task, "# concurrent confirm task", "utf-8");
     const [r1, r2] = await Promise.all([
       mcpRequest("register", { identity: "concurrent-a" }),
@@ -305,13 +339,13 @@ describe("Confirm task", () => {
         task_path: task,
         is_supervisor: true,
         is_developer: false,
-        work_dir: resolve(tmpdir()),
+        work_dir: TEST_WORK_DIR,
       }, { "x-ai-identity": r1.token as string }),
       mcpRequest("confirm_task", {
         task_path: task,
         is_supervisor: false,
         is_developer: true,
-        work_dir: resolve(tmpdir()),
+        work_dir: TEST_WORK_DIR,
       }, { "x-ai-identity": r2.token as string }),
     ]);
 
@@ -324,8 +358,8 @@ describe("Confirm task", () => {
   });
 
   it("rejects rebinding an active token to a different task", async () => {
-    const firstTask = resolve(tmpdir(), "pairflow-active-token-first.md");
-    const secondTask = resolve(tmpdir(), "pairflow-active-token-second.md");
+    const firstTask = resolve(TEST_WORK_DIR, "pairflow-active-token-first.md");
+    const secondTask = resolve(TEST_WORK_DIR, "pairflow-active-token-second.md");
     await writeFile(firstTask, "# first task", "utf-8");
     await writeFile(secondTask, "# second task", "utf-8");
     const registered = await mcpRequest("register", { identity: "active-token" });
@@ -334,13 +368,13 @@ describe("Confirm task", () => {
       task_path: firstTask,
       is_supervisor: true,
       is_developer: false,
-      work_dir: resolve(tmpdir()),
+      work_dir: TEST_WORK_DIR,
     }, headers);
     const second = await mcpRequest("confirm_task", {
       task_path: secondTask,
       is_supervisor: true,
       is_developer: false,
-      work_dir: resolve(tmpdir()),
+      work_dir: TEST_WORK_DIR,
     }, headers);
 
     expect(first.ok).toBe(true);
@@ -354,7 +388,7 @@ describe("Confirm task", () => {
   });
 
   it("rejects explicit task_type mismatch and allows omitted task_type to inherit", async () => {
-    const task = resolve(tmpdir(), "pairflow-task-type-task.md");
+    const task = resolve(TEST_WORK_DIR, "pairflow-task-type-task.md");
     await writeFile(task, "# task type task", "utf-8");
     const r1 = await mcpRequest("register", { identity: "tt-a" });
     const r2 = await mcpRequest("register", { identity: "tt-b" });
@@ -363,20 +397,20 @@ describe("Confirm task", () => {
       task_type: "development",
       is_supervisor: true,
       is_developer: false,
-      work_dir: resolve(tmpdir()),
+      work_dir: TEST_WORK_DIR,
     }, { "x-ai-identity": r1.token as string });
     const mismatch = await mcpRequest("confirm_task", {
       task_path: task,
       task_type: "requirements",
       is_supervisor: false,
       is_developer: true,
-      work_dir: resolve(tmpdir()),
+      work_dir: TEST_WORK_DIR,
     }, { "x-ai-identity": r2.token as string });
     const inherited = await mcpRequest("confirm_task", {
       task_path: task,
       is_supervisor: false,
       is_developer: true,
-      work_dir: resolve(tmpdir()),
+      work_dir: TEST_WORK_DIR,
     }, { "x-ai-identity": r2.token as string });
 
     expect(c1.ok).toBe(true);
@@ -388,7 +422,7 @@ describe("Confirm task", () => {
   });
 
   it("rejects a complete workflow without a supervisor", async () => {
-    const task = resolve(tmpdir(), "pairflow-no-supervisor-task.md");
+    const task = resolve(TEST_WORK_DIR, "pairflow-no-supervisor-task.md");
     await writeFile(task, "# no supervisor task", "utf-8");
     const r1 = await mcpRequest("register", { identity: "nosup-a" });
     const r2 = await mcpRequest("register", { identity: "nosup-b" });
@@ -396,13 +430,13 @@ describe("Confirm task", () => {
       task_path: task,
       is_supervisor: false,
       is_developer: true,
-      work_dir: resolve(tmpdir()),
+      work_dir: TEST_WORK_DIR,
     }, { "x-ai-identity": r1.token as string });
     const c2 = await mcpRequest("confirm_task", {
       task_path: task,
       is_supervisor: false,
       is_developer: false,
-      work_dir: resolve(tmpdir()),
+      work_dir: TEST_WORK_DIR,
     }, { "x-ai-identity": r2.token as string });
 
     expect(c1.ok).toBe(true);
@@ -413,7 +447,7 @@ describe("Confirm task", () => {
   });
 
   it("rejects a complete workflow without a developer", async () => {
-    const task = resolve(tmpdir(), "pairflow-no-developer-task.md");
+    const task = resolve(TEST_WORK_DIR, "pairflow-no-developer-task.md");
     await writeFile(task, "# no developer task", "utf-8");
     const r1 = await mcpRequest("register", { identity: "nodev-a" });
     const r2 = await mcpRequest("register", { identity: "nodev-b" });
@@ -421,13 +455,13 @@ describe("Confirm task", () => {
       task_path: task,
       is_supervisor: true,
       is_developer: false,
-      work_dir: resolve(tmpdir()),
+      work_dir: TEST_WORK_DIR,
     }, { "x-ai-identity": r1.token as string });
     const c2 = await mcpRequest("confirm_task", {
       task_path: task,
       is_supervisor: false,
       is_developer: false,
-      work_dir: resolve(tmpdir()),
+      work_dir: TEST_WORK_DIR,
     }, { "x-ai-identity": r2.token as string });
 
     expect(c1.ok).toBe(true);
@@ -438,7 +472,7 @@ describe("Confirm task", () => {
   });
 
   it("allows supervisor and developer responsibilities on the same participant", async () => {
-    const task = resolve(tmpdir(), "pairflow-combined-role-task.md");
+    const task = resolve(TEST_WORK_DIR, "pairflow-combined-role-task.md");
     await writeFile(task, "# combined role task", "utf-8");
     const r1 = await mcpRequest("register", { identity: "combo-a" });
     const r2 = await mcpRequest("register", { identity: "combo-b" });
@@ -446,13 +480,13 @@ describe("Confirm task", () => {
       task_path: task,
       is_supervisor: true,
       is_developer: true,
-      work_dir: resolve(tmpdir()),
+      work_dir: TEST_WORK_DIR,
     }, { "x-ai-identity": r1.token as string });
     const c2 = await mcpRequest("confirm_task", {
       task_path: task,
       is_supervisor: false,
       is_developer: false,
-      work_dir: resolve(tmpdir()),
+      work_dir: TEST_WORK_DIR,
     }, { "x-ai-identity": r2.token as string });
 
     expect(c1.ok).toBe(true);
@@ -464,17 +498,17 @@ describe("Confirm task", () => {
   });
 
   it("blocks workflow actions until all recovered participants re-confirm", async () => {
-    const task = resolve(tmpdir(), "pairflow-incomplete-recovery-task.md");
+    const task = resolve(TEST_WORK_DIR, "pairflow-incomplete-recovery-task.md");
     const wfId = "20260709191959";
     await writeFile(task, "# incomplete recovery task", "utf-8");
-    await seedRecoveredWorkflow(task, wfId, ["rec-a", "rec-b"]);
+    await seedRecoveredWorkflow(TEST_WORK_DIR, task, wfId, ["rec-a", "rec-b"]);
 
     const r1 = await mcpRequest("register", { identity: "rec-a" });
     const c1 = await mcpRequest("confirm_task", {
       task_path: task,
       is_supervisor: true,
       is_developer: false,
-      work_dir: resolve(tmpdir()),
+      work_dir: TEST_WORK_DIR,
     }, { "x-ai-identity": r1.token as string });
     const adv = await mcpRequest("advance", {}, { "x-ai-identity": r1.token as string });
     const state = await mcpRequest("get_state", {}, { "x-ai-identity": r1.token as string });
@@ -499,10 +533,10 @@ describe("Confirm task", () => {
   });
 
   it("enforces role completeness when the final recovered participant re-confirms", async () => {
-    const task = resolve(tmpdir(), "pairflow-recovery-role-task.md");
+    const task = resolve(TEST_WORK_DIR, "pairflow-recovery-role-task.md");
     const wfId = "20260709192000";
     await writeFile(task, "# recovery role task", "utf-8");
-    await seedRecoveredWorkflow(task, wfId, ["rec-role-a", "rec-role-b"]);
+    await seedRecoveredWorkflow(TEST_WORK_DIR, task, wfId, ["rec-role-a", "rec-role-b"]);
 
     const r1 = await mcpRequest("register", { identity: "rec-role-a" });
     const r2 = await mcpRequest("register", { identity: "rec-role-b" });
@@ -510,13 +544,13 @@ describe("Confirm task", () => {
       task_path: task,
       is_supervisor: false,
       is_developer: false,
-      work_dir: resolve(tmpdir()),
+      work_dir: TEST_WORK_DIR,
     }, { "x-ai-identity": r1.token as string });
     const c2 = await mcpRequest("confirm_task", {
       task_path: task,
       is_supervisor: false,
       is_developer: false,
-      work_dir: resolve(tmpdir()),
+      work_dir: TEST_WORK_DIR,
     }, { "x-ai-identity": r2.token as string });
 
     expect(c1.ok).toBe(true);
@@ -527,13 +561,13 @@ describe("Confirm task", () => {
   });
 
   it("enforces work_dir consistency when recovered participants re-confirm", async () => {
-    const root = resolve(tmpdir(), "pairflow-recovery-workdir-root");
+    const root = resolve(TEST_WORK_DIR, "pairflow-recovery-workdir-root");
     const nested = resolve(root, "nested");
     const task = resolve(nested, "task.md");
     const wfId = "20260709192001";
     await mkdir(nested, { recursive: true });
     await writeFile(task, "# recovery workdir task", "utf-8");
-    await seedRecoveredWorkflow(task, wfId, ["rec-wd-a", "rec-wd-b"]);
+    await seedRecoveredWorkflow(root, task, wfId, ["rec-wd-a", "rec-wd-b"]);
 
     const r1 = await mcpRequest("register", { identity: "rec-wd-a" });
     const r2 = await mcpRequest("register", { identity: "rec-wd-b" });
@@ -556,8 +590,32 @@ describe("Confirm task", () => {
     await rm(root, { recursive: true, force: true });
   });
 
+  it("starts a new workflow when confirm_task points recovery at a new work_dir", async () => {
+    const oldWorkDir = resolve(TEST_WORK_DIR, "pid-workdir-root");
+    const newWorkDir = resolve(oldWorkDir, "nested");
+    const task = resolve(newWorkDir, "task.md");
+    const oldWorkflowId = "20000101000000";
+    await mkdir(newWorkDir, { recursive: true });
+    await writeFile(task, "# moved workdir task", "utf-8");
+    await seedRecoveredWorkflow(oldWorkDir, task, oldWorkflowId, ["old-participant"]);
+
+    const registered = await mcpRequest("register", { identity: "new-workdir" });
+    const confirmed = await mcpRequest("confirm_task", {
+      task_path: task,
+      is_supervisor: true,
+      is_developer: false,
+      work_dir: newWorkDir,
+    }, { "x-ai-identity": registered.token as string });
+
+    expect(confirmed.ok).toBe(true);
+    expect(confirmed.recovered).toBe(false);
+    expect(confirmed.workflow_id).not.toBe(oldWorkflowId);
+    expect(await readFile(`${task}.pid`, "utf-8")).toBe(confirmed.workflow_id);
+    await rm(oldWorkDir, { recursive: true, force: true });
+  });
+
   it("skips planning and implementation for requirements-only workflows", async () => {
-    const task = resolve(tmpdir(), "pairflow-requirements-only-task.md");
+    const task = resolve(TEST_WORK_DIR, "pairflow-requirements-only-task.md");
     await writeFile(task, "# requirements only task", "utf-8");
     const r1 = await mcpRequest("register", { identity: "req-sup" });
     const r2 = await mcpRequest("register", { identity: "req-dev" });
@@ -566,13 +624,13 @@ describe("Confirm task", () => {
       task_type: "requirements",
       is_supervisor: true,
       is_developer: false,
-      work_dir: resolve(tmpdir()),
+      work_dir: TEST_WORK_DIR,
     }, { "x-ai-identity": r1.token as string });
     const c2 = await mcpRequest("confirm_task", {
       task_path: task,
       is_supervisor: false,
       is_developer: true,
-      work_dir: resolve(tmpdir()),
+      work_dir: TEST_WORK_DIR,
     }, { "x-ai-identity": r2.token as string });
     const started = await mcpRequest("advance", {}, { "x-ai-identity": r1.token as string });
     const wfId = c1.workflow_id as string;
@@ -639,8 +697,8 @@ describe("Confirm task", () => {
 
 describe("Wait for turn + submit", () => {
   beforeAll(async () => {
-    await writeFile(TEST_TASK, "# test task", "utf-8");
-    await startServer(); await setup();
+    await startServer();
+    await setup();
   }, 20000);
   afterAll(async () => {
     stopServer();
@@ -662,7 +720,7 @@ describe("Wait for turn + submit", () => {
       task_path: TEST_TASK,
       is_supervisor: true,
       is_developer: true,
-      work_dir: resolve(tmpdir()),
+      work_dir: TEST_WORK_DIR,
     }, { "x-ai-identity": codebuddyToken });
     expect(r.ok).toBe(false);
 
@@ -704,6 +762,19 @@ describe("Wait for turn + submit", () => {
     expect(r.ok).toBe(false);
     expect(r.tip).toContain("7 to 40 hexadecimal characters");
   });
+  it("rejects a directory used as the submission file", async () => {
+    const archiveFile = resolve(TEST_HANDOFF, workflowId, "requirements", "r1_codebuddy.md");
+    await rm(archiveFile, { recursive: true, force: true });
+    await mkdir(archiveFile, { recursive: true });
+    const r = await mcpRequest("submit", {
+      file_path: archiveFile,
+      git_commit_hash: "def7654321",
+    }, { "x-ai-identity": codebuddyToken });
+
+    expect(r.ok).toBe(false);
+    expect(r.tip).toContain("file_path must be a file");
+    await rm(archiveFile, { recursive: true, force: true });
+  });
   it("submit works", async () => {
     const archiveFile = resolve(TEST_HANDOFF, workflowId, "requirements", "r1_codebuddy.md");
     await mkdir(dirname(archiveFile), { recursive: true });
@@ -716,8 +787,12 @@ describe("Wait for turn + submit", () => {
   });
   it("lists only supported archive file types", async () => {
     const phaseDir = resolve(TEST_HANDOFF, workflowId, "requirements");
+    await mkdir(phaseDir, { recursive: true });
+    await writeFile(resolve(phaseDir, "r1_codebuddy.md"), "# requirements", "utf-8");
+    await writeFile(resolve(phaseDir, "r1_codebuddy.meta.json"), "{}", "utf-8");
     await writeFile(resolve(phaseDir, "debug.json"), "{}", "utf-8");
     await writeFile(resolve(phaseDir, "events.jsonl"), "{}", "utf-8");
+    await mkdir(resolve(phaseDir, "fake.md"), { recursive: true });
     const r = await mcpRequest("get_archived_files", {
       phase: "requirements",
     }, { "x-ai-identity": codebuddyToken });
@@ -727,10 +802,56 @@ describe("Wait for turn + submit", () => {
     expect(r.files).toContain("r1_codebuddy.meta.json");
     expect(r.files).not.toContain("debug.json");
     expect(r.files).not.toContain("events.jsonl");
+    expect(r.files).not.toContain("fake.md");
   });
-  it("allows anonymous archive listing by explicit workflow_id", async () => {
+  it("requires work_dir for anonymous archive listing", async () => {
     const r = await mcpRequest("get_archived_files", {
       workflow_id: workflowId,
+      phase: "requirements",
+    });
+    expect(r.ok).toBe(false);
+    expect(r.tip).toContain("work_dir is required");
+  });
+  it("rejects relative work_dir for historical archive listing", async () => {
+    const r = await mcpRequest("get_archived_files", {
+      workflow_id: workflowId,
+      work_dir: ".",
+    });
+    expect(r.ok).toBe(false);
+    expect(r.tip).toContain("work_dir must be an absolute path");
+  });
+  it("rejects relative path segments in archive work_dir", async () => {
+    const r = await mcpRequest("get_archived_files", {
+      workflow_id: workflowId,
+      work_dir: `${TEST_WORK_DIR}/./`,
+    });
+    expect(r.ok).toBe(false);
+    expect(r.tip).toContain("work_dir must not contain . or .. path segments");
+  });
+  it("rejects a missing archive work_dir", async () => {
+    const missingWorkDir = resolve(TEST_WORK_DIR, "missing-archive-workdir");
+    const r = await mcpRequest("get_archived_files", {
+      workflow_id: workflowId,
+      work_dir: missingWorkDir,
+    });
+    expect(r.ok).toBe(false);
+    expect(r.tip).toContain("work_dir not found");
+  });
+  it("rejects a file used as archive work_dir", async () => {
+    const file = resolve(TEST_WORK_DIR, "archive-workdir-file");
+    await writeFile(file, "not a directory", "utf-8");
+    const r = await mcpRequest("get_archived_files", {
+      workflow_id: workflowId,
+      work_dir: file,
+    });
+    expect(r.ok).toBe(false);
+    expect(r.tip).toContain("work_dir must be a directory");
+    await rm(file, { force: true });
+  });
+  it("allows anonymous archive listing by explicit workflow_id and work_dir", async () => {
+    const r = await mcpRequest("get_archived_files", {
+      workflow_id: workflowId,
+      work_dir: TEST_WORK_DIR,
       phase: "requirements",
     });
     expect(r.ok).toBe(true);
@@ -740,6 +861,7 @@ describe("Wait for turn + submit", () => {
   it("returns POSIX paths when listing an entire workflow archive", async () => {
     const r = await mcpRequest("get_archived_files", {
       workflow_id: workflowId,
+      work_dir: TEST_WORK_DIR,
     });
     expect(r.ok).toBe(true);
     expect(r.files).toContain("requirements/r1_codebuddy.md");
