@@ -11,6 +11,7 @@ import { getStateTool } from "./tools/get-state.js";
 import { submit } from "./tools/submit.js";
 import { waitForTurn } from "./tools/wait-for-turn.js";
 import { confirmTask } from "./tools/confirm-task.js";
+import { HTTP_SERVER_OPTIONS } from "./http-server-policy.js";
 
 const PORT = parseInt(process.env.PORT || "3100", 10);
 const HOST = "127.0.0.1";
@@ -92,7 +93,7 @@ function parseRequestBody(body: string, res: ServerResponse): unknown | typeof I
   }
 }
 
-const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse) => {
+const httpServer = createServer(HTTP_SERVER_OPTIONS, async (req: IncomingMessage, res: ServerResponse) => {
   const pathname = new URL(req.url ?? "/", `http://${HOST}:${PORT}`).pathname;
 
   if (pathname === "/health" && req.method === "GET") {

@@ -88,6 +88,7 @@ project/                                         ← git 仓库根
 4. 任一 `uncaughtException` → 记录错误并以退出码 1 结束进程；由外部进程管理器负责重启、退避和 crash-loop 熔断
 5. `POST /mcp` 请求体上限为 1 MiB（1,048,576 bytes）。先检查声明的 `Content-Length`，并始终按实际接收字节逐 chunk 累计；任一值超限立即返回 JSON `413 Payload Too Large`、关闭当前连接，不拼接或解析超限 body。现有工具均只传短字符串、布尔值或空参数，合法请求无需接近该上限
 6. HTTP 入口按故障归属返回状态码：JSON 语法错误返回 JSON `400 Invalid JSON`；请求体超限返回 `413`；未匹配的 method/path 返回 `404`；只有服务端内部执行异常返回 JSON `500 Internal Server Error`。通过 JSON 解析但不符合 JSON-RPC/MCP 协议的请求交由 MCP transport 处理
+7. HTTP 请求接收阶段设置显式超时：headers 最多 10 秒，完整请求最多 30 秒，连接超时扫描间隔为 1 秒；超时由 Node.js 返回 `408 Request Timeout` 并关闭连接。响应阶段不设置 socket timeout，因此不影响 `wait_for_turn` 的 600 秒长轮询
 
 **多工作流支持**：每个工作流（IDLE→...→SUMMARY→IDLE 完整周期）在 `<work_dir>/handoff/{workflow_id}/` 下独立归档。`workflow_id` 由 confirm_task 时生成（`yyyyMMddHHmmss` 格式），用于本地可读和按时间排序；本地双 AI 协作场景下秒级精度足够，不提供并发强唯一保证。不同项目由 work_dir 隔离，同一项目的不同任务分属不同 workflow_id 目录。
 
