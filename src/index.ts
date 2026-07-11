@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { writeSync } from "node:fs";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
@@ -166,7 +167,11 @@ process.on("SIGINT", () => { process.exit(0); });
 // is responsible for restart. A later confirm_task can restore state from handoff.
 // Per Node.js best practice: do not attempt in-process recovery after uncaughtException.
 process.on("uncaughtException", (err) => {
-  console.error("[pair-flow] Uncaught exception:", err);
-  console.error("[pair-flow] Exiting — external process manager should restart.");
-  setTimeout(() => process.exit(1), 100);
+  const detail = err instanceof Error ? (err.stack ?? err.message) : String(err);
+  try {
+    writeSync(process.stderr.fd, `[pair-flow] Uncaught exception: ${detail}\n[pair-flow] Exiting — external process manager should restart.\n`);
+  } catch {
+    // Exit even if stderr itself is unavailable.
+  }
+  process.exit(1);
 });

@@ -47,6 +47,7 @@ describe("sanitizeIdentity", () => {
   it("passes valid identities", () => {
     expect(sanitizeIdentity("claude-fable")).toBe("claude-fable");
     expect(sanitizeIdentity("codebuddy_123")).toBe("codebuddy_123");
+    expect(sanitizeIdentity("Claude_Fable")).toBe("claude_fable");
   });
 
   it("rejects path separators", () => {

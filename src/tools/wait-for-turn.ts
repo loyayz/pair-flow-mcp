@@ -39,11 +39,17 @@ async function waitForActiveTurn(
   signal: AbortSignal,
 ): Promise<CallToolResult> {
   const started = Date.now();
+  let lastSeenPhase = getState(workflowId)?.phase;
 
   while (Date.now() - started < TIMEOUT_MS) {
     signal.throwIfAborted();
     const state = getState(workflowId);
-    if (!state) return err("workflow not found");
+    if (!state) {
+      return lastSeenPhase === "summary"
+        ? completedWorkflowResult(identity, workflowId)
+        : err("workflow not found");
+    }
+    lastSeenPhase = state.phase;
 
     if (!hasCompleteParticipantRoster(state)) {
       const participant = state.participants.find((candidate) => candidate.identity === identity);
@@ -68,6 +74,7 @@ async function waitForActiveTurn(
       await getMutex(workflowId).runExclusive(async () => {
         const s = getState(workflowId);
         if (!signal.aborted && s && s.turn === identity) {
+          // Claim persistence is the linearization point; later cancellation does not roll it back.
           s.turn_claimed_at = new Date().toISOString();
           setState(workflowId, s);
           claimed = true;
@@ -97,7 +104,11 @@ async function waitForActiveTurn(
   }
 
   const state = getState(workflowId);
-  if (!state) return err("workflow not found");
+  if (!state) {
+    return lastSeenPhase === "summary"
+      ? completedWorkflowResult(identity, workflowId)
+      : err("workflow not found");
+  }
   const rosterReady = hasCompleteParticipantRoster(state);
   return ok(
     { turn: state.turn, phase: state.phase, round: state.round },
@@ -107,6 +118,16 @@ async function waitForActiveTurn(
         ? `你是 ${identity}。单次等待已超时(600s)，当前是第 ${state.round} 轮，轮到 ${state.turn}。`
         : `你是 ${identity}。单次等待已超时(600s)，参与者尚未全部完成 confirm_task。`,
     })
+  );
+}
+
+function completedWorkflowResult(identity: string, workflowId: string): CallToolResult {
+  return ok(
+    { turn: "idle", phase: "idle" },
+    formatTip({
+      action: "工作流已由监督者结束。需要开始新任务时，复用当前 token 调用 confirm_task。",
+      current: `你是 ${identity}。工作流 ${workflowId} 已结束。`,
+    }),
   );
 }
 

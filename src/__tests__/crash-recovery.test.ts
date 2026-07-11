@@ -504,6 +504,7 @@ describe("parseFilename", () => {
     expect(parseFilename(`r1_${"a".repeat(65)}.md`)).toBeNull();
     expect(parseFilename("r1_unknown.md")).toBeNull();
     expect(parseFilename("r1_IDLE.md")).toBeNull();
+    expect(parseFilename("r1_Alice.md")).toBeNull();
     expect(parseFilename("")).toBeNull();
     expect(parseFilename(`r${"9".repeat(400)}_alice.md`)).toBeNull();
   });

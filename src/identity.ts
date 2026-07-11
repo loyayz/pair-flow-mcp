@@ -28,9 +28,11 @@ export function sanitizeIdentity(identity: string): string {
   if (RESERVED_IDENTITIES.has(identity.toLowerCase())) {
     throw new Error('Invalid identity: "unknown" and "idle" are reserved');
   }
-  return identity;
+  return identity.toLowerCase();
 }
 
 export function isValidIdentity(identity: string): boolean {
-  return IDENTITY_PATTERN.test(identity) && !RESERVED_IDENTITIES.has(identity.toLowerCase());
+  return identity === identity.toLowerCase()
+    && IDENTITY_PATTERN.test(identity)
+    && !RESERVED_IDENTITIES.has(identity);
 }

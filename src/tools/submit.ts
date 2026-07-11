@@ -50,6 +50,20 @@ export async function submit(
     const workDir = workflowWorkDir(state);
     if (!workDir) return err("workflow work_dir is missing");
     if (!state.task?.spec_file || !state.task.task_type) return err("workflow task is incomplete");
+    const previousSubmission = state.last_submission_by_participant[identity];
+    const isExactReplay = previousSubmission?.round !== null
+      && previousSubmission?.round !== undefined
+      && state.round === previousSubmission.round + 1
+      && state.turn !== identity
+      && previousSubmission.commit_hash?.toLowerCase() === commitHash
+      && previousSubmission.file_path !== null
+      && samePath(resolve(filePath), resolve(previousSubmission.file_path));
+    if (isExactReplay) {
+      return ok(
+        { ok: true, next_turn: state.turn },
+        buildSubmissionSuccessTip(state, identity, previousSubmission.file_path!),
+      );
+    }
     if (!isCurrentHolder(state, identity)) return err(`not your turn — current turn: ${state.turn}`);
 
     // IMPLEMENTATION responsibility check
@@ -139,27 +153,29 @@ export async function submit(
 
     setState(workflowId, nextState);
 
-    const idLabel = identityLabel(nextState, identity);
-    const nextLabel = identityLabel(nextState, nextState.turn);
-    const phaseText = phaseLabel(nextState.phase, nextState.sub_phase);
-    const supervisorParticipant = nextState.participants.find((p) => p.is_supervisor);
-    const bothSubmitted = haveAllParticipantsSubmittedCurrentPhase(nextState);
+    return ok(
+      { ok: true, next_turn: nextState.turn },
+      buildSubmissionSuccessTip(nextState, identity, expectedFilePath),
+    );
+  });
+}
 
-    let action: string;
-    if (bothSubmitted && supervisorParticipant && nextState.turn === supervisorParticipant.identity) {
-      action = `等待监督者 ${supervisorParticipant.identity} 判断是否调用 advance 推进`;
-    } else if (bothSubmitted && supervisorParticipant) {
-      action = `等待 ${nextState.turn} 继续处理或确认后自然交还监督者 ${supervisorParticipant.identity}`;
-    } else {
-      action = `等待 ${nextState.turn} 完成当前轮次。调用 wait_for_turn（长轮询，10s 间隔，最多 600s），turn 到你时会自动返回。不要频繁调用 get_state`;
-    }
+function buildSubmissionSuccessTip(state: PairFlowState, identity: string, filePath: string): string {
+  const supervisor = state.participants.find((participant) => participant.is_supervisor);
+  const bothSubmitted = haveAllParticipantsSubmittedCurrentPhase(state);
+  let action: string;
+  if (bothSubmitted && supervisor && state.turn === supervisor.identity) {
+    action = `等待监督者 ${supervisor.identity} 判断是否调用 advance 推进`;
+  } else if (bothSubmitted && supervisor) {
+    action = `等待 ${state.turn} 继续处理或确认后自然交还监督者 ${supervisor.identity}`;
+  } else {
+    action = `等待 ${state.turn} 完成当前轮次。调用 wait_for_turn（长轮询，10s 间隔，最多 600s），turn 到你时会自动返回。不要频繁调用 get_state`;
+  }
 
-    const tip = formatTip({
-      action,
-      product: `${expectedFilePath.replace(/\\/g, "/")}（已提交）`,
-      current: `你是 ${idLabel}。当前是第 ${nextState.round} 轮${phaseText}，turn 已切给 ${nextLabel}。${bothSubmitted ? " 本阶段双方已提交。" : ""}`,
-    });
-    return ok({ ok: true, next_turn: nextState.turn }, tip);
+  return formatTip({
+    action,
+    product: `${filePath.replace(/\\/g, "/")}（已提交）`,
+    current: `你是 ${identityLabel(state, identity)}。当前是第 ${state.round} 轮${phaseLabel(state.phase, state.sub_phase)}，turn 已切给 ${identityLabel(state, state.turn)}。${bothSubmitted ? " 本阶段双方已提交。" : ""}`,
   });
 }
 

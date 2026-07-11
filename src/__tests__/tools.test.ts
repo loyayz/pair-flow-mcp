@@ -151,6 +151,17 @@ describe("Register", () => {
     expect(who.registered).toBe(true);
     expect(who.joined_workflow).toBe(false);
   });
+  it("normalizes registered identities to lowercase", async () => {
+    const registered = await mcpRequest("register", { identity: "Alice_AGENT" });
+
+    expect(registered.ok).toBe(true);
+    expect(registered.identity).toBe("alice_agent");
+
+    const who = await mcpRequest("who_am_i", {}, {
+      "x-ai-identity": registered.token as string,
+    });
+    expect(who.identity).toBe("alice_agent");
+  });
   it("uses the active server port in register parameter guidance", async () => {
     const r = await mcpRequest("register", { identity: "invalid identity" });
 
@@ -593,6 +604,12 @@ describe("Confirm task", () => {
     expect(adv.ok).toBe(false);
     expect(adv.tip).toContain("workflow recovery incomplete");
     expect(state.ok).toBe(true);
+    expect(state).toMatchObject({
+      workflow_id: wfId,
+      phase: "requirements",
+      round: 3,
+      turn: "rec-a",
+    });
     expect(state.tip).toContain("工作流恢复未完成");
     expect(c1.tip).toContain("调用 wait_for_turn");
     expect(submit.ok).toBe(false);
@@ -829,7 +846,7 @@ describe("Confirm task", () => {
     await rm(`${task}.pid`, { force: true });
   });
 
-  it("skips planning and implementation for requirements-only workflows", async () => {
+  it("allows no developer and skips implementation for requirements-only workflows", async () => {
     const task = resolve(TEST_WORK_DIR, "pairflow-requirements-only-task.md");
     await writeFile(task, "# requirements only task", "utf-8");
     const r1 = await mcpRequest("register", { identity: "req-sup" });
@@ -844,7 +861,7 @@ describe("Confirm task", () => {
     const c2 = await mcpRequest("confirm_task", {
       task_path: task,
       is_supervisor: false,
-      is_developer: true,
+      is_developer: false,
       work_dir: TEST_WORK_DIR,
     }, { "x-ai-identity": r2.token as string });
     const started = await mcpRequest("advance", {}, { "x-ai-identity": r1.token as string });
@@ -906,6 +923,7 @@ describe("Confirm task", () => {
     expect(summary2.ok).toBe(true);
     expect(finished.ok).toBe(true);
     expect(finished.new_phase).toBe("idle");
+    expect(finished.turn).toBe("idle");
     expect(finalState.tip).toContain("还未绑定到任何工作流");
     await rm(task, { force: true });
     await rm(`${task}.pid`, { force: true });

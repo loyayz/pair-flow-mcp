@@ -20,6 +20,15 @@ describe("PairFlow runtime boundary", () => {
     expect(source).not.toContain("Crash loop detected");
   });
 
+  it("exits immediately after an uncaught exception", async () => {
+    const source = await readFile(resolve("src", "index.ts"), "utf-8");
+    const handler = source.match(/process\.on\("uncaughtException"[\s\S]*?\n}\);/)?.[0];
+
+    expect(handler).toContain("writeSync(process.stderr.fd");
+    expect(handler).toContain("process.exit(1)");
+    expect(handler).not.toContain("setTimeout");
+  });
+
   it("does not advertise a startup recovery gate", async () => {
     const source = await readFile(resolve("src", "index.ts"), "utf-8");
 

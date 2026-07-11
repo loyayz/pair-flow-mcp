@@ -17,7 +17,7 @@ One of the two AI identities taking part in a workflow. A workflow may contain a
 _Avoid_: Client, agent, peer when speaking about the domain
 
 **Identity**:
-The name an AI uses when registering with PairFlow. The same identity may register more than once and receive multiple tokens; an identity becomes a Participant only after it joins a workflow for a task document.
+The canonical lowercase name an AI uses when registering with PairFlow. Registration normalizes letter case, so names that differ only by case denote the same identity. The same identity may register more than once and receive multiple tokens; an identity becomes a Participant only after it joins a workflow for a task document.
 _Avoid_: Account, user
 
 **Supervisor**:
@@ -25,11 +25,11 @@ The participant responsible for deciding when a phase has converged and for movi
 _Avoid_: Owner, approver
 
 **Developer**:
-The participant responsible for code changes during implementation coding rounds. A workflow has exactly one Developer; this responsibility may be combined with Supervisor, and outside implementation, including requirements-only workflows, it does not define who may contribute.
+The participant responsible for code changes during implementation coding rounds. A development workflow has exactly one Developer; a requirements-only workflow may have none because it has no implementation phase. This responsibility may be combined with Supervisor, and outside implementation it does not define who may contribute.
 _Avoid_: Coder, implementer
 
 **Reviewer**:
-The non-Developer participant when the workflow is in an implementation review round. Outside implementation, review behavior is controlled by turn ownership rather than this label.
+The participant who does not hold the Developer responsibility. This derived label determines submission responsibility during implementation review rounds; outside implementation, contribution and review behavior are controlled by turn ownership instead.
 _Avoid_: Peer reviewer, non-developer
 
 **Turn**:

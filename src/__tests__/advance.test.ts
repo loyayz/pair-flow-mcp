@@ -133,6 +133,7 @@ describe("advance summary completion", () => {
 
     expect(payload.ok).toBe(true);
     expect(payload.new_phase).toBe("idle");
+    expect(payload.turn).toBe("idle");
     expect(payload.tip).toContain("复用当前 token");
     expect(payload.tip).toContain("双方分别调用 confirm_task");
     expect(payload.tip).toContain("服务重启或 token 丢失时先重新 register");

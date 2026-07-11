@@ -143,7 +143,7 @@ export async function advance(
       deleteState(workflowId);
       unbindWorkflow(workflowId);
 
-      return ok({ ok: true, new_phase: "idle" }, formatTip({
+      return ok({ ok: true, new_phase: "idle", turn: "idle" }, formatTip({
         action: "如需开始新任务，在服务未重启且 token 仍可用时可复用当前 token；双方分别调用 confirm_task，并使用相同 task_path。服务重启或 token 丢失时先重新 register。",
         product: `已完成工作流的全部产出归档于 ${finishedArchive}/`,
         current: `你是 ${identity}（supervisor）。工作流已结束。`,

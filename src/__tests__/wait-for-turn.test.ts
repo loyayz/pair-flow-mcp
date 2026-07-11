@@ -192,6 +192,38 @@ describe("wait_for_turn cancellation", () => {
     expect(getState(TEST_WORKFLOW_ID)!.turn_claimed_at).toBeNull();
   });
 
+  it("keeps a persisted claim when cancellation happens after the claim linearization point", async () => {
+    const token = registerToken("alice");
+    bindWorkflow(token, TEST_WORKFLOW_ID);
+    setState(TEST_WORKFLOW_ID, {
+      ...defaultState(),
+      workflow_id: TEST_WORKFLOW_ID,
+      phase: "planning",
+      turn: "alice",
+      participants: [
+        { identity: "alice", is_supervisor: true, is_developer: false, registered_at: "now" },
+        { identity: "bob", is_supervisor: false, is_developer: true, registered_at: "now" },
+      ],
+    });
+    const release = await getMutex(TEST_WORKFLOW_ID).acquire();
+    const controller = new AbortController();
+    const reason = new Error("request cancelled after claim");
+    const extra = {
+      signal: controller.signal,
+      requestInfo: { headers: { "x-ai-identity": token } },
+    } as unknown as RequestHandlerExtra<ServerRequest, ServerNotification>;
+
+    const outcomePromise = waitForTurn(extra).then(
+      () => ({ type: "resolved" as const }),
+      (error: unknown) => ({ type: "rejected" as const, error }),
+    );
+    release();
+    queueMicrotask(() => controller.abort(reason));
+
+    expect(await outcomePromise).toEqual({ type: "rejected", error: reason });
+    expect(getState(TEST_WORKFLOW_ID)!.turn_claimed_at).not.toBeNull();
+  });
+
   it("stops immediately without changing workflow state", async () => {
     vi.useFakeTimers();
     const token = registerToken("alice");
@@ -235,6 +267,65 @@ describe("wait_for_turn cancellation", () => {
     expect(settledImmediately).toBe(true);
     expect(outcome).toEqual({ type: "rejected", error: reason });
     expect(getState(TEST_WORKFLOW_ID)!.turn_claimed_at).toBeNull();
+  });
+
+  it("reports normal completion when a summary workflow is deleted while waiting", async () => {
+    vi.useFakeTimers();
+    const token = registerToken("alice");
+    bindWorkflow(token, TEST_WORKFLOW_ID);
+    setState(TEST_WORKFLOW_ID, {
+      ...defaultState(),
+      workflow_id: TEST_WORKFLOW_ID,
+      phase: "summary",
+      turn: "bob",
+      participants: [
+        { identity: "alice", is_supervisor: false, is_developer: true, registered_at: "now" },
+        { identity: "bob", is_supervisor: true, is_developer: false, registered_at: "now" },
+      ],
+    });
+    const extra = {
+      signal: new AbortController().signal,
+      requestInfo: { headers: { "x-ai-identity": token } },
+    } as unknown as RequestHandlerExtra<ServerRequest, ServerNotification>;
+
+    const resultPromise = waitForTurn(extra);
+    deleteState(TEST_WORKFLOW_ID);
+    await vi.advanceTimersByTimeAsync(10_000);
+    const payload = JSON.parse(((await resultPromise).content[0] as { text: string }).text);
+
+    expect(payload.ok).toBe(true);
+    expect(payload.turn).toBe("idle");
+    expect(payload.phase).toBe("idle");
+    expect(payload.round).toBeUndefined();
+    expect(payload.tip).toContain("已由监督者结束");
+  });
+
+  it("reports an error when a non-summary workflow disappears while waiting", async () => {
+    vi.useFakeTimers();
+    const token = registerToken("alice");
+    bindWorkflow(token, TEST_WORKFLOW_ID);
+    setState(TEST_WORKFLOW_ID, {
+      ...defaultState(),
+      workflow_id: TEST_WORKFLOW_ID,
+      phase: "planning",
+      turn: "bob",
+      participants: [
+        { identity: "alice", is_supervisor: true, is_developer: false, registered_at: "now" },
+        { identity: "bob", is_supervisor: false, is_developer: true, registered_at: "now" },
+      ],
+    });
+    const extra = {
+      signal: new AbortController().signal,
+      requestInfo: { headers: { "x-ai-identity": token } },
+    } as unknown as RequestHandlerExtra<ServerRequest, ServerNotification>;
+
+    const resultPromise = waitForTurn(extra);
+    deleteState(TEST_WORKFLOW_ID);
+    await vi.advanceTimersByTimeAsync(10_000);
+    const payload = JSON.parse(((await resultPromise).content[0] as { text: string }).text);
+
+    expect(payload.ok).toBe(false);
+    expect(payload.error).toBe("workflow not found");
   });
 
   it("tells the AI to continue waiting after a single 600-second timeout", async () => {

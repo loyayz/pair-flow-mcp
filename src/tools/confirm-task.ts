@@ -14,6 +14,7 @@ import { atomicWriteText } from "../atomic-write.js";
 import { findSymbolicLinkInPath } from "../path-safety.js";
 const taskPathMutexes = new Map<string, Mutex>();
 const tokenMutexes = new Map<string, Mutex>();
+const recoveryMutexes = new Map<string, Mutex>();
 
 function taskPathMutexKey(taskPath: string): string {
   return process.platform === "win32" ? resolve(taskPath).toLowerCase() : resolve(taskPath);
@@ -49,6 +50,19 @@ async function withTokenMutex<T>(token: string, action: () => Promise<T>): Promi
     return await mutex.runExclusive(action);
   } finally {
     if (!mutex.isLocked()) tokenMutexes.delete(token);
+  }
+}
+
+async function withRecoveryMutex<T>(workflowId: string, action: () => Promise<T>): Promise<T> {
+  let mutex = recoveryMutexes.get(workflowId);
+  if (!mutex) {
+    mutex = new Mutex();
+    recoveryMutexes.set(workflowId, mutex);
+  }
+  try {
+    return await mutex.runExclusive(action);
+  } finally {
+    if (!mutex.isLocked()) recoveryMutexes.delete(workflowId);
   }
 }
 
@@ -97,14 +111,19 @@ function assignIdleSupervisorTurn(state: ReturnType<typeof defaultState>, caller
   state.turn_claimed_at = supervisor.identity === callerIdentity ? assignedAt : null;
 }
 
-function validateParticipantCombination(participants: Participant[]): string | null {
+function validateParticipantCombination(
+  participants: Participant[],
+  taskType: "requirements" | "development",
+): string | null {
   const supervisorCount = participants.filter((p) => p.is_supervisor).length;
   const developerCount = participants.filter((p) => p.is_developer).length;
   if (supervisorCount > 1) return "supervisor already exists for this task";
   if (developerCount > 1) return "developer already exists for this task";
   if (participants.length >= 2 && !participants.some(isRecoveryPlaceholderParticipant)) {
     if (supervisorCount !== 1) return "exactly one supervisor is required once both participants have joined";
-    if (developerCount !== 1) return "exactly one developer is required once both participants have joined";
+    if (taskType === "development" && developerCount !== 1) {
+      return "exactly one developer is required for development tasks once both participants have joined";
+    }
   }
 
   const confirmedWorkDirs = participants
@@ -279,21 +298,40 @@ export async function confirmTask(
       return err(error instanceof Error ? error.message : "failed to read pid file");
     }
     if (pidWfId) {
-      const activePidState = getState(pidWfId);
-      if (activePidState?.task?.spec_file && !samePath(activePidState.task.spec_file, resolvedTaskPath)) {
-        return err(`workflow_id ${pidWfId} is already active for another task: ${posixPath(activePidState.task.spec_file)}`);
-      }
-      const defState = defaultState();
-      let recoveredState;
-      try {
-        recoveredState = await reconstructFromHandoff(defState, pidWfId, resolvedWorkDir, resolvedTaskPath);
-      } catch (error) {
-        return err(error instanceof Error ? error.message : "failed to read recovery archive");
-      }
-      if (recoveredState) {
-        setState(pidWfId, recoveredState);
+      const recoveryResult = await withRecoveryMutex(pidWfId, async () => {
+        const activePidState = getState(pidWfId);
+        if (activePidState?.task?.spec_file) {
+          return samePath(activePidState.task.spec_file, resolvedTaskPath)
+            ? { existing: true, recovered: false }
+            : {
+                existing: false,
+                recovered: false,
+                error: `workflow_id ${pidWfId} is already active for another task: ${posixPath(activePidState.task.spec_file)}`,
+              };
+        }
+        const defState = defaultState();
+        try {
+          const recoveredState = await reconstructFromHandoff(
+            defState,
+            pidWfId,
+            resolvedWorkDir,
+            resolvedTaskPath,
+          );
+          if (!recoveredState) return { existing: false, recovered: false };
+          setState(pidWfId, recoveredState);
+          return { existing: true, recovered: true };
+        } catch (error) {
+          return {
+            existing: false,
+            recovered: false,
+            error: error instanceof Error ? error.message : "failed to read recovery archive",
+          };
+        }
+      });
+      if (recoveryResult.error) return err(recoveryResult.error);
+      if (recoveryResult.existing) {
         existing = pidWfId;
-        recovered = true;
+        recovered = recoveryResult.recovered;
       }
     }
   }
@@ -345,7 +383,7 @@ export async function confirmTask(
         const nextParticipants = state.participants.map((p) => p.identity === identity
           ? { ...p, is_supervisor: supervisor, is_developer: developer, registered_at: confirmedAt, work_dir: resolvedWorkDir }
           : p);
-        const responsibilityError = validateParticipantCombination(nextParticipants);
+        const responsibilityError = validateParticipantCombination(nextParticipants, existingTaskType);
         if (responsibilityError) return err(responsibilityError);
         const pidError = await writePidFile(resolvedTaskPath, wfId);
         if (pidError) return err(pidError);
@@ -390,7 +428,10 @@ export async function confirmTask(
         registered_at: new Date().toISOString(),
         work_dir: resolvedWorkDir,
       };
-      const responsibilityError = validateParticipantCombination([...state.participants, newParticipant]);
+      const responsibilityError = validateParticipantCombination(
+        [...state.participants, newParticipant],
+        existingTaskType,
+      );
       if (responsibilityError) return err(responsibilityError);
 
       // work_dir 一致性

@@ -55,6 +55,27 @@ afterEach(async () => {
 });
 
 describe("submit commit ordering", () => {
+  it("returns an exact immediate retry idempotently without advancing or rewriting meta", async () => {
+    const replayFile = join(WORK_DIR, "handoff", WORKFLOW_ID, "requirements", "r1_alice.md");
+    const metaFile = replayFile.replace(/\.md$/, ".meta.json");
+    await writeFile(replayFile, "# submitted requirements", "utf-8");
+    await writeFile(metaFile, "sentinel", "utf-8");
+    const state = getState(WORKFLOW_ID)!;
+    state.round = 2;
+    state.turn = "bob";
+    state.last_submission_by_participant = {
+      alice: { round: 1, sub_phase: null, commit_hash: "abc1234", submitted_at: "2026-07-11T00:20:00.000Z", file_path: replayFile },
+      bob: { round: null, sub_phase: null, commit_hash: null, submitted_at: null, file_path: null },
+    };
+
+    const result = await payload({ file_path: replayFile, git_commit_hash: "ABC1234" });
+
+    expect(result.ok).toBe(true);
+    expect(result.next_turn).toBe("bob");
+    expect(getState(WORKFLOW_ID)).toMatchObject({ round: 2, turn: "bob" });
+    expect(await readFile(metaFile, "utf-8")).toBe("sentinel");
+  });
+
   it("compares git_commit_hash with the highest-round submission", async () => {
     const sameCaseInsensitiveHash = await payload({
       file_path: FILE_PATH,
