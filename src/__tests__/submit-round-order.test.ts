@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -7,12 +7,24 @@ import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/proto
 import type { ServerNotification, ServerRequest } from "@modelcontextprotocol/sdk/types.js";
 import { submit } from "../tools/submit.js";
 import { bindWorkflow, registerToken } from "../token-map.js";
-import { defaultState, deleteState, setState } from "../state.js";
+import { defaultState, deleteState, getState, setState } from "../state.js";
 
 const WORKFLOW_ID = "20260711000002";
 const WORK_DIR = join(tmpdir(), `pairflow-submit-round-${randomUUID()}`);
 const FILE_PATH = join(WORK_DIR, "handoff", WORKFLOW_ID, "requirements", "r3_alice.md");
 let token = "";
+
+function requestExtra(): RequestHandlerExtra<ServerRequest, ServerNotification> {
+  return {
+    signal: new AbortController().signal,
+    requestInfo: { headers: { "x-ai-identity": token } },
+  } as unknown as RequestHandlerExtra<ServerRequest, ServerNotification>;
+}
+
+async function payload(args: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const result = await submit(args, requestExtra());
+  return JSON.parse((result.content[0] as { text: string }).text);
+}
 
 beforeEach(async () => {
   await mkdir(dirname(FILE_PATH), { recursive: true });
@@ -44,18 +56,132 @@ afterEach(async () => {
 
 describe("submit commit ordering", () => {
   it("compares git_commit_hash with the highest-round submission", async () => {
-    const extra = {
-      signal: new AbortController().signal,
-      requestInfo: { headers: { "x-ai-identity": token } },
-    } as unknown as RequestHandlerExtra<ServerRequest, ServerNotification>;
-
-    const result = await submit({
+    const sameCaseInsensitiveHash = await payload({
       file_path: FILE_PATH,
-      git_commit_hash: "def5678",
-    }, extra);
-    const payload = JSON.parse((result.content[0] as { text: string }).text);
+      git_commit_hash: "DEF5678",
+    });
+    const sameHashWithMoreCharacters = await payload({
+      file_path: FILE_PATH,
+      git_commit_hash: "DEF5678A",
+    });
 
-    expect(payload.ok).toBe(false);
-    expect(payload.tip).toContain("git_commit_hash unchanged since last submission");
+    expect(sameCaseInsensitiveHash.ok).toBe(false);
+    expect(sameCaseInsensitiveHash.tip).toContain("git_commit_hash unchanged since last submission");
+    expect(sameHashWithMoreCharacters.ok).toBe(false);
+    expect(sameHashWithMoreCharacters.tip).toContain("git_commit_hash unchanged since last submission");
+  });
+
+  it("rejects non-string handler inputs", async () => {
+    const invalidPath = await payload({ file_path: 42, git_commit_hash: "fedcba9" });
+    const invalidHash = await payload({ file_path: FILE_PATH, git_commit_hash: 1234567 });
+
+    expect(invalidPath.ok).toBe(false);
+    expect(invalidPath.tip).toContain("file_path must be a string");
+    expect(invalidHash.ok).toBe(false);
+    expect(invalidHash.tip).toContain("git_commit_hash must be a string");
+  });
+
+  it("rejects zero-byte output without advancing workflow state", async () => {
+    await writeFile(FILE_PATH, "", "utf-8");
+
+    const result = await payload({ file_path: FILE_PATH, git_commit_hash: "fedcba9" });
+
+    expect(result.ok).toBe(false);
+    expect(result.tip).toContain("file_path must not be empty");
+    expect(getState(WORKFLOW_ID)?.round).toBe(3);
+    expect(getState(WORKFLOW_ID)?.turn).toBe("alice");
+  });
+
+  it("normalizes commit hashes and uses one submission timestamp", async () => {
+    const result = await payload({ file_path: FILE_PATH, git_commit_hash: "ABCDEF9" });
+    const state = getState(WORKFLOW_ID)!;
+    const meta = JSON.parse(await readFile(FILE_PATH.replace(/\.md$/, ".meta.json"), "utf-8"));
+
+    expect(result.ok).toBe(true);
+    expect(state.last_submission_by_participant.alice.commit_hash).toBe("abcdef9");
+    expect(meta.commit_hash).toBe("abcdef9");
+    expect(meta.submitted_at).toBe(state.last_submission_by_participant.alice.submitted_at);
+    expect(state.turn_switched_at).toBe(meta.submitted_at);
+  });
+
+  it("rejects an invalid implementation sub_phase", async () => {
+    const implementationPath = join(WORK_DIR, "handoff", WORKFLOW_ID, "implementation", "r3_alice.md");
+    await mkdir(dirname(implementationPath), { recursive: true });
+    await writeFile(implementationPath, "# implementation", "utf-8");
+    const state = getState(WORKFLOW_ID)!;
+    state.phase = "implementation";
+    state.sub_phase = null;
+
+    const result = await payload({ file_path: implementationPath, git_commit_hash: "fedcba9" });
+
+    expect(result.ok).toBe(false);
+    expect(result.tip).toContain("implementation sub_phase must be coding or review");
+    expect(getState(WORKFLOW_ID)?.round).toBe(3);
+  });
+
+  it("rejects submission until both participants have joined", async () => {
+    getState(WORKFLOW_ID)!.participants.pop();
+
+    const result = await payload({ file_path: FILE_PATH, git_commit_hash: "fedcba9" });
+
+    expect(result.ok).toBe(false);
+    expect(result.tip).toContain("both participants must join via confirm_task before submit");
+    expect(getState(WORKFLOW_ID)?.round).toBe(3);
+  });
+
+  it("rejects symbolic links at the expected handoff path", async ({ skip }) => {
+    const targetPath = process.platform === "win32"
+      ? join(WORK_DIR, "outside-directory")
+      : join(WORK_DIR, "outside.md");
+    if (process.platform === "win32") {
+      await mkdir(targetPath, { recursive: true });
+    } else {
+      await writeFile(targetPath, "# outside archive", "utf-8");
+    }
+    await rm(FILE_PATH, { force: true });
+    try {
+      await symlink(targetPath, FILE_PATH, process.platform === "win32" ? "junction" : "file");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EPERM") {
+        skip();
+        return;
+      }
+      throw error;
+    }
+    const result = await payload({
+      file_path: FILE_PATH,
+      git_commit_hash: "fedcba9",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.tip).toContain("symbolic links are not allowed");
+  });
+
+  it("rejects symbolic links in parent archive directories", async ({ skip }) => {
+    const phaseDirectory = dirname(FILE_PATH);
+    const outsidePhaseDirectory = join(WORK_DIR, "outside-phase");
+    await rm(phaseDirectory, { recursive: true, force: true });
+    await mkdir(outsidePhaseDirectory, { recursive: true });
+    await writeFile(join(outsidePhaseDirectory, "r3_alice.md"), "# outside phase", "utf-8");
+    try {
+      await symlink(
+        outsidePhaseDirectory,
+        phaseDirectory,
+        process.platform === "win32" ? "junction" : "dir",
+      );
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EPERM") {
+        skip();
+        return;
+      }
+      throw error;
+    }
+    const result = await payload({
+      file_path: FILE_PATH,
+      git_commit_hash: "fedcba9",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.tip).toContain("symbolic links are not allowed");
   });
 });

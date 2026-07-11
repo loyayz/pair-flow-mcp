@@ -180,7 +180,11 @@ export function hasRecoveryPlaceholderParticipant(state: PairFlowState): boolean
   return state.participants.some(isRecoveryPlaceholderParticipant);
 }
 
+export function hasCompleteParticipantRoster(state: PairFlowState): boolean {
+  return state.participants.length === 2 && !hasRecoveryPlaceholderParticipant(state);
+}
+
 export function haveAllParticipantsSubmittedCurrentPhase(state: PairFlowState): boolean {
-  if (state.phase === "idle") return false;
+  if (state.phase === "idle" || !hasCompleteParticipantRoster(state)) return false;
   return state.participants.every((p) => Boolean(state.last_submission_by_participant[p.identity]?.commit_hash));
 }

@@ -4,7 +4,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
 import { parseSession } from "../identity.js";
-import { deleteState, getState, setState, getMutex, hasRecoveryPlaceholderParticipant, haveAllParticipantsSubmittedCurrentPhase, isSupervisor, getOtherIdentity, initRequirementsPhase, initPlanningPhase, initImplementationPhase, initSummaryPhase } from "../state.js";
+import { deleteState, getState, setState, getMutex, hasCompleteParticipantRoster, hasRecoveryPlaceholderParticipant, haveAllParticipantsSubmittedCurrentPhase, isSupervisor, getOtherIdentity, initRequirementsPhase, initPlanningPhase, initImplementationPhase, initSummaryPhase } from "../state.js";
 
 import { err, ok } from "../response.js";
 import { workflowArchivePath, workflowWorkDir } from "../archive-path.js";
@@ -23,6 +23,9 @@ export async function advance(
     if (!state) return err("workflow not found");
     if (hasRecoveryPlaceholderParticipant(state)) {
       return err("workflow recovery incomplete — every recovered participant must call confirm_task before advance");
+    }
+    if (!hasCompleteParticipantRoster(state)) {
+      return err("both participants must join via confirm_task before advance");
     }
     if (!workflowWorkDir(state)) return err("workflow work_dir is missing");
 
@@ -46,9 +49,6 @@ export async function advance(
     }
 
     if (currentPhase === "idle") {
-      if (state.participants.length < 2) {
-        return err("both participants must join via confirm_task before advance");
-      }
       if (!state.task || !state.task.spec_file) {
         return err("task not confirmed — call confirm_task first");
       }

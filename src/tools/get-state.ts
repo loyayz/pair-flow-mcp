@@ -2,7 +2,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
 import { parseSession } from "../identity.js";
-import { getState, hasRecoveryPlaceholderParticipant } from "../state.js";
+import { getState, hasCompleteParticipantRoster, hasRecoveryPlaceholderParticipant } from "../state.js";
 import { err, ok } from "../response.js";
 import { buildTip } from "../tip.js";
 
@@ -18,6 +18,9 @@ export async function getStateTool(
   }
   if (hasRecoveryPlaceholderParticipant(state)) {
     return ok({ tip: `[行动] 工作流恢复未完成。所有从归档恢复出的参与者都必须先调用 confirm_task 重新确认职责和 work_dir；在此之前不要调用 advance、wait_for_turn 或 submit。\n\n[当前] 你是 ${identity}。工作流 ${workflowId} 仍有参与者未重新确认。` });
+  }
+  if (!hasCompleteParticipantRoster(state)) {
+    return ok({ tip: `[行动] 工作流还缺少第二位参与者。等待另一位 AI 使用相同 task_path 调用 confirm_task 加入；在双方就位前不要调用 advance、wait_for_turn 或 submit。\n\n[当前] 你是 ${identity}。工作流 ${workflowId} 当前只有一位已确认参与者。` });
   }
   return ok({ tip: buildTip(state, identity) });
 }

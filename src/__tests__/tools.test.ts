@@ -334,6 +334,7 @@ describe("Confirm task", () => {
     }, { "x-ai-identity": r2.token as string });
     expect(c1.ok).toBe(true);
     expect(c2.ok).toBe(true);
+    expect(c1.tip).toContain("双方就位前不要调用 advance、wait_for_turn 或 submit");
     await rm(task, { force: true });
     await rm(`${task}.pid`, { force: true });
   });
@@ -608,6 +609,13 @@ describe("Confirm task", () => {
       is_developer: false,
       work_dir: TEST_WORK_DIR,
     }, { "x-ai-identity": oldIdentity.token as string });
+    const incompleteState = await mcpRequest("get_state", {}, { "x-ai-identity": oldIdentity.token as string });
+    const blockedWait = await mcpRequest("wait_for_turn", {}, { "x-ai-identity": oldIdentity.token as string });
+    const blockedAdvance = await mcpRequest("advance", {}, { "x-ai-identity": oldIdentity.token as string });
+    const blockedSubmit = await mcpRequest("submit", {
+      file_path: task,
+      git_commit_hash: "fedcba9",
+    }, { "x-ai-identity": oldIdentity.token as string });
     const newConfirmed = await mcpRequest("confirm_task", {
       task_path: task,
       is_supervisor: false,
@@ -618,6 +626,10 @@ describe("Confirm task", () => {
 
     expect(oldConfirmed.ok).toBe(true);
     expect(oldConfirmed.recovered).toBe(true);
+    expect(incompleteState.tip).toContain("第二位参与者");
+    expect(blockedWait.tip).toContain("both participants must join via confirm_task");
+    expect(blockedAdvance.tip).toContain("both participants must join via confirm_task");
+    expect(blockedSubmit.tip).toContain("both participants must join via confirm_task");
     expect(newConfirmed.ok).toBe(true);
     expect(state.tip).toContain("等待 recover-new");
     await rm(task, { force: true });

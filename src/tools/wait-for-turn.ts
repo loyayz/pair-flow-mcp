@@ -2,7 +2,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
 import { parseSession } from "../identity.js";
-import { getState, setState, getMutex, hasRecoveryPlaceholderParticipant } from "../state.js";
+import { getState, setState, getMutex, hasCompleteParticipantRoster, hasRecoveryPlaceholderParticipant } from "../state.js";
 import { buildTip } from "../tip.js";
 import { err, ok } from "../response.js";
 
@@ -24,6 +24,9 @@ export async function waitForTurn(
   }
   if (hasRecoveryPlaceholderParticipant(initialState)) {
     return err("workflow recovery incomplete — every recovered participant must call confirm_task before wait_for_turn");
+  }
+  if (!hasCompleteParticipantRoster(initialState)) {
+    return err("both participants must join via confirm_task before wait_for_turn");
   }
 
   const started = Date.now();

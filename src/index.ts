@@ -32,7 +32,7 @@ function createServerWithTools() {
   mcp.registerTool(
     "submit",
     {
-      description: "提交当前 turn 的 handoff 产出。file_path 必须是工具提示给出的绝对路径。",
+      description: "提交当前 turn 的非空普通 handoff 文件。要求双方已就位，file_path 必须是工具提示给出的绝对路径。",
       inputSchema: {
         file_path: z.string(),
         git_commit_hash: z.string(),

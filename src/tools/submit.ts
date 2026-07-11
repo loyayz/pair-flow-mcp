@@ -1,15 +1,15 @@
-import { stat } from "node:fs/promises";
-import { isAbsolute, join, resolve } from "node:path";
+import { lstat } from "node:fs/promises";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
 import { parseSession } from "../identity.js";
-import { getState, setState, getMutex, hasRecoveryPlaceholderParticipant, haveAllParticipantsSubmittedCurrentPhase, isCurrentHolder, getOtherIdentity, type PairFlowState } from "../state.js";
+import { getState, setState, getMutex, hasCompleteParticipantRoster, hasRecoveryPlaceholderParticipant, haveAllParticipantsSubmittedCurrentPhase, isCurrentHolder, getOtherIdentity, type PairFlowState } from "../state.js";
 
 import { err, ok } from "../response.js";
 import { identityLabel, phaseLabel } from "../tip.js";
 import { atomicWriteText } from "../atomic-write.js";
-import { workflowArchivePath, workflowWorkDir } from "../archive-path.js";
+import { archiveRoot, workflowArchivePath, workflowWorkDir } from "../archive-path.js";
 const SAFE_SEGMENT = /^[a-zA-Z0-9_-]{1,64}$/;
 
 export async function submit(
@@ -20,13 +20,18 @@ export async function submit(
   if (!registered) return err("valid registered token is required");
   if (!workflowId) return err("not bound to a workflow — call confirm_task first");
 
-  const filePath = args.file_path as string;
-  if (!filePath) return err("file_path is required");
+  if (args.file_path === undefined || args.file_path === null || args.file_path === "") return err("file_path is required");
+  if (typeof args.file_path !== "string") return err("file_path must be a string");
+  const filePath = args.file_path;
   if (!isAbsolute(filePath)) return err("file_path must be an absolute path");
   if (hasRelativeSegment(filePath)) return err("file_path must not contain . or .. path segments");
 
-  const commitHash = args.git_commit_hash as string;
-  if (!commitHash || !/^[a-f0-9]{7,40}$/i.test(commitHash)) {
+  if (args.git_commit_hash === undefined || args.git_commit_hash === null || args.git_commit_hash === "") {
+    return err("git_commit_hash is required");
+  }
+  if (typeof args.git_commit_hash !== "string") return err("git_commit_hash must be a string");
+  const commitHash = args.git_commit_hash.toLowerCase();
+  if (!/^[a-f0-9]{7,40}$/.test(commitHash)) {
     return err("git_commit_hash must contain 7 to 40 hexadecimal characters");
   }
 
@@ -37,10 +42,18 @@ export async function submit(
     if (hasRecoveryPlaceholderParticipant(state)) {
       return err("workflow recovery incomplete — every recovered participant must call confirm_task before submit");
     }
-    if (!workflowWorkDir(state)) return err("workflow work_dir is missing");
+    if (!hasCompleteParticipantRoster(state)) {
+      return err("both participants must join via confirm_task before submit");
+    }
+    const workDir = workflowWorkDir(state);
+    if (!workDir) return err("workflow work_dir is missing");
+    if (!state.task?.spec_file || !state.task.task_type) return err("workflow task is incomplete");
     if (!isCurrentHolder(state, identity)) return err(`not your turn — current turn: ${state.turn}`);
 
     // IMPLEMENTATION responsibility check
+    if (state.phase === "implementation" && state.sub_phase !== "coding" && state.sub_phase !== "review") {
+      return err("implementation sub_phase must be coding or review");
+    }
     const isDeveloper = state.participants.some((p) => p.identity === identity && p.is_developer);
     if (state.phase === "implementation" && state.sub_phase === "coding" && !isDeveloper) {
       return err("only the developer can submit during coding sub_phase");
@@ -57,17 +70,31 @@ export async function submit(
       return err(`file_path must be ${expectedFilePath.replace(/\\/g, "/")}`);
     }
     try {
-      const fileStat = await stat(resolvedExpected);
+      const symbolicLinkPath = await findSymbolicLink(archiveRoot(workDir), resolvedExpected);
+      if (symbolicLinkPath) {
+        return err(`symbolic links are not allowed in the file_path archive path: ${symbolicLinkPath.replace(/\\/g, "/")}`);
+      }
+      const fileStat = await lstat(resolvedExpected);
       if (!fileStat.isFile()) return err("file_path must be a file");
-    } catch {
-      return err(`file_path does not exist: ${expectedFilePath.replace(/\\/g, "/")}`);
+      if (fileStat.size === 0) return err("file_path must not be empty");
+    } catch (error) {
+      const code = error && typeof error === "object" && "code" in error
+        ? String((error as { code?: unknown }).code)
+        : "UNKNOWN";
+      return code === "ENOENT"
+        ? err(`file_path does not exist: ${expectedFilePath.replace(/\\/g, "/")}`)
+        : err(`failed to inspect file_path: ${expectedFilePath.replace(/\\/g, "/")} (${code})`);
     }
 
     // Reject if no new work
     const lastHash = Object.values(state.last_submission_by_participant)
       .filter((s) => s.commit_hash)
       .sort((a, b) => (b.round ?? -1) - (a.round ?? -1))[0]?.commit_hash;
-    if (lastHash && lastHash === commitHash) {
+    const normalizedLastHash = lastHash?.toLowerCase();
+    if (normalizedLastHash && (
+      normalizedLastHash.startsWith(commitHash)
+      || commitHash.startsWith(normalizedLastHash)
+    )) {
       return err("git_commit_hash unchanged since last submission — no new work detected");
     }
 
@@ -98,14 +125,14 @@ export async function submit(
     if (other) nextState.turn = other;
 
     if (nextState.turn !== originalTurn) {
-      nextState.turn_switched_at = new Date().toISOString();
+      nextState.turn_switched_at = now;
       nextState.turn_claimed_at = null;
     }
 
     try {
-      await writeMetaJson(expectedFilePath, commitHash, originalSubPhase, nextState.task);
-    } catch {
-      return err(`failed to write meta.json: ${expectedFilePath.replace(/\.md$/, ".meta.json").replace(/\\/g, "/")}`);
+      await writeMetaJson(expectedFilePath, commitHash, originalSubPhase, nextState.task, now);
+    } catch (error) {
+      return err(`failed to write meta.json: ${expectedFilePath.replace(/\.md$/, ".meta.json").replace(/\\/g, "/")} (${filesystemErrorCode(error)})`);
     }
 
     setState(workflowId, nextState);
@@ -144,6 +171,21 @@ export async function submit(
   });
 }
 
+async function findSymbolicLink(rootPath: string, targetPath: string): Promise<string | null> {
+  const relativePath = relative(rootPath, targetPath);
+  const paths = [rootPath];
+  let currentPath = rootPath;
+  for (const segment of relativePath.split(/[\\/]+/).filter(Boolean)) {
+    currentPath = join(currentPath, segment);
+    paths.push(currentPath);
+  }
+
+  for (const path of paths) {
+    if ((await lstat(path)).isSymbolicLink()) return path;
+  }
+  return null;
+}
+
 function expectedSubmissionPath(
   state: PairFlowState,
   identity: string,
@@ -175,12 +217,19 @@ async function writeMetaJson(
   commitHash: string,
   subPhase: string | null,
   task: unknown,
+  submittedAt: string,
 ): Promise<void> {
   const metaPath = filePath.replace(/\.md$/, ".meta.json");
   await atomicWriteText(metaPath, JSON.stringify({
-    submitted_at: new Date().toISOString(),
+    submitted_at: submittedAt,
     commit_hash: commitHash,
     sub_phase: subPhase,
     task,
   }, null, 2));
+}
+
+function filesystemErrorCode(error: unknown): string {
+  return error && typeof error === "object" && "code" in error
+    ? String((error as { code?: unknown }).code)
+    : "UNKNOWN";
 }

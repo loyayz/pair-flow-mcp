@@ -5,7 +5,7 @@ import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/proto
 import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
 import { Mutex } from "async-mutex";
 import { parseSession } from "../identity.js";
-import { getState, setState, getAllStates, getMutex, defaultState, formatWorkflowId, isRecoveryPlaceholderParticipant, type Participant } from "../state.js";
+import { getState, setState, getAllStates, getMutex, defaultState, formatWorkflowId, hasCompleteParticipantRoster, isRecoveryPlaceholderParticipant, type Participant } from "../state.js";
 import { reconstructFromHandoff } from "../crash-recovery.js";
 import { err, ok } from "../response.js";
 import { bindWorkflow } from "../token-map.js";
@@ -341,7 +341,10 @@ export async function confirmTask(
 
         const turnIsSelf = state.turn === identity;
         const turnInfo = turnIsSelf ? `turn 在 ${state.turn}（你）` : `turn 在 ${state.turn}（对方）`;
-        const tip = `[行动] 已重新加入工作流 ${wfId}。当前在 ${state.phase} 阶段第 ${state.round} 轮，${turnInfo}。调用 wait_for_turn（长轮询，10s 间隔，最多 600s）。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。\n\n[当前] 你是 ${identity}（${responsibilityLabel(myParticipant)}）。工作流 ${wfId}。`;
+        const action = hasCompleteParticipantRoster(state)
+          ? `已重新加入工作流 ${wfId}。当前在 ${state.phase} 阶段第 ${state.round} 轮，${turnInfo}。调用 wait_for_turn（长轮询，10s 间隔，最多 600s）。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。`
+          : `已重新加入工作流 ${wfId}，但参与者尚未全部就位。等待第二位参与者使用相同 task_path 调用 confirm_task；在此之前不要调用 advance、wait_for_turn 或 submit。`;
+        const tip = `[行动] ${action}\n\n[当前] 你是 ${identity}（${responsibilityLabel(myParticipant)}）。工作流 ${wfId}。`;
         return ok({
           task_path: resolvedTaskPath.replace(/\\/g, "/"),
           workflow_id: wfId,
@@ -399,7 +402,7 @@ export async function confirmTask(
 
   let actionLine: string;
   if (isFirst) {
-    actionLine = `${recovered ? "已恢复" : "已创建"}工作流 ${wfId}。等待对方 AI 以相同 task_path 调用 confirm_task 加入。调用 wait_for_turn（长轮询，10s 间隔，最多 600s）。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。`;
+    actionLine = `${recovered ? "已恢复" : "已创建"}工作流 ${wfId}。等待第二位参与者以相同 task_path 调用 confirm_task 加入；双方就位前不要调用 advance、wait_for_turn 或 submit。`;
   } else {
     const p = curState.participants;
     const names = p.map((x) => `${x.identity}（${responsibilityLabel(x)}）`).join(" + ");
