@@ -46,6 +46,18 @@ async function waitForActiveTurn(
     if (!state) return err("workflow not found");
 
     if (!hasCompleteParticipantRoster(state)) {
+      const participant = state.participants.find((candidate) => candidate.identity === identity);
+      const confirmedAt = participant ? Date.parse(participant.registered_at) : Number.NaN;
+      const elapsed = Number.isNaN(confirmedAt) ? 0 : (Date.now() - confirmedAt) / 60_000;
+      if (elapsed > 30) {
+        return ok(
+          { turn: state.turn, phase: state.phase, round: state.round, warning: `另一位参与者已超过 ${Math.round(elapsed)} 分钟未完成 confirm_task` },
+          formatTip({
+            action: "建议向用户报告另一位参与者长时间未完成 confirm_task，由用户决定是否继续等待。",
+            current: `你是 ${identity}。工作流已等待参与者确认 ${Math.round(elapsed)} 分钟，roster 仍未完整。`,
+          }),
+        );
+      }
       await sleep(POLL_INTERVAL_MS, signal);
       continue;
     }

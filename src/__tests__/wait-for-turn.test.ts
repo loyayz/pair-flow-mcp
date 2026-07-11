@@ -288,4 +288,28 @@ describe("wait_for_turn cancellation", () => {
     expect(payload.tip).toContain("继续调用 wait_for_turn");
     expect(payload.tip).toContain("参与者尚未全部完成 confirm_task");
   });
+
+  it("warns after the participant roster remains incomplete for 30 minutes", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-11T01:31:00.000Z"));
+    const token = registerToken("alice");
+    bindWorkflow(token, TEST_WORKFLOW_ID);
+    setState(TEST_WORKFLOW_ID, {
+      ...defaultState(),
+      workflow_id: TEST_WORKFLOW_ID,
+      participants: [
+        { identity: "alice", is_supervisor: true, is_developer: false, registered_at: "2026-07-11T01:00:00.000Z", work_dir: process.cwd() },
+      ],
+    });
+    const extra = {
+      signal: new AbortController().signal,
+      requestInfo: { headers: { "x-ai-identity": token } },
+    } as unknown as RequestHandlerExtra<ServerRequest, ServerNotification>;
+
+    const result = await waitForTurn(extra);
+    const payload = JSON.parse((result.content[0] as { text: string }).text);
+
+    expect(payload.warning).toContain("未完成 confirm_task");
+    expect(payload.tip).toContain("建议向用户报告");
+  });
 });
