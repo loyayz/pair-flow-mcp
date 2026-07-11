@@ -3,6 +3,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { RECOVERY_REGISTERED_AT, type PairFlowState, type Phase, type SubPhase, type Participant, type LastSubmission } from "./state.js";
 import { archivePath } from "./archive-path.js";
 import { isValidIdentity } from "./identity.js";
+import { findSymbolicLinkInPath } from "./path-safety.js";
 
 // ── Filename parsing ──
 
@@ -87,7 +88,7 @@ export async function reconstructFromHandoff(
     last_submission_by_participant: {},
   };
 
-  const submissions = await collectValidSubmissions(wfDir);
+  const submissions = await collectValidSubmissions(wfDir, archivePath(workDir));
   if (submissions.length === 0) return null;
   if (!hasConsistentStructure(submissions)) return null;
 
@@ -182,11 +183,11 @@ function determinePhase(submissions: RecoveredSubmission[]): RecoverablePhase {
   return "requirements";
 }
 
-async function collectValidSubmissions(wfDir: string): Promise<RecoveredSubmission[]> {
+async function collectValidSubmissions(wfDir: string, recoveryRoot: string): Promise<RecoveredSubmission[]> {
   const submissions: RecoveredSubmission[] = [];
   for (const phase of PHASE_PRIORITY) {
     const phaseDir = join(wfDir, phase);
-    const files = await findFiles(phaseDir, ".meta.json");
+    const files = await findFiles(phaseDir, ".meta.json", recoveryRoot);
     for (const file of files) {
       const parsed = parseFilename(basename(file));
       if (!parsed) continue;
@@ -259,7 +260,17 @@ function reconstructLastSubmissionByParticipant(
   return lsp;
 }
 
-async function findFiles(dir: string, suffix: string): Promise<string[]> {
+async function findFiles(dir: string, suffix: string, recoveryRoot: string): Promise<string[]> {
+  let symbolicLinkPath: string | null;
+  try {
+    symbolicLinkPath = await findSymbolicLinkInPath(recoveryRoot, dir);
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") return [];
+    throw recoveryReadError(dir, error);
+  }
+  if (symbolicLinkPath) {
+    throw new Error(`symbolic links are not allowed in recovery archive: ${symbolicLinkPath.replace(/\\/g, "/")}`);
+  }
   try {
     const entries = await readdir(resolve(dir), { withFileTypes: true });
     return entries

@@ -1,5 +1,5 @@
 import { lstat } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
@@ -10,6 +10,7 @@ import { err, ok } from "../response.js";
 import { identityLabel, phaseLabel } from "../tip.js";
 import { atomicWriteText } from "../atomic-write.js";
 import { archiveRoot, workflowArchivePath, workflowWorkDir } from "../archive-path.js";
+import { findSymbolicLinkInPath } from "../path-safety.js";
 const SAFE_SEGMENT = /^[a-zA-Z0-9_-]{1,64}$/;
 
 export async function submit(
@@ -70,7 +71,7 @@ export async function submit(
       return err(`file_path must be ${expectedFilePath.replace(/\\/g, "/")}`);
     }
     try {
-      const symbolicLinkPath = await findSymbolicLink(archiveRoot(workDir), resolvedExpected);
+      const symbolicLinkPath = await findSymbolicLinkInPath(archiveRoot(workDir), resolvedExpected);
       if (symbolicLinkPath) {
         return err(`symbolic links are not allowed in the file_path archive path: ${symbolicLinkPath.replace(/\\/g, "/")}`);
       }
@@ -169,21 +170,6 @@ export async function submit(
 [当前] 你是 ${idLabel}。当前是第 ${nextState.round} 轮${phaseText}，turn 已切给 ${nextLabel}。`;
     return ok({ ok: true, next_turn: nextState.turn }, tip);
   });
-}
-
-async function findSymbolicLink(rootPath: string, targetPath: string): Promise<string | null> {
-  const relativePath = relative(rootPath, targetPath);
-  const paths = [rootPath];
-  let currentPath = rootPath;
-  for (const segment of relativePath.split(/[\\/]+/).filter(Boolean)) {
-    currentPath = join(currentPath, segment);
-    paths.push(currentPath);
-  }
-
-  for (const path of paths) {
-    if ((await lstat(path)).isSymbolicLink()) return path;
-  }
-  return null;
 }
 
 function expectedSubmissionPath(

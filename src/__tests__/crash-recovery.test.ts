@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { writeFile, mkdir, rm } from "node:fs/promises";
+import { writeFile, mkdir, rm, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -393,6 +393,20 @@ describe("Handoff reconstruction", () => {
 
     await expect(reconstructFromHandoff(defaultState(), wfId, TEST_ROOT, join(TEST_ROOT, "task.md")))
       .rejects.toThrow(/failed to read recovery archive.*requirements.*ENOTDIR/i);
+  });
+
+  it("rejects symbolic phase directories instead of reading through them", async () => {
+    const wfId = "20260622000022";
+    const workflowDir = join(TEST_ROOT, HANDOFF_DIR, wfId);
+    const outsidePhaseDir = join(TEST_ROOT, "outside-recovery-phase");
+    const phaseDir = join(workflowDir, "requirements");
+    await mkdir(workflowDir, { recursive: true });
+    await mkdir(outsidePhaseDir, { recursive: true });
+    await writeFile(join(outsidePhaseDir, "r1_alice.meta.json"), validMeta());
+    await symlink(outsidePhaseDir, phaseDir, process.platform === "win32" ? "junction" : "dir");
+
+    await expect(reconstructFromHandoff(defaultState(), wfId, TEST_ROOT, join(TEST_ROOT, "task.md")))
+      .rejects.toThrow(/symbolic links are not allowed in recovery archive/i);
   });
 
   it("ignores archived filenames with invalid identity segments", async () => {

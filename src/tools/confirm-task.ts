@@ -1,5 +1,5 @@
-import { readFile, stat } from "node:fs/promises";
-import { isAbsolute, resolve, sep } from "node:path";
+import { lstat, readFile } from "node:fs/promises";
+import { isAbsolute, parse, resolve, sep } from "node:path";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
@@ -10,6 +10,7 @@ import { reconstructFromHandoff } from "../crash-recovery.js";
 import { err, ok } from "../response.js";
 import { bindWorkflow } from "../token-map.js";
 import { atomicWriteText } from "../atomic-write.js";
+import { findSymbolicLinkInPath } from "../path-safety.js";
 const taskPathMutexes = new Map<string, Mutex>();
 const tokenMutexes = new Map<string, Mutex>();
 
@@ -61,12 +62,17 @@ async function findWorkflowByTaskPath(taskPath: string): Promise<string | null> 
 async function readPidFile(taskPath: string): Promise<string | null> {
   const pidFile = `${taskPath}.pid`;
   try {
+    const pidStat = await lstat(pidFile);
+    if (pidStat.isSymbolicLink()) throw Object.assign(new Error("pid file must not be a symbolic link"), { code: "SYMLINK" });
+    if (!pidStat.isFile()) throw Object.assign(new Error("pid path must be a regular file"), { code: "NOT_REGULAR" });
     const wfId = (await readFile(pidFile, "utf-8")).trim();
     if (!/^\d{14}$/.test(wfId)) return null;
     return wfId;
   } catch (error) {
     const code = filesystemErrorCode(error);
     if (code === "ENOENT") return null;
+    if (code === "SYMLINK") throw new Error(`pid file must not be a symbolic link: ${posixPath(pidFile)}`, { cause: error });
+    if (code === "NOT_REGULAR") throw new Error(`pid path must be a regular file: ${posixPath(pidFile)}`, { cause: error });
     throw new Error(`failed to read pid file: ${posixPath(pidFile)} (${code})`, { cause: error });
   }
 }
@@ -194,7 +200,11 @@ export async function confirmTask(
   // Validate task file is under work_dir
   const resolvedWorkDir = resolve(workDir);
   try {
-    const workDirStat = await stat(resolvedWorkDir);
+    const workDirSymbolicLink = await findSymbolicLinkInPath(parse(resolvedWorkDir).root, resolvedWorkDir);
+    if (workDirSymbolicLink) {
+      return err(`work_dir must not contain symbolic links: ${posixPath(workDirSymbolicLink)}`);
+    }
+    const workDirStat = await lstat(resolvedWorkDir);
     if (!workDirStat.isDirectory()) return err("work_dir must be a directory");
   } catch (error) {
     const code = filesystemErrorCode(error);
@@ -204,7 +214,8 @@ export async function confirmTask(
   }
   const gitMarkerPath = resolve(resolvedWorkDir, ".git");
   try {
-    const gitMarkerStat = await stat(gitMarkerPath);
+    const gitMarkerStat = await lstat(gitMarkerPath);
+    if (gitMarkerStat.isSymbolicLink()) return err(`Git marker must not be a symbolic link: ${posixPath(gitMarkerPath)}`);
     if (!gitMarkerStat.isDirectory() && !gitMarkerStat.isFile()) {
       return err("work_dir must be a Git repository root containing a .git file or directory");
     }
@@ -220,7 +231,11 @@ export async function confirmTask(
 
   // Validate task file exists
   try {
-    const taskStat = await stat(resolvedTaskPath);
+    const symbolicLinkPath = await findSymbolicLinkInPath(resolvedWorkDir, resolvedTaskPath);
+    if (symbolicLinkPath) {
+      return err(`symbolic links are not allowed in task_path: ${posixPath(symbolicLinkPath)}`);
+    }
+    const taskStat = await lstat(resolvedTaskPath);
     if (!taskStat.isFile()) return err("task_path must be a file");
   } catch (error) {
     const code = filesystemErrorCode(error);

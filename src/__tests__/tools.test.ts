@@ -636,7 +636,7 @@ describe("Confirm task", () => {
     await rm(`${task}.pid`, { force: true });
   });
 
-  it("reports unreadable pid files instead of overwriting them", async () => {
+  it("rejects a directory used as the pid path instead of overwriting it", async () => {
     const task = resolve(TEST_WORK_DIR, "pairflow-unreadable-pid-task.md");
     await writeFile(task, "# unreadable pid task", "utf-8");
     await mkdir(`${task}.pid`, { recursive: true });
@@ -650,7 +650,7 @@ describe("Confirm task", () => {
     }, { "x-ai-identity": registered.token as string });
 
     expect(confirmed.ok).toBe(false);
-    expect(confirmed.tip).toContain("failed to read pid file");
+    expect(confirmed.tip).toContain("pid path must be a regular file");
     await rm(`${task}.pid`, { recursive: true, force: true });
     await rm(task, { force: true });
   });
