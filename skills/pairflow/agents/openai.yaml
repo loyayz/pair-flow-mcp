@@ -1,0 +1,7 @@
+interface:
+  display_name: "PairFlow"
+  short_description: "启动并初始化 PairFlow 双 AI 结对编程工作流"
+  default_prompt: "Use $pairflow to start the local PairFlow server and initialize this AI participant."
+
+policy:
+  allow_implicit_invocation: true
