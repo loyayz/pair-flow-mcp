@@ -25,7 +25,14 @@ npm install
 npx tsx src/index.ts
 ```
 
-Server 仅监听 `127.0.0.1:3100`，提供 HTTP MCP（`/mcp`）+ 健康检查（`/health`）。
+Server 仅监听 `127.0.0.1`，默认端口为 `35690`。需要自定义端口时传入 CLI 参数：
+
+```bash
+npx tsx src/index.ts --port 3200
+```
+
+端口必须是 `1–65535` 的整数。服务提供 HTTP MCP（`/mcp`）+ 健康检查（`/health`）。
+运行 `npx tsx src/index.ts --help` 可查看启动参数。
 每个 workflow 的产出归档固定写入目标项目的 `<work_dir>/handoff/{workflow_id}/`。`work_dir` 必须是含 `.git` 文件或目录的 Git 仓库根，支持普通仓库和 linked worktree。
 
 ### 3. 使用
@@ -56,5 +63,6 @@ cp -r skills/pairflow ~/.claude/skills/pairflow
 | `get_state` | 查看当前状态和行动指引；需要有效注册 token |
 
 除 `ping`、`who_am_i`、`register` 外，所有工具都要求通过 HTTP header `X-AI-Identity: <token>` 携带有效注册 token。register 返回 token，confirm_task 绑定 token 到工作流。
+PairFlow 信任本机进程，不提供外部用户身份认证；token 用于参与者身份路由和工作流操作授权，避免正常协作中的串身份与串工作流。
 
 完整设计文档见 `docs/design.md`。

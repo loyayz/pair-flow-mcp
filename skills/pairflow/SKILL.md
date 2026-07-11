@@ -23,6 +23,8 @@ description: 启动 PairFlow MCP Server 并完成 register + confirm_task 结对
 
 **f) 任务类型** — "任务类型是 development（开发，完整四阶段）还是 requirements（需求，跳过 planning 和 implementation）？" 默认 development。
 
+若用户明确要求自定义端口，再询问端口；否则使用默认端口 `35690`。以下命令中的 `<port>` 均使用该值。
+
 每个问题给出建议值让用户直接回车确认即可，减少输入成本。
 
 ## 2. 启动 PairFlow MCP Server
@@ -30,7 +32,7 @@ description: 启动 PairFlow MCP Server 并完成 register + confirm_task 结对
 检查 server 是否已在运行：
 
 ```bash
-curl -s --noproxy "*" http://127.0.0.1:3100/health
+curl -s --noproxy "*" http://127.0.0.1:<port>/health
 ```
 
 若返回 `{"ok":true,...}` 则跳过启动步骤。
@@ -38,7 +40,7 @@ curl -s --noproxy "*" http://127.0.0.1:3100/health
 若未运行，询问用户 **"PairFlow MCP 代码在哪个目录？"** 然后启动：
 
 ```bash
-cd <pairflow代码目录> && npx tsx src/index.ts &
+cd <pairflow代码目录> && npx tsx src/index.ts --port <port> &
 ```
 
 ## 3. 调用 register
@@ -46,7 +48,7 @@ cd <pairflow代码目录> && npx tsx src/index.ts &
 使用确认好的 identity 调用 register：
 
 ```
-curl -s -X POST http://127.0.0.1:3100/mcp \
+curl -s -X POST http://127.0.0.1:<port>/mcp \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
   --noproxy "*" \
@@ -60,7 +62,7 @@ curl -s -X POST http://127.0.0.1:3100/mcp \
 使用收集到的参数调用 confirm_task：
 
 ```
-curl -s -X POST http://127.0.0.1:3100/mcp \
+curl -s -X POST http://127.0.0.1:<port>/mcp \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
   -H "X-AI-Identity: <token>" \

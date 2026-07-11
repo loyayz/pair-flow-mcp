@@ -12,8 +12,21 @@ import { submit } from "./tools/submit.js";
 import { waitForTurn } from "./tools/wait-for-turn.js";
 import { confirmTask } from "./tools/confirm-task.js";
 import { HTTP_SERVER_OPTIONS } from "./http-server-policy.js";
+import { describeListenError, parseServerArgs, SERVER_HELP } from "./server-config.js";
 
-const PORT = parseInt(process.env.PORT || "3100", 10);
+const cliConfig = (() => {
+  try {
+    return parseServerArgs(process.argv.slice(2));
+  } catch (error) {
+    console.error(`[pair-flow] ${error instanceof Error ? error.message : String(error)}`);
+    process.exit(1);
+  }
+})();
+if (cliConfig.help) {
+  console.log(SERVER_HELP);
+  process.exit(0);
+}
+const PORT = cliConfig.port;
 const HOST = "127.0.0.1";
 const MAX_REQUEST_BODY_BYTES = 1024 * 1024;
 const INVALID_JSON = Symbol("invalid-json");
@@ -126,6 +139,15 @@ const httpServer = createServer(HTTP_SERVER_OPTIONS, async (req: IncomingMessage
   }
 
   res.writeHead(404).end("Not Found");
+});
+
+httpServer.on("error", (error: NodeJS.ErrnoException) => {
+  const message = describeListenError(error, PORT);
+  if (message) {
+    console.error(`[pair-flow] ${message}`);
+    process.exit(1);
+  }
+  throw error;
 });
 
 httpServer.listen(PORT, HOST, () => {

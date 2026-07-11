@@ -5,27 +5,32 @@ import { sanitizeIdentity } from "../identity.js";
 import { err, ok } from "../response.js";
 import { registerToken } from "../token-map.js";
 
-const REGISTER_CURL = `curl -s -X POST http://127.0.0.1:3100/mcp \\
+function registerCurl(mcpUrl: string): string {
+  return `curl -s -X POST ${mcpUrl} \\
   -H "Content-Type: application/json" \\
   -H "Accept: application/json, text/event-stream" \\
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"register","arguments":{"identity":"<你的身份名>"}}}'
 
 - identity: 你的身份名称，如 "claude"。长度 1–64，只能包含字母、数字、下划线、连字符；unknown 和 idle 为保留字`;
+}
 
-function badParam(paramName: string, reason: "缺失" | "非法"): string {
+function badParam(paramName: string, reason: "缺失" | "非法", mcpUrl: string): string {
   return `${paramName} 参数${reason}。正确格式参考（尖括号内为变量）：
 
-${REGISTER_CURL}`;
+${registerCurl(mcpUrl)}`;
 }
 
 export async function register(
   args: Record<string, unknown>,
   extra: RequestHandlerExtra<ServerRequest, ServerNotification>
 ): Promise<CallToolResult> {
+  const mcpUrl = extra.requestInfo?.url
+    ? `${extra.requestInfo.url.origin}/mcp`
+    : "http://127.0.0.1:35690/mcp";
   const identity = args.identity as string;
-  if (!identity) return err(badParam("identity", "缺失"));
+  if (!identity) return err(badParam("identity", "缺失", mcpUrl));
 
-  try { sanitizeIdentity(identity); } catch { return err(badParam("identity", "非法")); }
+  try { sanitizeIdentity(identity); } catch { return err(badParam("identity", "非法", mcpUrl)); }
 
   const token = registerToken(identity);
 

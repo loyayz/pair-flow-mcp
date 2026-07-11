@@ -6,7 +6,7 @@
  * construction for the common case of registered token injection.
  *
  * Usage:
- *   const t = createClientTransport("http://127.0.0.1:3100/mcp", token);
+ *   const t = createClientTransport("http://127.0.0.1:35690/mcp", token);
  *   const c = new Client({ name: "my", version: "1" }, {});
  *   await c.connect(t);
  *   // All subsequent tool calls include X-AI-Identity: <registered token>

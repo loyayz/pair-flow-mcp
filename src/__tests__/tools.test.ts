@@ -64,8 +64,8 @@ async function startServer() {
   await rm(TEST_STATE, { recursive: true }).catch(() => {});
   await rm(TEST_WORK_DIR, { recursive: true }).catch(() => {});
   await createGitWorkDir(TEST_WORK_DIR);
-  server = spawn(process.execPath, ["--import", "tsx/esm", "src/index.ts"], {
-    env: { ...process.env, PORT: String(PORT), STATE_DIR: TEST_STATE },
+  server = spawn(process.execPath, ["--import", "tsx/esm", "src/index.ts", "--port", String(PORT)], {
+    env: { ...process.env, PORT: "ignored", STATE_DIR: TEST_STATE },
     stdio: "pipe",
   });
   await new Promise((r) => setTimeout(r, 2000));
@@ -148,6 +148,12 @@ describe("Register", () => {
     const who = await mcpRequest("who_am_i", {}, { "x-ai-identity": token });
     expect(who.registered).toBe(true);
     expect(who.joined_workflow).toBe(false);
+  });
+  it("uses the active server port in register parameter guidance", async () => {
+    const r = await mcpRequest("register", { identity: "invalid identity" });
+
+    expect(r.ok).toBe(false);
+    expect(r.tip).toContain(`http://127.0.0.1:${PORT}/mcp`);
   });
   it("requires a valid registered token for every protected tool", async () => {
     const protectedCalls: Array<[string, Record<string, unknown>]> = [

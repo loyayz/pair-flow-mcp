@@ -12,8 +12,8 @@ const MAX_REQUEST_BODY_BYTES = 1024 * 1024;
 let server: ChildProcess;
 
 async function startServer() {
-  server = spawn(process.execPath, ["--import", "tsx/esm", "src/index.ts"], {
-    env: { ...process.env, PORT: String(PORT) },
+  server = spawn(process.execPath, ["--import", "tsx/esm", "src/index.ts", "--port", String(PORT)], {
+    env: { ...process.env, PORT: "ignored" },
     stdio: "pipe",
   });
   await new Promise((r) => setTimeout(r, 2000));
@@ -107,6 +107,48 @@ describe("Client transport with identity injection", () => {
 
   it("does not treat MCP path prefixes as the MCP endpoint", async () => {
     expect(await requestStatus("POST", "/mcp-extra")).toBe(404);
+  });
+
+  it("reports how to resolve a port conflict", async () => {
+    const competingServer = spawn(
+      process.execPath,
+      ["--import", "tsx/esm", "src/index.ts", "--port", String(PORT)],
+      { env: { ...process.env, PORT: "ignored" }, stdio: ["ignore", "ignore", "pipe"] },
+    );
+    let stderr = "";
+    competingServer.stderr?.setEncoding("utf-8");
+    competingServer.stderr?.on("data", (chunk) => { stderr += chunk; });
+
+    const exitCode = await new Promise<number | null>((resolve) => {
+      competingServer.on("exit", resolve);
+    });
+
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain(`port ${PORT} is already in use`);
+    expect(stderr).toContain("--port");
+  });
+
+  it("prints CLI help without starting a server", async () => {
+    const helpProcess = spawn(
+      process.execPath,
+      ["--import", "tsx/esm", "src/index.ts", "--help"],
+      { env: { ...process.env, PORT: "ignored" }, stdio: ["ignore", "pipe", "pipe"] },
+    );
+    let stdout = "";
+    let stderr = "";
+    helpProcess.stdout?.setEncoding("utf-8");
+    helpProcess.stderr?.setEncoding("utf-8");
+    helpProcess.stdout?.on("data", (chunk) => { stdout += chunk; });
+    helpProcess.stderr?.on("data", (chunk) => { stderr += chunk; });
+
+    const exitCode = await new Promise<number | null>((resolve) => {
+      helpProcess.on("exit", resolve);
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("Usage: npx tsx src/index.ts [--port <port>]");
+    expect(stdout).toContain("default: 35690");
+    expect(stderr).toBe("");
   });
 
   it("rejects an oversized declared Content-Length before reading the body", async () => {

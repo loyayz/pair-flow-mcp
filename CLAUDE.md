@@ -19,5 +19,5 @@ npx tsx src/index.ts                          # 开发运行
 npx vitest run                                # 测试
 npx vitest run src/__tests__/<file>.test.ts   # 单文件测试
 npx vitest                                    # 监听模式
-curl http://localhost:3100/health             # 健康检查
+curl http://localhost:35690/health            # 健康检查
 ```
