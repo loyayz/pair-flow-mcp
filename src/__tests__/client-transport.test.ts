@@ -8,6 +8,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { createClientTransport } from "../client-transport.js";
 
 const PORT = 3197;
+const MAX_REQUEST_BODY_BYTES = 1024 * 1024;
 let server: ChildProcess;
 
 async function startServer() {
@@ -58,6 +59,34 @@ function requestStatus(method: string, path: string): Promise<number | undefined
   });
 }
 
+function postMcp(
+  chunks: Buffer[],
+  headers: Record<string, string | number> = {},
+): Promise<{ status: number | undefined; body: string }> {
+  return new Promise((resolve, reject) => {
+    const request = httpRequest({
+      host: "127.0.0.1",
+      port: PORT,
+      path: "/mcp",
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+        ...headers,
+      },
+    }, (response) => {
+      let body = "";
+      response.setEncoding("utf-8");
+      response.on("data", (chunk) => { body += chunk; });
+      response.on("end", () => resolve({ status: response.statusCode, body }));
+    });
+    request.setTimeout(1000, () => request.destroy(new Error("request timed out")));
+    request.on("error", reject);
+    for (const chunk of chunks) request.write(chunk);
+    request.end();
+  });
+}
+
 describe("Client transport with identity injection", () => {
   beforeAll(startServer, 15000);
   afterAll(stopServer);
@@ -78,6 +107,53 @@ describe("Client transport with identity injection", () => {
 
   it("does not treat MCP path prefixes as the MCP endpoint", async () => {
     expect(await requestStatus("POST", "/mcp-extra")).toBe(404);
+  });
+
+  it("rejects an oversized declared Content-Length before reading the body", async () => {
+    const response = await postMcp([], { "Content-Length": MAX_REQUEST_BODY_BYTES + 1 });
+
+    expect(response.status).toBe(413);
+    expect(JSON.parse(response.body)).toEqual({ ok: false, error: "Payload Too Large" });
+    expect(await requestStatus("GET", "/health")).toBe(200);
+  });
+
+  it("rejects a chunked body when received bytes exceed the limit", async () => {
+    const response = await postMcp([
+      Buffer.alloc(600 * 1024, 0x61),
+      Buffer.alloc(600 * 1024, 0x62),
+    ]);
+
+    expect(response.status).toBe(413);
+    expect(JSON.parse(response.body)).toEqual({ ok: false, error: "Payload Too Large" });
+    expect(await requestStatus("GET", "/health")).toBe(200);
+  });
+
+  it("accepts a valid request whose body is exactly the limit", async () => {
+    const json = JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "ping", arguments: {} },
+    });
+    const body = Buffer.from(json + " ".repeat(MAX_REQUEST_BODY_BYTES - Buffer.byteLength(json)));
+
+    const response = await postMcp([body], { "Content-Length": body.length });
+
+    expect(response.status).toBe(200);
+  });
+
+  it("returns 400 for malformed JSON without disrupting the server", async () => {
+    const response = await postMcp([Buffer.from("{")]);
+
+    expect(response.status).toBe(400);
+    expect(JSON.parse(response.body)).toEqual({ ok: false, error: "Invalid JSON" });
+    expect(await requestStatus("GET", "/health")).toBe(200);
+  });
+
+  it("delegates syntactically valid non-RPC JSON to the MCP transport", async () => {
+    const response = await postMcp([Buffer.from("null")]);
+
+    expect(response.status).toBe(400);
   });
 
   it("injects the registered token into subsequent requests", async () => {

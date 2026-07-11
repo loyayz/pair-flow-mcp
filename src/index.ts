@@ -14,6 +14,8 @@ import { confirmTask } from "./tools/confirm-task.js";
 
 const PORT = parseInt(process.env.PORT || "3100", 10);
 const HOST = "127.0.0.1";
+const MAX_REQUEST_BODY_BYTES = 1024 * 1024;
+const INVALID_JSON = Symbol("invalid-json");
 
 function createServerWithTools() {
   const mcp = new McpServer(
@@ -44,6 +46,52 @@ function createServerWithTools() {
   return mcp;
 }
 
+async function readRequestBody(
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<string | null> {
+  const contentLength = req.headers["content-length"];
+  if (typeof contentLength === "string") {
+    const declaredBytes = Number(contentLength);
+    if (Number.isFinite(declaredBytes) && declaredBytes > MAX_REQUEST_BODY_BYTES) {
+      respondPayloadTooLarge(res);
+      return null;
+    }
+  }
+
+  const chunks: Buffer[] = [];
+  let receivedBytes = 0;
+  for await (const chunk of req) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    receivedBytes += buffer.length;
+    if (receivedBytes > MAX_REQUEST_BODY_BYTES) {
+      respondPayloadTooLarge(res);
+      return null;
+    }
+    chunks.push(buffer);
+  }
+  return Buffer.concat(chunks, receivedBytes).toString();
+}
+
+function respondPayloadTooLarge(res: ServerResponse): void {
+  res.writeHead(413, {
+    "Content-Type": "application/json",
+    "Connection": "close",
+  });
+  res.end(JSON.stringify({ ok: false, error: "Payload Too Large" }));
+}
+
+function parseRequestBody(body: string, res: ServerResponse): unknown | typeof INVALID_JSON {
+  if (!body) return undefined;
+  try {
+    return JSON.parse(body);
+  } catch {
+    res.writeHead(400, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: false, error: "Invalid JSON" }));
+    return INVALID_JSON;
+  }
+}
+
 const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse) => {
   const pathname = new URL(req.url ?? "/", `http://${HOST}:${PORT}`).pathname;
 
@@ -54,14 +102,11 @@ const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse
   }
 
   if (pathname === "/mcp" && req.method === "POST") {
-    const chunks: Buffer[] = [];
-    for await (const chunk of req) {
-      chunks.push(chunk);
-    }
-    const body = Buffer.concat(chunks).toString();
-
     try {
-      const parsed = body ? JSON.parse(body) : undefined;
+      const body = await readRequestBody(req, res);
+      if (body === null) return;
+      const parsed = parseRequestBody(body, res);
+      if (parsed === INVALID_JSON) return;
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: undefined, // stateless
       });
@@ -72,7 +117,8 @@ const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse
     } catch (err) {
       console.error("[pair-flow] request error:", err);
       if (!res.headersSent) {
-        res.writeHead(500).end(JSON.stringify({ ok: false, error: "Invalid request" }));
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: false, error: "Internal Server Error" }));
       }
     }
     return;
