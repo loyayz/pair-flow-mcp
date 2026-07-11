@@ -22,7 +22,7 @@ export function parseSession(headers: IsomorphicHeaders | undefined): ParsedSess
 }
 
 export function sanitizeIdentity(identity: string): string {
-  if (!IDENTITY_PATTERN.test(identity)) {
+  if (typeof identity !== "string" || !IDENTITY_PATTERN.test(identity)) {
     throw new Error("Invalid identity: use 1 to 64 letters, numbers, underscores, or hyphens");
   }
   if (RESERVED_IDENTITIES.has(identity.toLowerCase())) {

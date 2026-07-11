@@ -40,7 +40,9 @@ task_type   — 任务类型。"development"（开发）走完整四阶段流程
               "requirements"（需求）只做需求分析+汇总，跳过 planning 和 implementation。
 is_supervisor — 是否为监督者（true/false）。双方就位后必须恰好一个监督者。
 is_developer  — 是否为开发者（true/false）。双方就位后必须恰好一个开发者，可与监督者为同一参与者。
-work_dir    — Git 仓库根目录绝对路径，必须含 .git 文件或目录，不得包含 . 或 .. 路径段。两个 AI 必须一致。`;
+work_dir    — Git 仓库根目录绝对路径，必须含 .git 文件或目录，不得包含 . 或 .. 路径段。两个 AI 必须一致。
+
+职责可在 IDLE 阶段修正，进入 REQUIREMENTS 后冻结；work_dir 从首次确认起固定。重复 confirm_task 不会改写已冻结职责。`;
 
   return ok({ ok: true, identity, token }, tip);
 }

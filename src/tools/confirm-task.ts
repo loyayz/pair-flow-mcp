@@ -11,15 +11,43 @@ import { err, ok } from "../response.js";
 import { bindWorkflow } from "../token-map.js";
 import { atomicWriteText } from "../atomic-write.js";
 const taskPathMutexes = new Map<string, Mutex>();
+const tokenMutexes = new Map<string, Mutex>();
+
+function taskPathMutexKey(taskPath: string): string {
+  return process.platform === "win32" ? resolve(taskPath).toLowerCase() : resolve(taskPath);
+}
 
 function getTaskPathMutex(taskPath: string): Mutex {
-  const key = process.platform === "win32" ? resolve(taskPath).toLowerCase() : resolve(taskPath);
+  const key = taskPathMutexKey(taskPath);
   let mutex = taskPathMutexes.get(key);
   if (!mutex) {
     mutex = new Mutex();
     taskPathMutexes.set(key, mutex);
   }
   return mutex;
+}
+
+async function withTaskPathMutex<T>(taskPath: string, action: () => Promise<T>): Promise<T> {
+  const key = taskPathMutexKey(taskPath);
+  const mutex = getTaskPathMutex(taskPath);
+  try {
+    return await mutex.runExclusive(action);
+  } finally {
+    if (!mutex.isLocked()) taskPathMutexes.delete(key);
+  }
+}
+
+async function withTokenMutex<T>(token: string, action: () => Promise<T>): Promise<T> {
+  let mutex = tokenMutexes.get(token);
+  if (!mutex) {
+    mutex = new Mutex();
+    tokenMutexes.set(token, mutex);
+  }
+  try {
+    return await mutex.runExclusive(action);
+  } finally {
+    if (!mutex.isLocked()) tokenMutexes.delete(token);
+  }
 }
 
 async function findWorkflowByTaskPath(taskPath: string): Promise<string | null> {
@@ -37,9 +65,7 @@ async function readPidFile(taskPath: string): Promise<string | null> {
     if (!/^\d{14}$/.test(wfId)) return null;
     return wfId;
   } catch (error) {
-    const code = error && typeof error === "object" && "code" in error
-      ? String((error as { code?: unknown }).code)
-      : "UNKNOWN";
+    const code = filesystemErrorCode(error);
     if (code === "ENOENT") return null;
     throw new Error(`failed to read pid file: ${posixPath(pidFile)} (${code})`, { cause: error });
   }
@@ -117,24 +143,33 @@ async function writePidFile(taskPath: string, wfId: string): Promise<string | nu
   try {
     await atomicWriteText(pidFile, wfId);
     return null;
-  } catch {
-    return `failed to write pid file: ${pidFile.replace(/\\/g, "/")}`;
+  } catch (error) {
+    return `failed to write pid file: ${posixPath(pidFile)} (${filesystemErrorCode(error)})`;
   }
+}
+
+function filesystemErrorCode(error: unknown): string {
+  return error && typeof error === "object" && "code" in error
+    ? String((error as { code?: unknown }).code)
+    : "UNKNOWN";
 }
 
 export async function confirmTask(
   args: Record<string, unknown>,
   extra: RequestHandlerExtra<ServerRequest, ServerNotification>
 ): Promise<CallToolResult> {
-  const { identity, workflowId: boundWorkflowId, registered } = parseSession(extra.requestInfo?.headers);
+  const { identity, registered } = parseSession(extra.requestInfo?.headers);
   if (!registered) return err("valid registered token is required");
+  const rawToken = (extra.requestInfo?.headers?.["x-ai-identity"] as string).trim();
 
-  const taskPath = args.task_path as string;
-  if (!taskPath) return err("task_path is required");
+  if (args.task_path === undefined || args.task_path === null || args.task_path === "") return err("task_path is required");
+  if (typeof args.task_path !== "string") return err("task_path must be a string");
+  const taskPath = args.task_path;
   if (!isAbsolute(taskPath)) return err("task_path must be an absolute path");
   if (hasRelativeSegment(taskPath)) return err("task_path must not contain . or .. path segments");
 
   // Task type
+  if (args.task_type !== undefined && typeof args.task_type !== "string") return err("task_type must be a string");
   const suppliedTaskType = args.task_type as string | undefined;
   const taskType = suppliedTaskType || "development";
   if (taskType !== "requirements" && taskType !== "development") {
@@ -142,37 +177,42 @@ export async function confirmTask(
   }
 
   // Responsibility declaration
-  const supervisor = args.is_supervisor === true;
-  const developer = args.is_developer === true;
+  if (typeof args.is_supervisor !== "boolean") return err("is_supervisor must be a boolean");
+  if (typeof args.is_developer !== "boolean") return err("is_developer must be a boolean");
+  const supervisor = args.is_supervisor;
+  const developer = args.is_developer;
 
   // work_dir
-  const workDir = (args.work_dir as string) || "";
-  if (!workDir) return err("work_dir is required");
+  if (args.work_dir === undefined || args.work_dir === null || args.work_dir === "") return err("work_dir is required");
+  if (typeof args.work_dir !== "string") return err("work_dir must be a string");
+  const workDir = args.work_dir;
   if (!isAbsolute(workDir)) return err("work_dir must be an absolute path");
   if (hasRelativeSegment(workDir)) return err("work_dir must not contain . or .. path segments");
 
   const resolvedTaskPath = resolve(taskPath);
-  const boundState = boundWorkflowId ? getState(boundWorkflowId) : undefined;
-  const isActiveParticipant = boundState?.participants.some((p) => p.identity === identity) ?? false;
-  if (isActiveParticipant && (!boundState?.task?.spec_file || !samePath(boundState.task.spec_file, resolvedTaskPath))) {
-    return err(`token is already joined to active workflow ${boundWorkflowId} — finish it before confirming another task, or register a new token for parallel work`);
-  }
 
   // Validate task file is under work_dir
   const resolvedWorkDir = resolve(workDir);
   try {
     const workDirStat = await stat(resolvedWorkDir);
     if (!workDirStat.isDirectory()) return err("work_dir must be a directory");
-  } catch {
-    return err(`work_dir not found: ${posixPath(resolvedWorkDir)}`);
+  } catch (error) {
+    const code = filesystemErrorCode(error);
+    return code === "ENOENT"
+      ? err(`work_dir not found: ${posixPath(resolvedWorkDir)}`)
+      : err(`failed to inspect work_dir: ${posixPath(resolvedWorkDir)} (${code})`);
   }
+  const gitMarkerPath = resolve(resolvedWorkDir, ".git");
   try {
-    const gitMarkerStat = await stat(resolve(resolvedWorkDir, ".git"));
+    const gitMarkerStat = await stat(gitMarkerPath);
     if (!gitMarkerStat.isDirectory() && !gitMarkerStat.isFile()) {
       return err("work_dir must be a Git repository root containing a .git file or directory");
     }
-  } catch {
-    return err("work_dir must be a Git repository root containing a .git file or directory");
+  } catch (error) {
+    const code = filesystemErrorCode(error);
+    return code === "ENOENT"
+      ? err("work_dir must be a Git repository root containing a .git file or directory")
+      : err(`failed to inspect Git marker: ${posixPath(gitMarkerPath)} (${code})`);
   }
   if (!isSameOrDescendantPath(resolvedTaskPath, resolvedWorkDir)) {
     return err("task_path must be under work_dir");
@@ -182,11 +222,22 @@ export async function confirmTask(
   try {
     const taskStat = await stat(resolvedTaskPath);
     if (!taskStat.isFile()) return err("task_path must be a file");
-  } catch {
-    return err(`task file not found: ${resolvedTaskPath.replace(/\\/g, "/")}`);
+  } catch (error) {
+    const code = filesystemErrorCode(error);
+    return code === "ENOENT"
+      ? err(`task file not found: ${posixPath(resolvedTaskPath)}`)
+      : err(`failed to inspect task_path: ${posixPath(resolvedTaskPath)} (${code})`);
   }
 
-  return getTaskPathMutex(resolvedTaskPath).runExclusive(async () => {
+  return withTokenMutex(rawToken, async () => {
+  const { workflowId: boundWorkflowId } = parseSession(extra.requestInfo?.headers);
+  const boundState = boundWorkflowId ? getState(boundWorkflowId) : undefined;
+  const isActiveParticipant = boundState?.participants.some((p) => p.identity === identity) ?? false;
+  if (isActiveParticipant && (!boundState?.task?.spec_file || !samePath(boundState.task.spec_file, resolvedTaskPath))) {
+    return err(`token is already joined to active workflow ${boundWorkflowId} — finish it before confirming another task, or register a new token for parallel work`);
+  }
+
+  return withTaskPathMutex(resolvedTaskPath, async () => {
   let wfId: string;
   let recovered = false;
   let isFirst = false;
@@ -203,6 +254,10 @@ export async function confirmTask(
       return err(error instanceof Error ? error.message : "failed to read pid file");
     }
     if (pidWfId) {
+      const activePidState = getState(pidWfId);
+      if (activePidState?.task?.spec_file && !samePath(activePidState.task.spec_file, resolvedTaskPath)) {
+        return err(`workflow_id ${pidWfId} is already active for another task: ${posixPath(activePidState.task.spec_file)}`);
+      }
       const defState = defaultState();
       let recoveredState;
       try {
@@ -250,7 +305,17 @@ export async function confirmTask(
       const alreadyIn = state.participants.some((p) => p.identity === identity);
       if (alreadyIn) {
         const myParticipant = state.participants.find(p => p.identity === identity)!;
-        const confirmedAt = new Date().toISOString();
+        const recoveringParticipant = isRecoveryPlaceholderParticipant(myParticipant);
+        const responsibilitiesChanged = myParticipant.is_supervisor !== supervisor
+          || myParticipant.is_developer !== developer;
+        if (!recoveringParticipant && state.phase !== "idle" && responsibilitiesChanged) {
+          return err("participant responsibilities are locked after the workflow leaves idle — confirm with the originally declared is_supervisor and is_developer values");
+        }
+        if (!recoveringParticipant && myParticipant.work_dir && !samePath(myParticipant.work_dir, resolvedWorkDir)) {
+          return err(`work_dir cannot change after participant confirmation: "${posixPath(resolvedWorkDir)}" vs "${posixPath(myParticipant.work_dir)}"`);
+        }
+
+        const confirmedAt = recoveringParticipant ? new Date().toISOString() : myParticipant.registered_at;
         const nextParticipants = state.participants.map((p) => p.identity === identity
           ? { ...p, is_supervisor: supervisor, is_developer: developer, registered_at: confirmedAt, work_dir: resolvedWorkDir }
           : p);
@@ -259,12 +324,17 @@ export async function confirmTask(
         const pidError = await writePidFile(resolvedTaskPath, wfId);
         if (pidError) return err(pidError);
 
-        // 用确认时的入参覆盖重建推断的职责——调用者声明为准
+        // IDLE permits corrections; recovered placeholders declare their real responsibilities once.
         myParticipant.is_supervisor = supervisor;
         myParticipant.is_developer = developer;
         myParticipant.registered_at = confirmedAt;
         myParticipant.work_dir = resolvedWorkDir;
-        reconcileRecoveredTurn(state);
+        if (state.phase === "idle") {
+          const currentSupervisor = state.participants.find((participant) => participant.is_supervisor);
+          if (state.participants.length >= 2 && currentSupervisor) state.turn = currentSupervisor.identity;
+        } else if (recoveringParticipant) {
+          reconcileRecoveredTurn(state);
+        }
         setState(wfId, state);
         const raw = extra.requestInfo?.headers?.["x-ai-identity"] as string;
         if (raw) bindWorkflow(raw.trim(), wfId);
@@ -276,7 +346,7 @@ export async function confirmTask(
           task_path: resolvedTaskPath.replace(/\\/g, "/"),
           workflow_id: wfId,
           phase: state.phase,
-          recovered: true,
+          recovered: recovered || recoveringParticipant,
         }, tip);
       }
 
@@ -342,5 +412,6 @@ export async function confirmTask(
     phase: curState.phase,
     recovered,
   }, `[行动] ${actionLine}\n\n${statusLine}`);
+  });
   });
 }

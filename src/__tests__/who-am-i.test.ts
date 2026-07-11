@@ -74,4 +74,8 @@ describe("sanitizeIdentity", () => {
       expect(() => sanitizeIdentity(identity)).toThrow("reserved");
     }
   });
+
+  it("rejects non-string identities at runtime", () => {
+    expect(() => sanitizeIdentity(123 as unknown as string)).toThrow("Invalid identity");
+  });
 });
