@@ -88,6 +88,15 @@ function reconcileRecoveredTurn(state: ReturnType<typeof defaultState>): void {
   if (next) state.turn = next.identity;
 }
 
+function assignIdleSupervisorTurn(state: ReturnType<typeof defaultState>, callerIdentity: string): void {
+  const supervisor = state.participants.find((participant) => participant.is_supervisor);
+  if (!supervisor || state.turn === supervisor.identity) return;
+  const assignedAt = new Date().toISOString();
+  state.turn = supervisor.identity;
+  state.turn_switched_at = assignedAt;
+  state.turn_claimed_at = supervisor.identity === callerIdentity ? assignedAt : null;
+}
+
 function validateParticipantCombination(participants: Participant[]): string | null {
   const supervisorCount = participants.filter((p) => p.is_supervisor).length;
   const developerCount = participants.filter((p) => p.is_developer).length;
@@ -324,8 +333,9 @@ export async function confirmTask(
         const recoveringParticipant = isRecoveryPlaceholderParticipant(myParticipant);
         const responsibilitiesChanged = myParticipant.is_supervisor !== supervisor
           || myParticipant.is_developer !== developer;
-        if (!recoveringParticipant && state.phase !== "idle" && responsibilitiesChanged) {
-          return err("participant responsibilities are locked after the workflow leaves idle — confirm with the originally declared is_supervisor and is_developer values");
+        const responsibilitiesLocked = state.phase !== "idle" || hasCompleteParticipantRoster(state);
+        if (!recoveringParticipant && responsibilitiesLocked && responsibilitiesChanged) {
+          return err("participant responsibilities are locked once both participants have joined or the workflow leaves idle — confirm with the originally declared is_supervisor and is_developer values");
         }
         if (!recoveringParticipant && myParticipant.work_dir && !samePath(myParticipant.work_dir, resolvedWorkDir)) {
           return err(`work_dir cannot change after participant confirmation: "${posixPath(resolvedWorkDir)}" vs "${posixPath(myParticipant.work_dir)}"`);
@@ -340,14 +350,13 @@ export async function confirmTask(
         const pidError = await writePidFile(resolvedTaskPath, wfId);
         if (pidError) return err(pidError);
 
-        // IDLE permits corrections; recovered placeholders declare their real responsibilities once.
+        // An incomplete IDLE roster permits corrections; recovered placeholders declare their real responsibilities once.
         myParticipant.is_supervisor = supervisor;
         myParticipant.is_developer = developer;
         myParticipant.registered_at = confirmedAt;
         myParticipant.work_dir = resolvedWorkDir;
         if (state.phase === "idle") {
-          const currentSupervisor = state.participants.find((participant) => participant.is_supervisor);
-          if (state.participants.length >= 2 && currentSupervisor) state.turn = currentSupervisor.identity;
+          if (state.participants.length >= 2) assignIdleSupervisorTurn(state, identity);
         } else if (recoveringParticipant) {
           reconcileRecoveredTurn(state);
         }
@@ -355,9 +364,7 @@ export async function confirmTask(
         const raw = extra.requestInfo?.headers?.["x-ai-identity"] as string;
         if (raw) bindWorkflow(raw.trim(), wfId);
 
-        const action = hasCompleteParticipantRoster(state)
-          ? "调用 wait_for_turn（长轮询，10s 间隔，最多 600s）。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。"
-          : "等待第二位参与者使用相同 task_path 调用 confirm_task；在此之前不要调用 advance、wait_for_turn 或 submit。";
+        const action = "调用 wait_for_turn（长轮询，10s 间隔，最多 600s）。若参与者尚未全部就位，它会先等待另一位完成 confirm_task；turn 到你时自动返回。不要频繁调用 get_state";
         const tip = formatTip({
           action,
           current: `你是 ${identity}（${responsibilityLabel(myParticipant)}）。工作流 ${wfId}，当前是 ${state.phase} 阶段第 ${state.round} 轮，turn 在 ${state.turn}${state.turn === identity ? "（你）" : "（对方）"}。`,
@@ -397,8 +404,7 @@ export async function confirmTask(
       state.participants.push(newParticipant);
       // idle 阶段双方就位后，turn 切给监督者——使其 wait_for_turn 立即返回
       if (state.phase === "idle") {
-        const sup = state.participants.find((p) => p.is_supervisor);
-        if (sup) state.turn = sup.identity;
+        assignIdleSupervisorTurn(state, identity);
       } else {
         reconcileRecoveredTurn(state);
       }
@@ -417,15 +423,13 @@ export async function confirmTask(
   const phaseText = curState.phase !== "idle" ? `，${curState.phase} 阶段第 ${curState.round} 轮` : "，idle 阶段";
   const status = `你是 ${identity}（${myResponsibilityLabel}）。工作流 ${wfId}${phaseText}。`;
 
-  let actionLine: string;
+  const actionLine = "调用 wait_for_turn（长轮询，10s 间隔，最多 600s）。若参与者尚未全部就位，它会先等待另一位完成 confirm_task；turn 到你时自动返回。不要频繁调用 get_state";
   let workflowStatus: string;
   if (isFirst) {
-    actionLine = "等待第二位参与者以相同 task_path 调用 confirm_task 加入；双方就位前不要调用 advance、wait_for_turn 或 submit。";
     workflowStatus = `${recovered ? "已恢复" : "已创建"}工作流 ${wfId}，当前只有一位已确认参与者。`;
   } else {
     const p = curState.participants;
     const names = p.map((x) => `${x.identity}（${responsibilityLabel(x)}）`).join(" + ");
-    actionLine = "调用 wait_for_turn（长轮询，10s 间隔，最多 600s）。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。";
     workflowStatus = `已加入工作流 ${wfId}。双方已就位：${names}。`;
   }
 

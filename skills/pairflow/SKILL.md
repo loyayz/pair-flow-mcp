@@ -74,10 +74,10 @@ curl -s -X POST http://127.0.0.1:<port>/mcp \
 
 根据 confirm_task 返回的 tip 判断所处场景：
 
-- **"等待对方 AI 加入"** — 你是第一个加入的。提醒用户"等待对方 AI 用相同 task_path 调用 confirm_task 加入"。调用 `wait_for_turn`——双方就位后服务端会将 turn 切给监督者，届时自动返回。
+- **"等待对方 AI 加入"** — 你是第一个加入的。调用 `wait_for_turn`；它会先等待对方 AI 使用相同 task_path 完成 confirm_task，再继续等待 turn 到你并自动返回。
 - **"双方已就位"** — 结对已成功建立：
   - **你是监督者**：`wait_for_turn` 会立即返回（turn 已切给你），按指引调 `advance` 开始工作流
   - **你不是监督者**：调 `wait_for_turn`，等待监督者 advance 后将 turn 切给你
 - **错误** — 根据错误信息修正参数后重试
 
-将 token 告诉用户或保存以备后续使用。
+无论当前是哪种成功场景，`confirm_task` 后的下一步都调用 `wait_for_turn`。将 token 告诉用户或保存以备后续使用。

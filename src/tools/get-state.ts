@@ -25,13 +25,13 @@ export async function getStateTool(
   }
   if (hasRecoveryPlaceholderParticipant(state)) {
     return ok({}, formatTip({
-      action: "等待所有从归档恢复出的参与者调用 confirm_task 重新确认职责和 work_dir；在此之前不要调用 advance、wait_for_turn 或 submit。",
+      action: "调用 wait_for_turn；它会等待所有从归档恢复出的参与者完成 confirm_task，并在 turn 到你时自动返回。",
       current: `你是 ${identity}。工作流恢复未完成：工作流 ${workflowId} 仍有参与者未重新确认。`,
     }));
   }
   if (!hasCompleteParticipantRoster(state)) {
     return ok({}, formatTip({
-      action: "等待第二位参与者（另一位 AI）使用相同 task_path 调用 confirm_task 加入；在双方就位前不要调用 advance、wait_for_turn 或 submit。",
+      action: "调用 wait_for_turn；它会等待第二位参与者使用相同 task_path 完成 confirm_task，并在 turn 到你时自动返回。",
       current: `你是 ${identity}。工作流 ${workflowId} 当前只有一位已确认参与者。`,
     }));
   }

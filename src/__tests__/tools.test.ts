@@ -342,7 +342,7 @@ describe("Confirm task", () => {
     }, { "x-ai-identity": r2.token as string });
     expect(c1.ok).toBe(true);
     expect(c2.ok).toBe(true);
-    expect(c1.tip).toContain("双方就位前不要调用 advance、wait_for_turn 或 submit");
+    expect(c1.tip).toContain("调用 wait_for_turn");
     await rm(task, { force: true });
     await rm(`${task}.pid`, { force: true });
   });
@@ -583,7 +583,6 @@ describe("Confirm task", () => {
     }, { "x-ai-identity": r1.token as string });
     const adv = await mcpRequest("advance", {}, { "x-ai-identity": r1.token as string });
     const state = await mcpRequest("get_state", {}, { "x-ai-identity": r1.token as string });
-    const wait = await mcpRequest("wait_for_turn", {}, { "x-ai-identity": r1.token as string });
     const submit = await mcpRequest("submit", {
       file_path: task,
       git_commit_hash: "fedcba9",
@@ -595,8 +594,7 @@ describe("Confirm task", () => {
     expect(adv.tip).toContain("workflow recovery incomplete");
     expect(state.ok).toBe(true);
     expect(state.tip).toContain("工作流恢复未完成");
-    expect(wait.ok).toBe(false);
-    expect(wait.tip).toContain("workflow recovery incomplete");
+    expect(c1.tip).toContain("调用 wait_for_turn");
     expect(submit.ok).toBe(false);
     expect(submit.tip).toContain("workflow recovery incomplete");
     await rm(task, { force: true });
@@ -618,7 +616,6 @@ describe("Confirm task", () => {
       work_dir: TEST_WORK_DIR,
     }, { "x-ai-identity": oldIdentity.token as string });
     const incompleteState = await mcpRequest("get_state", {}, { "x-ai-identity": oldIdentity.token as string });
-    const blockedWait = await mcpRequest("wait_for_turn", {}, { "x-ai-identity": oldIdentity.token as string });
     const blockedAdvance = await mcpRequest("advance", {}, { "x-ai-identity": oldIdentity.token as string });
     const blockedSubmit = await mcpRequest("submit", {
       file_path: task,
@@ -635,7 +632,7 @@ describe("Confirm task", () => {
     expect(oldConfirmed.ok).toBe(true);
     expect(oldConfirmed.recovered).toBe(true);
     expect(incompleteState.tip).toContain("第二位参与者");
-    expect(blockedWait.tip).toContain("both participants must join via confirm_task");
+    expect(oldConfirmed.tip).toContain("调用 wait_for_turn");
     expect(blockedAdvance.tip).toContain("both participants must join via confirm_task");
     expect(blockedSubmit.tip).toContain("both participants must join via confirm_task");
     expect(newConfirmed.ok).toBe(true);
@@ -894,6 +891,8 @@ describe("Confirm task", () => {
     expect(started.new_phase).toBe("requirements");
     expect(s1.ok).toBe(true);
     expect(s1.tip).toContain("当前是第 2 轮需求分析");
+    expect(s1.tip).toContain("等待 req-sup");
+    expect(s1.tip).not.toContain("advance");
     expect(s2.ok).toBe(true);
     expect(s2.tip).toContain("双方已提交");
     expect(s2.tip).toContain("当前是第 3 轮需求分析");

@@ -60,7 +60,7 @@ describe("Role helpers", () => {
       { identity: "admin", is_supervisor: true, is_developer: true, registered_at: "" },
     ];
 
-    expect(identityLabel(state, "admin")).toBe("admin(supervisor/developer)");
+    expect(identityLabel(state, "admin")).toBe("admin（supervisor/developer）");
   });
 
   it("identifies supervisor", () => {
@@ -106,6 +106,23 @@ describe("Tip guidance", () => {
     expect(tip).toContain(expected);
   });
 
+  it("includes the task document in first-round requirements guidance", () => {
+    const state: PairFlowState = {
+      ...defaultState(),
+      workflow_id: TEST_WF,
+      phase: "requirements",
+      round: 1,
+      turn: "developer",
+      task: { spec_file: "C:/project/task.md", task_type: "development" },
+      participants: [
+        { identity: "supervisor", is_supervisor: true, is_developer: false, registered_at: "", work_dir: resolve("project") },
+        { identity: "developer", is_supervisor: false, is_developer: true, registered_at: "", work_dir: resolve("project") },
+      ],
+    };
+
+    expect(buildTip(state, "developer")).toContain("C:/project/task.md");
+  });
+
   it("points implementation review to the reviewer's planning document", () => {
     const state: PairFlowState = {
       ...defaultState(),
@@ -129,6 +146,72 @@ describe("Tip guidance", () => {
 
     expect(tip).toContain("planning/r1_reviewer.md");
     expect(tip).not.toContain("planning/r1_developer.md");
+  });
+
+  it("keeps pointing later planning rounds to the reviewer's round-one plan", () => {
+    const state: PairFlowState = {
+      ...defaultState(),
+      workflow_id: TEST_WF,
+      phase: "planning",
+      round: 4,
+      turn: "developer",
+      task: { spec_file: "C:/project/task.md", task_type: "development" },
+      participants: [
+        { identity: "developer", is_supervisor: true, is_developer: true, registered_at: "", work_dir: resolve("project") },
+        { identity: "reviewer", is_supervisor: false, is_developer: false, registered_at: "", work_dir: resolve("project") },
+      ],
+      last_submission_by_participant: {
+        developer: { round: 2, sub_phase: null, commit_hash: "def5678", submitted_at: "2026-07-10T00:01:00.000Z", file_path: "C:/project/handoff/wf/planning/r2_developer.md" },
+        reviewer: { round: 3, sub_phase: null, commit_hash: "abc1234", submitted_at: "2026-07-10T00:02:00.000Z", file_path: "C:/project/handoff/wf/planning/r3_reviewer.md" },
+      },
+    };
+
+    const tip = buildTip(state, "developer");
+
+    expect(tip).toContain("planning/r1_reviewer.md");
+    expect(tip).not.toContain("planning/r1_developer.md");
+  });
+
+  it("includes the previous review artifact in later coding guidance", () => {
+    const state: PairFlowState = {
+      ...defaultState(),
+      workflow_id: TEST_WF,
+      phase: "implementation",
+      sub_phase: "coding",
+      round: 3,
+      turn: "developer",
+      task: { spec_file: "C:/project/task.md", task_type: "development" },
+      participants: [
+        { identity: "developer", is_supervisor: false, is_developer: true, registered_at: "", work_dir: resolve("project") },
+        { identity: "reviewer", is_supervisor: true, is_developer: false, registered_at: "", work_dir: resolve("project") },
+      ],
+      last_submission_by_participant: {
+        developer: { round: 1, sub_phase: "coding", commit_hash: "abc1234", submitted_at: "2026-07-10T00:00:00.000Z", file_path: "C:/project/handoff/wf/implementation/r1_coding_developer.md" },
+        reviewer: { round: 2, sub_phase: "review", commit_hash: "def5678", submitted_at: "2026-07-10T00:01:00.000Z", file_path: "C:/project/handoff/wf/implementation/r2_review_reviewer.md" },
+      },
+    };
+
+    expect(buildTip(state, "developer")).toContain("implementation/r2_review_reviewer.md");
+  });
+
+  it("points first-round summary guidance to the task and workflow archive", () => {
+    const state: PairFlowState = {
+      ...defaultState(),
+      workflow_id: TEST_WF,
+      phase: "summary",
+      round: 1,
+      turn: "supervisor",
+      task: { spec_file: "C:/project/task.md", task_type: "development" },
+      participants: [
+        { identity: "supervisor", is_supervisor: true, is_developer: false, registered_at: "", work_dir: resolve("project") },
+        { identity: "developer", is_supervisor: false, is_developer: true, registered_at: "", work_dir: resolve("project") },
+      ],
+    };
+
+    const tip = buildTip(state, "supervisor");
+
+    expect(tip).toContain("C:/project/task.md");
+    expect(tip).toContain(`/handoff/${TEST_WF}/`);
   });
 
   it("does not give submission instructions to a participant without the turn", () => {

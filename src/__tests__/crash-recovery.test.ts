@@ -87,6 +87,23 @@ describe("Handoff reconstruction", () => {
     expect(recovered!.workflow_id).toBe(wfId);
   });
 
+  it("preserves coding and review prefixes as identity text outside implementation", async () => {
+    const wfId = "20260622000025";
+    const requirementsDir = join(TEST_ROOT, HANDOFF_DIR, wfId, "requirements");
+    await mkdir(requirementsDir, { recursive: true });
+    await writeFile(join(requirementsDir, "r1_coding_alice.meta.json"), validMeta());
+    await writeFile(join(requirementsDir, "r2_review_bob.meta.json"), validMeta({
+      submitted_at: "2026-06-22T00:02:00.000Z",
+      commit_hash: "def5678",
+    }));
+
+    const recovered = await reconstructFromHandoff(defaultState(), wfId, TEST_ROOT, join(TEST_ROOT, "task.md"));
+
+    expect(recovered?.participants.map((participant) => participant.identity))
+      .toEqual(["coding_alice", "review_bob"]);
+    expect(recovered?.round).toBe(3);
+  });
+
   it("recovers summary when summary submissions exist", async () => {
     const wfId = "20260622000004";
     const requirementsDir = join(TEST_ROOT, HANDOFF_DIR, wfId, "requirements");
@@ -480,6 +497,7 @@ describe("parseFilename", () => {
   it("returns null for unrecognized format", () => {
     expect(parseFilename("random.txt")).toBeNull();
     expect(parseFilename("r0_alice.md")).toBeNull();
+    expect(parseFilename("r01_alice.md")).toBeNull();
     expect(parseFilename("r1_.md")).toBeNull();
     expect(parseFilename("r1_bad.identity.md")).toBeNull();
     expect(parseFilename("r1_bad@identity.md")).toBeNull();

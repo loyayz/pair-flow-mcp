@@ -44,7 +44,7 @@ const KNOWN_EXTENSIONS = /\.(?:md|meta\.json)$/;
  * Accepts: r{N}_{identity}.md, r{N}_{subphase}_{identity}.md,
  *          r{N}_{identity}.meta.json, r{N}_{subphase}_{identity}.meta.json
  */
-export function parseFilename(filename: string): ParsedFilename | null {
+export function parseFilename(filename: string, phase?: RecoverablePhase): ParsedFilename | null {
   const base = filename.replace(KNOWN_EXTENSIONS, "");
   if (base === filename) return null;
 
@@ -52,15 +52,17 @@ export function parseFilename(filename: string): ParsedFilename | null {
   if (!match) return null;
 
   const round = Number(match[1]);
-  if (!Number.isSafeInteger(round) || round < 1) return null;
+  if (!Number.isSafeInteger(round) || round < 1 || String(round) !== match[1]) return null;
   let identity = match[2];
   let subPhase: SubPhase = null;
 
-  for (const sp of ["coding", "review"]) {
-    if (identity.startsWith(sp + "_")) {
-      subPhase = sp as SubPhase;
-      identity = identity.slice(sp.length + 1);
-      break;
+  if (phase === undefined || phase === "implementation") {
+    for (const sp of ["coding", "review"]) {
+      if (identity.startsWith(sp + "_")) {
+        subPhase = sp as SubPhase;
+        identity = identity.slice(sp.length + 1);
+        break;
+      }
     }
   }
 
@@ -189,7 +191,7 @@ async function collectValidSubmissions(wfDir: string, recoveryRoot: string): Pro
     const phaseDir = join(wfDir, phase);
     const files = await findFiles(phaseDir, ".meta.json", recoveryRoot);
     for (const file of files) {
-      const parsed = parseFilename(basename(file));
+      const parsed = parseFilename(basename(file), phase);
       if (!parsed) continue;
       const metaPath = join(phaseDir, file);
       let content: string;
@@ -230,7 +232,7 @@ function isValidSubmissionMeta(
   if (!value || typeof value !== "object") return false;
   const meta = value as Record<string, unknown>;
   if (typeof meta.submitted_at !== "string" || Number.isNaN(Date.parse(meta.submitted_at))) return false;
-  if (typeof meta.commit_hash !== "string" || !/^[0-9a-fA-F]{7,40}$/.test(meta.commit_hash)) return false;
+  if (typeof meta.commit_hash !== "string" || !/^[0-9a-f]{7,40}$/.test(meta.commit_hash)) return false;
   if (!meta.task || typeof meta.task !== "object") return false;
   const task = meta.task as Record<string, unknown>;
   if (typeof task.spec_file !== "string" || !isAbsolute(task.spec_file)) return false;

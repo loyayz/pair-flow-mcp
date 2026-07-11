@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -67,11 +67,33 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.useRealTimers();
   deleteState(WORKFLOW_ID);
   await rm(WORK_DIR, { recursive: true, force: true });
 });
 
 describe("confirm_task participant lifecycle", () => {
+  it("starts an unclaimed timer when the second participant assigns idle turn to the other supervisor", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-11T03:00:00.000Z"));
+    setState(WORKFLOW_ID, participantState());
+    const token = registerToken("bob");
+
+    const result = responsePayload(await confirmTask({
+      task_path: TASK_PATH,
+      is_supervisor: false,
+      is_developer: true,
+      work_dir: WORK_DIR,
+    }, requestExtra(token)));
+
+    expect(result.ok).toBe(true);
+    expect(getState(WORKFLOW_ID)).toMatchObject({
+      turn: "alice",
+      turn_switched_at: "2026-07-11T03:00:00.000Z",
+      turn_claimed_at: null,
+    });
+  });
+
   it("rejects responsibility changes after the workflow leaves idle", async () => {
     setState(WORKFLOW_ID, participantState("requirements"));
     const token = registerToken("alice");
@@ -79,7 +101,7 @@ describe("confirm_task participant lifecycle", () => {
     const result = await confirm(token, { is_supervisor: false, is_developer: true });
 
     expect(result.ok).toBe(false);
-    expect(result.tip).toContain("participant responsibilities are locked after the workflow leaves idle");
+    expect(result.tip).toContain("participant responsibilities are locked");
     expect(getState(WORKFLOW_ID)?.participants[0]).toMatchObject({
       is_supervisor: true,
       is_developer: false,
@@ -113,6 +135,24 @@ describe("confirm_task participant lifecycle", () => {
       is_developer: true,
       registered_at: "2026-07-11T00:00:00.000Z",
     });
+  });
+
+  it("locks participant responsibilities once both participants have joined idle", async () => {
+    const state = participantState();
+    state.participants.push({
+      identity: "bob",
+      is_supervisor: false,
+      is_developer: true,
+      registered_at: "2026-07-11T00:01:00.000Z",
+      work_dir: WORK_DIR,
+    });
+    setState(WORKFLOW_ID, state);
+    const token = registerToken("alice");
+
+    const result = await confirm(token, { is_supervisor: false, is_developer: false });
+
+    expect(result.ok).toBe(false);
+    expect(result.tip).toContain("responsibilities are locked once both participants have joined");
   });
 
   it("rejects work_dir changes after participant confirmation", async () => {
@@ -150,7 +190,7 @@ describe("confirm_task participant lifecycle", () => {
     });
     expect(getState(WORKFLOW_ID)?.participants[0].registered_at).not.toBe(RECOVERY_REGISTERED_AT);
     expect(changedAgain.ok).toBe(false);
-    expect(changedAgain.tip).toContain("participant responsibilities are locked after the workflow leaves idle");
+    expect(changedAgain.tip).toContain("participant responsibilities are locked");
   });
 
   it("requires explicit boolean responsibility values at the handler boundary", async () => {

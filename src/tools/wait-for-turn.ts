@@ -2,7 +2,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
 import { parseSession } from "../identity.js";
-import { getState, setState, getMutex, hasCompleteParticipantRoster, hasRecoveryPlaceholderParticipant } from "../state.js";
+import { getState, setState, getMutex, hasCompleteParticipantRoster } from "../state.js";
 import { buildTip } from "../tip.js";
 import { err, ok } from "../response.js";
 import { formatTip } from "../tip-format.js";
@@ -24,13 +24,6 @@ export async function waitForTurn(
   if (!initialState.participants.some((p) => p.identity === identity)) {
     return err("identity not registered");
   }
-  if (hasRecoveryPlaceholderParticipant(initialState)) {
-    return err("workflow recovery incomplete — every recovered participant must call confirm_task before wait_for_turn");
-  }
-  if (!hasCompleteParticipantRoster(initialState)) {
-    return err("both participants must join via confirm_task before wait_for_turn");
-  }
-
   extra.signal.throwIfAborted();
   const activeWait = beginActiveWait(workflowId, identity, extra.signal);
   try {
@@ -51,6 +44,11 @@ async function waitForActiveTurn(
     signal.throwIfAborted();
     const state = getState(workflowId);
     if (!state) return err("workflow not found");
+
+    if (!hasCompleteParticipantRoster(state)) {
+      await sleep(POLL_INTERVAL_MS, signal);
+      continue;
+    }
 
     if (state.turn === identity) {
       // 记录 turn 领取时间并返回完整指引
@@ -88,11 +86,14 @@ async function waitForActiveTurn(
 
   const state = getState(workflowId);
   if (!state) return err("workflow not found");
+  const rosterReady = hasCompleteParticipantRoster(state);
   return ok(
     { turn: state.turn, phase: state.phase, round: state.round },
     formatTip({
       action: "继续调用 wait_for_turn，保持自动轮转；不要仅因本次超时打断用户。",
-      current: `你是 ${identity}。单次等待已超时(600s)，当前是第 ${state.round} 轮，轮到 ${state.turn}。`,
+      current: rosterReady
+        ? `你是 ${identity}。单次等待已超时(600s)，当前是第 ${state.round} 轮，轮到 ${state.turn}。`
+        : `你是 ${identity}。单次等待已超时(600s)，参与者尚未全部完成 confirm_task。`,
     })
   );
 }

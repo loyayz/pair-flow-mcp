@@ -140,30 +140,18 @@ export async function submit(
     setState(workflowId, nextState);
 
     const idLabel = identityLabel(nextState, identity);
-    const nextParticipant = nextState.participants.find((p) => p.identity === nextState.turn);
     const nextLabel = identityLabel(nextState, nextState.turn);
     const phaseText = phaseLabel(nextState.phase, nextState.sub_phase);
-    const currentParticipant = nextState.participants.find((p) => p.identity === identity);
     const supervisorParticipant = nextState.participants.find((p) => p.is_supervisor);
     const bothSubmitted = haveAllParticipantsSubmittedCurrentPhase(nextState);
 
     let action: string;
-    if (bothSubmitted && supervisorParticipant && nextState.turn !== supervisorParticipant.identity) {
-      action = `等待 ${nextState.turn} 继续处理或确认后自然交还监督者 ${supervisorParticipant.identity}`;
-    } else if (bothSubmitted && currentParticipant?.is_supervisor && nextState.phase === "summary") {
-      action = "若确认汇总已收敛，可调用 advance 结束当前工作流";
-    } else if (bothSubmitted && currentParticipant?.is_supervisor) {
-      action = "若确认当前阶段目标已达成，可调用 advance 进入下一阶段";
-    } else if (bothSubmitted && supervisorParticipant) {
+    if (bothSubmitted && supervisorParticipant && nextState.turn === supervisorParticipant.identity) {
       action = `等待监督者 ${supervisorParticipant.identity} 判断是否调用 advance 推进`;
-    } else if (nextState.phase === "summary" && nextParticipant?.is_supervisor) {
-      action = "调用 advance 结束当前工作流";
-    } else if (nextState.phase === "summary") {
-      action = "等待监督者调用 advance 结束工作流。调用 wait_for_turn（长轮询，10s 间隔，最多 600s）。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。";
-    } else if (nextParticipant?.is_supervisor) {
-      action = "若审阅后确认当前阶段目标已达成，可调用 advance 进入下一阶段";
+    } else if (bothSubmitted && supervisorParticipant) {
+      action = `等待 ${nextState.turn} 继续处理或确认后自然交还监督者 ${supervisorParticipant.identity}`;
     } else {
-      action = "等待对方操作。调用 wait_for_turn（长轮询，10s 间隔，最多 600s）。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。";
+      action = `等待 ${nextState.turn} 完成当前轮次。调用 wait_for_turn（长轮询，10s 间隔，最多 600s），turn 到你时会自动返回。不要频繁调用 get_state`;
     }
 
     const tip = formatTip({

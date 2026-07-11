@@ -15,6 +15,35 @@ afterEach(() => {
 });
 
 describe("wait_for_turn cancellation", () => {
+  it("waits for the second participant before waiting for turn", async () => {
+    vi.useFakeTimers();
+    const token = registerToken("alice");
+    bindWorkflow(token, TEST_WORKFLOW_ID);
+    setState(TEST_WORKFLOW_ID, {
+      ...defaultState(),
+      workflow_id: TEST_WORKFLOW_ID,
+      phase: "idle",
+      turn: "idle",
+      participants: [
+        { identity: "alice", is_supervisor: true, is_developer: false, registered_at: "now", work_dir: process.cwd() },
+      ],
+    });
+    const extra = {
+      signal: new AbortController().signal,
+      requestInfo: { headers: { "x-ai-identity": token } },
+    } as unknown as RequestHandlerExtra<ServerRequest, ServerNotification>;
+
+    const resultPromise = waitForTurn(extra);
+    const state = getState(TEST_WORKFLOW_ID)!;
+    state.participants.push({ identity: "bob", is_supervisor: false, is_developer: true, registered_at: "now", work_dir: process.cwd() });
+    state.turn = "alice";
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    const payload = JSON.parse(((await resultPromise).content[0] as { text: string }).text);
+    expect(payload.turn).toBe("alice");
+    expect(payload.tip).toContain("调用 advance 开始工作流");
+  });
+
   it("supersedes an older wait from the same workflow participant", async () => {
     vi.useFakeTimers();
     const firstToken = registerToken("alice");
@@ -234,5 +263,29 @@ describe("wait_for_turn cancellation", () => {
 
     expect(payload.tip).toContain("继续调用 wait_for_turn");
     expect(payload.tip).not.toContain("向用户报告");
+  });
+
+  it("continues waiting after timeout when the participant roster is incomplete", async () => {
+    vi.useFakeTimers();
+    const token = registerToken("alice");
+    bindWorkflow(token, TEST_WORKFLOW_ID);
+    setState(TEST_WORKFLOW_ID, {
+      ...defaultState(),
+      workflow_id: TEST_WORKFLOW_ID,
+      participants: [
+        { identity: "alice", is_supervisor: true, is_developer: false, registered_at: "now", work_dir: process.cwd() },
+      ],
+    });
+    const extra = {
+      signal: new AbortController().signal,
+      requestInfo: { headers: { "x-ai-identity": token } },
+    } as unknown as RequestHandlerExtra<ServerRequest, ServerNotification>;
+
+    const resultPromise = waitForTurn(extra);
+    await vi.advanceTimersByTimeAsync(600_000);
+    const payload = JSON.parse(((await resultPromise).content[0] as { text: string }).text);
+
+    expect(payload.tip).toContain("继续调用 wait_for_turn");
+    expect(payload.tip).toContain("参与者尚未全部完成 confirm_task");
   });
 });
