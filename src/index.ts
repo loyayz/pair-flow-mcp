@@ -13,6 +13,7 @@ import { waitForTurn } from "./tools/wait-for-turn.js";
 import { confirmTask } from "./tools/confirm-task.js";
 import { HTTP_SERVER_OPTIONS } from "./http-server-policy.js";
 import { describeListenError, parseServerArgs, SERVER_HELP } from "./server-config.js";
+import { runWithTransportCleanup } from "./transport-lifecycle.js";
 
 const cliConfig = (() => {
   try {
@@ -125,14 +126,17 @@ const httpServer = createServer(HTTP_SERVER_OPTIONS, async (req: IncomingMessage
         sessionIdGenerator: undefined, // stateless
       });
       const mcp = createServerWithTools();
-      await mcp.connect(transport);
-      await transport.handleRequest(req, res, parsed);
-      await transport.close();
+      await runWithTransportCleanup(transport, async () => {
+        await mcp.connect(transport);
+        await transport.handleRequest(req, res, parsed);
+      });
     } catch (err) {
       console.error("[pair-flow] request error:", err);
       if (!res.headersSent) {
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: false, error: "Internal Server Error" }));
+      } else if (!res.writableEnded) {
+        res.destroy(err instanceof Error ? err : undefined);
       }
     }
     return;
