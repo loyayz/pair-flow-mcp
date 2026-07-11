@@ -11,4 +11,19 @@ describe("PairFlow runtime boundary", () => {
 
     expect(sources.join("\n")).not.toContain("node:child_process");
   });
+
+  it("does not keep non-persistent crash-loop counters", async () => {
+    const source = await readFile(resolve("src", "index.ts"), "utf-8");
+
+    expect(source).not.toContain("crashCount");
+    expect(source).not.toContain("lastCrashTime");
+    expect(source).not.toContain("Crash loop detected");
+  });
+
+  it("does not advertise a startup recovery gate", async () => {
+    const source = await readFile(resolve("src", "index.ts"), "utf-8");
+
+    expect(source).not.toContain("recovery in progress");
+    expect(source).not.toMatch(/\blet ready\b/);
+  });
 });

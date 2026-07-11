@@ -96,6 +96,8 @@ describe("Handoff reconstruction", () => {
     expect(recovered!.round).toBe(10);
     expect(recovered!.turn).toBe("bob");
     expect(recovered!.sub_phase).toBe("review");
+    expect(recovered!.turn_switched_at).toBe("2026-06-22T00:10:00.000Z");
+    expect(recovered!.turn_claimed_at).toBeNull();
   });
 
   it("rejects implementation recovery when sub_phase conflicts with round parity", async () => {
@@ -238,14 +240,37 @@ describe("Handoff reconstruction", () => {
       task: { spec_file: join(TEST_ROOT, "task.md"), task_type: "development" },
     }));
 
+    const initialState = defaultState();
     const recovered = await reconstructFromHandoff(
-      defaultState(),
+      initialState,
       wfId,
       TEST_ROOT,
       join(TEST_ROOT, "task.md"),
     );
 
     expect(recovered).toBeNull();
+    expect(initialState).toEqual(defaultState());
+  });
+
+  it("ignores task phases that are incompatible with a requirements-only workflow", async () => {
+    const wfId = "20260622000017";
+    const requirementsDir = join(TEST_ROOT, HANDOFF_DIR, wfId, "requirements");
+    const implementationDir = join(TEST_ROOT, HANDOFF_DIR, wfId, "implementation");
+    await mkdir(requirementsDir, { recursive: true });
+    await mkdir(implementationDir, { recursive: true });
+    const requirementsTask = { spec_file: join(TEST_ROOT, "task.md"), task_type: "requirements" };
+    await writeFile(join(requirementsDir, "r1_alice.meta.json"), validMeta({ task: requirementsTask }));
+    await writeFile(join(implementationDir, "r1_coding_alice.meta.json"), validMeta({
+      submitted_at: "2026-06-22T00:02:00.000Z",
+      sub_phase: "coding",
+      task: requirementsTask,
+    }));
+
+    const recovered = await reconstructFromHandoff(defaultState(), wfId, TEST_ROOT, join(TEST_ROOT, "task.md"));
+
+    expect(recovered).not.toBeNull();
+    expect(recovered!.phase).toBe("requirements");
+    expect(recovered!.task?.task_type).toBe("requirements");
   });
 
   it("rejects recovery when the archive contains more than two identities", async () => {
@@ -294,6 +319,33 @@ describe("Handoff reconstruction", () => {
     expect(recovered).toBeNull();
   });
 
+  it("rejects duplicate rounds in an earlier phase", async () => {
+    const wfId = "20260622000018";
+    const requirementsDir = join(TEST_ROOT, HANDOFF_DIR, wfId, "requirements");
+    const summaryDir = join(TEST_ROOT, HANDOFF_DIR, wfId, "summary");
+    await mkdir(requirementsDir, { recursive: true });
+    await mkdir(summaryDir, { recursive: true });
+    await writeFile(join(requirementsDir, "r1_alice.meta.json"), validMeta());
+    await writeFile(join(requirementsDir, "r1_bob.meta.json"), validMeta({ commit_hash: "def5678" }));
+    await writeFile(join(summaryDir, "r1_alice.meta.json"), validMeta({ commit_hash: "fedcba9" }));
+
+    const recovered = await reconstructFromHandoff(defaultState(), wfId, TEST_ROOT, join(TEST_ROOT, "task.md"));
+
+    expect(recovered).toBeNull();
+  });
+
+  it("rejects participant identities that conflict with round alternation", async () => {
+    const wfId = "20260622000019";
+    const requirementsDir = join(TEST_ROOT, HANDOFF_DIR, wfId, "requirements");
+    await mkdir(requirementsDir, { recursive: true });
+    await writeFile(join(requirementsDir, "r1_alice.meta.json"), validMeta());
+    await writeFile(join(requirementsDir, "r2_alice.meta.json"), validMeta({ commit_hash: "def5678" }));
+
+    const recovered = await reconstructFromHandoff(defaultState(), wfId, TEST_ROOT, join(TEST_ROOT, "task.md"));
+
+    expect(recovered).toBeNull();
+  });
+
   it("allows missing historical rounds and resumes after the highest round", async () => {
     const wfId = "20260622000012";
     const requirementsDir = join(TEST_ROOT, HANDOFF_DIR, wfId, "requirements");
@@ -301,8 +353,8 @@ describe("Handoff reconstruction", () => {
     await writeFile(join(requirementsDir, "r1_alice.meta.json"), validMeta({
       submitted_at: "2026-06-22T00:01:00.000Z",
     }));
-    await writeFile(join(requirementsDir, "r3_bob.meta.json"), validMeta({
-      submitted_at: "2026-06-22T00:03:00.000Z",
+    await writeFile(join(requirementsDir, "r4_bob.meta.json"), validMeta({
+      submitted_at: "2026-06-22T00:04:00.000Z",
       commit_hash: "def5678",
     }));
 
@@ -314,8 +366,33 @@ describe("Handoff reconstruction", () => {
     );
 
     expect(recovered).not.toBeNull();
-    expect(recovered!.round).toBe(4);
+    expect(recovered!.round).toBe(5);
     expect(recovered!.turn).toBe("alice");
+  });
+
+  it("ignores metadata below phase directories", async () => {
+    const wfId = "20260622000020";
+    const requirementsDir = join(TEST_ROOT, HANDOFF_DIR, wfId, "requirements");
+    const backupDir = join(requirementsDir, "backup");
+    await mkdir(backupDir, { recursive: true });
+    await writeFile(join(requirementsDir, "r1_alice.meta.json"), validMeta());
+    await writeFile(join(backupDir, "r2_charlie.meta.json"), validMeta({ commit_hash: "def5678" }));
+
+    const recovered = await reconstructFromHandoff(defaultState(), wfId, TEST_ROOT, join(TEST_ROOT, "task.md"));
+
+    expect(recovered).not.toBeNull();
+    expect(recovered!.participants.map((participant) => participant.identity)).toEqual(["alice"]);
+    expect(recovered!.round).toBe(2);
+  });
+
+  it("surfaces archive structure errors instead of treating them as an empty archive", async () => {
+    const wfId = "20260622000021";
+    const workflowDir = join(TEST_ROOT, HANDOFF_DIR, wfId);
+    await mkdir(workflowDir, { recursive: true });
+    await writeFile(join(workflowDir, "requirements"), "not a directory", "utf-8");
+
+    await expect(reconstructFromHandoff(defaultState(), wfId, TEST_ROOT, join(TEST_ROOT, "task.md")))
+      .rejects.toThrow(/failed to read recovery archive.*requirements.*ENOTDIR/i);
   });
 
   it("ignores archived filenames with invalid identity segments", async () => {
@@ -365,5 +442,6 @@ describe("parseFilename", () => {
     expect(parseFilename("r1_unknown.md")).toBeNull();
     expect(parseFilename("r1_IDLE.md")).toBeNull();
     expect(parseFilename("")).toBeNull();
+    expect(parseFilename(`r${"9".repeat(400)}_alice.md`)).toBeNull();
   });
 });

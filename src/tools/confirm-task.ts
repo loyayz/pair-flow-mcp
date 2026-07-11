@@ -31,13 +31,28 @@ async function findWorkflowByTaskPath(taskPath: string): Promise<string | null> 
 }
 
 async function readPidFile(taskPath: string): Promise<string | null> {
+  const pidFile = `${taskPath}.pid`;
   try {
-    const pidFile = `${taskPath}.pid`;
     const wfId = (await readFile(pidFile, "utf-8")).trim();
     if (!/^\d{14}$/.test(wfId)) return null;
     return wfId;
-  } catch { /* .pid doesn't exist or is unreadable */ }
-  return null;
+  } catch (error) {
+    const code = error && typeof error === "object" && "code" in error
+      ? String((error as { code?: unknown }).code)
+      : "UNKNOWN";
+    if (code === "ENOENT") return null;
+    throw new Error(`failed to read pid file: ${posixPath(pidFile)} (${code})`, { cause: error });
+  }
+}
+
+function reconcileRecoveredTurn(state: ReturnType<typeof defaultState>): void {
+  if (state.phase === "idle" || state.participants.length < 2 || state.participants.some(isRecoveryPlaceholderParticipant)) return;
+  const latest = Object.entries(state.last_submission_by_participant)
+    .filter((entry): entry is [string, typeof entry[1] & { round: number }] => entry[1].round !== null)
+    .sort((left, right) => right[1].round - left[1].round)[0];
+  if (!latest) return;
+  const next = state.participants.find((participant) => participant.identity !== latest[0]);
+  if (next) state.turn = next.identity;
 }
 
 function validateParticipantCombination(participants: Participant[]): string | null {
@@ -181,10 +196,20 @@ export async function confirmTask(
 
   // 2. 读 .pid — 恢复未完成工作流（内存中没找到时）
   if (!existing) {
-    const pidWfId = await readPidFile(resolvedTaskPath);
+    let pidWfId: string | null;
+    try {
+      pidWfId = await readPidFile(resolvedTaskPath);
+    } catch (error) {
+      return err(error instanceof Error ? error.message : "failed to read pid file");
+    }
     if (pidWfId) {
       const defState = defaultState();
-      const recoveredState = await reconstructFromHandoff(defState, pidWfId, resolvedWorkDir, resolvedTaskPath);
+      let recoveredState;
+      try {
+        recoveredState = await reconstructFromHandoff(defState, pidWfId, resolvedWorkDir, resolvedTaskPath);
+      } catch (error) {
+        return err(error instanceof Error ? error.message : "failed to read recovery archive");
+      }
       if (recoveredState) {
         setState(pidWfId, recoveredState);
         existing = pidWfId;
@@ -239,6 +264,7 @@ export async function confirmTask(
         myParticipant.is_developer = developer;
         myParticipant.registered_at = confirmedAt;
         myParticipant.work_dir = resolvedWorkDir;
+        reconcileRecoveredTurn(state);
         setState(wfId, state);
         const raw = extra.requestInfo?.headers?.["x-ai-identity"] as string;
         if (raw) bindWorkflow(raw.trim(), wfId);
@@ -283,6 +309,8 @@ export async function confirmTask(
       if (state.phase === "idle") {
         const sup = state.participants.find((p) => p.is_supervisor);
         if (sup) state.turn = sup.identity;
+      } else {
+        reconcileRecoveredTurn(state);
       }
       setState(wfId, state);
       return null;

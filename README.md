@@ -54,7 +54,6 @@ cp -r skills/pairflow ~/.claude/skills/pairflow
 | `submit` | 提交产出（绝对 file_path + git_commit_hash） |
 | `advance` | 监督者推进到下一阶段 |
 | `get_state` | 查看当前状态和行动指引；需要有效注册 token |
-| `get_archived_files` | 列出归档文件；需要有效注册 token，历史查询需同时提供 workflow_id 与绝对 work_dir |
 
 除 `ping`、`who_am_i`、`register` 外，所有工具都要求通过 HTTP header `X-AI-Identity: <token>` 携带有效注册 token。register 返回 token，confirm_task 绑定 token 到工作流。
 

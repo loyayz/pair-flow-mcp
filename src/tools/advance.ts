@@ -47,14 +47,14 @@ export async function advance(
 
     if (currentPhase === "idle") {
       if (state.participants.length < 2) {
-        return err("both participants must register before advance");
+        return err("both participants must join via confirm_task before advance");
       }
       if (!state.task || !state.task.spec_file) {
         return err("task not confirmed — call confirm_task first");
       }
       const nonSupervisor = getOtherIdentity(state, identity);
       if (!nonSupervisor) return err("no other participant registered");
-      const next = initRequirementsPhase(state, nonSupervisor, state.task);
+      const next = markTurnAssigned(initRequirementsPhase(state, nonSupervisor, state.task), identity);
       setState(workflowId, next);
 
       const reqFile = workflowArchivePath(next, next.workflow_id!, "requirements", `r1_${nonSupervisor}.md`).replace(/\\/g, "/");
@@ -63,7 +63,7 @@ export async function advance(
 
     if (currentPhase === "requirements") {
       if (state.task?.task_type === "requirements") {
-        const next = initSummaryPhase(state, identity);
+        const next = markTurnAssigned(initSummaryPhase(state, identity), identity);
         setState(workflowId, next);
 
         const summaryFile = workflowArchivePath(next, next.workflow_id!, "summary", `r1_${identity}.md`).replace(/\\/g, "/");
@@ -71,7 +71,7 @@ export async function advance(
       }
       const reviewer = state.participants.find((p) => !p.is_developer);
       if (!reviewer) return err("no reviewer (is_developer=false) registered");
-      const next = initPlanningPhase(state, reviewer.identity);
+      const next = markTurnAssigned(initPlanningPhase(state, reviewer.identity), identity);
       setState(workflowId, next);
 
       const turnIsSelf = reviewer.identity === identity;
@@ -86,7 +86,7 @@ export async function advance(
     if (currentPhase === "planning") {
       const developer = state.participants.find((p) => p.is_developer);
       if (!developer) return err("no developer (is_developer=true) registered");
-      const next = initImplementationPhase(state, developer.identity);
+      const next = markTurnAssigned(initImplementationPhase(state, developer.identity), identity);
       setState(workflowId, next);
 
       const turnIsSelf = developer.identity === identity;
@@ -99,7 +99,7 @@ export async function advance(
     }
 
     if (currentPhase === "implementation") {
-      const next = initSummaryPhase(state, identity);
+      const next = markTurnAssigned(initSummaryPhase(state, identity), identity);
       setState(workflowId, next);
 
       const summaryFile = workflowArchivePath(next, next.workflow_id!, "summary", `r1_${identity}.md`).replace(/\\/g, "/");
@@ -127,4 +127,14 @@ export async function advance(
 
     return err(`unknown phase: ${currentPhase}`);
   });
+}
+
+function markTurnAssigned<T extends { turn: string; turn_switched_at: string | null; turn_claimed_at: string | null }>(
+  state: T,
+  callerIdentity: string,
+): T {
+  const assignedAt = new Date().toISOString();
+  state.turn_switched_at = assignedAt;
+  state.turn_claimed_at = state.turn === callerIdentity ? assignedAt : null;
+  return state;
 }

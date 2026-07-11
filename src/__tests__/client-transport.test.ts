@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { spawn, type ChildProcess } from "node:child_process";
 import { execSync } from "node:child_process";
-import { get } from "node:http";
+import { get, request as httpRequest } from "node:http";
 import { networkInterfaces } from "node:os";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -47,6 +47,17 @@ function requestHealth(host: string): Promise<number | undefined> {
   });
 }
 
+function requestStatus(method: string, path: string): Promise<number | undefined> {
+  return new Promise((resolve, reject) => {
+    const request = httpRequest({ host: "127.0.0.1", port: PORT, path, method }, (response) => {
+      response.resume();
+      resolve(response.statusCode);
+    });
+    request.on("error", reject);
+    request.end();
+  });
+}
+
 describe("Client transport with identity injection", () => {
   beforeAll(startServer, 15000);
   afterAll(stopServer);
@@ -58,6 +69,15 @@ describe("Client transport with identity injection", () => {
     if (!nonLoopback) return;
 
     await expect(requestHealth(nonLoopback)).rejects.toBeDefined();
+  });
+
+  it("exposes health checks only through GET", async () => {
+    expect(await requestStatus("GET", "/health")).toBe(200);
+    expect(await requestStatus("POST", "/health")).toBe(404);
+  });
+
+  it("does not treat MCP path prefixes as the MCP endpoint", async () => {
+    expect(await requestStatus("POST", "/mcp-extra")).toBe(404);
   });
 
   it("injects the registered token into subsequent requests", async () => {

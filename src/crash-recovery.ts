@@ -1,6 +1,6 @@
-import { readdir, readFile, mkdir, access } from "node:fs/promises";
-import { isAbsolute, join, resolve, relative } from "node:path";
-import { RECOVERY_REGISTERED_AT, defaultState, type PairFlowState, type Phase, type SubPhase, type Participant, type LastSubmission } from "./state.js";
+import { readdir, readFile } from "node:fs/promises";
+import { isAbsolute, join, resolve } from "node:path";
+import { RECOVERY_REGISTERED_AT, type PairFlowState, type Phase, type SubPhase, type Participant, type LastSubmission } from "./state.js";
 import { archivePath } from "./archive-path.js";
 import { isValidIdentity } from "./identity.js";
 
@@ -50,8 +50,8 @@ export function parseFilename(filename: string): ParsedFilename | null {
   const match = base.match(/^r(\d+)_(.+)$/);
   if (!match) return null;
 
-  const round = parseInt(match[1], 10);
-  if (round < 1) return null;
+  const round = Number(match[1]);
+  if (!Number.isSafeInteger(round) || round < 1) return null;
   let identity = match[2];
   let subPhase: SubPhase = null;
 
@@ -68,7 +68,7 @@ export function parseFilename(filename: string): ParsedFilename | null {
   return { round, sub_phase: subPhase, identity };
 }
 
-// ── Handoff reconstruction (state.json deleted mid-session) ──
+// ── Handoff reconstruction ──
 
 const PHASE_PRIORITY: RecoverablePhase[] = ["summary", "implementation", "planning", "requirements"];
 
@@ -79,14 +79,20 @@ export async function reconstructFromHandoff(
   taskPath: string,
 ): Promise<PairFlowState | null> {
   const wfDir = archivePath(workDir, wfId);
-  state.workflow_id = wfId;
-  state.task = { spec_file: resolve(taskPath) };
+  const recoveredState: PairFlowState = {
+    ...state,
+    workflow_id: wfId,
+    task: { spec_file: resolve(taskPath) },
+    participants: [],
+    last_submission_by_participant: {},
+  };
 
   const submissions = await collectValidSubmissions(wfDir);
   if (submissions.length === 0) return null;
+  if (!hasConsistentStructure(submissions)) return null;
 
   // 1. Determine phase from valid submissions only.
-  state.phase = determinePhase(submissions);
+  recoveredState.phase = determinePhase(submissions);
 
   // 2. Reconstruct participants from valid submissions.
   const identities = new Set(submissions.map((submission) => submission.identity));
@@ -94,7 +100,7 @@ export async function reconstructFromHandoff(
 
   for (const id of identities) {
     // 职责由 confirm_task 入参覆盖；重建时用默认值
-    state.participants.push({
+    recoveredState.participants.push({
       identity: id,
       is_supervisor: false,
       is_developer: false,
@@ -105,32 +111,31 @@ export async function reconstructFromHandoff(
   // 3. Recover immutable task type; current confirm_task supplies the authoritative path.
   const recoveredTaskTypes = new Set(submissions.map((submission) => submission.meta.task.task_type));
   if (recoveredTaskTypes.size > 1) return null;
-  state.task.task_type = recoveredTaskTypes.values().next().value ?? "development";
+  recoveredState.task!.task_type = recoveredTaskTypes.values().next().value ?? "development";
 
   // 4. Determine round, turn
-  const currentPhaseSubmissions = submissions.filter((submission) => submission.phase === state.phase);
+  const currentPhaseSubmissions = submissions.filter((submission) => submission.phase === recoveredState.phase);
   let latestSubmission: RecoveredSubmission | null = null;
-  const recoveredRounds = new Set<number>();
 
   for (const submission of currentPhaseSubmissions) {
-    if (recoveredRounds.has(submission.round)) return null;
-    recoveredRounds.add(submission.round);
     if (!latestSubmission || submission.round > latestSubmission.round) {
       latestSubmission = submission;
     }
   }
 
-  state.round = latestSubmission ? latestSubmission.round + 1 : 1;
-  if (latestSubmission && state.participants.length >= 2) {
-    const other = state.participants.find((p) => p.identity !== latestSubmission.identity);
-    state.turn = other?.identity ?? latestSubmission.identity;
-  } else if (state.participants.length > 0) {
-    state.turn = state.participants[0].identity;
+  recoveredState.round = latestSubmission ? latestSubmission.round + 1 : 1;
+  if (latestSubmission && recoveredState.participants.length >= 2) {
+    const other = recoveredState.participants.find((p) => p.identity !== latestSubmission.identity);
+    recoveredState.turn = other?.identity ?? latestSubmission.identity;
+  } else if (recoveredState.participants.length > 0) {
+    recoveredState.turn = recoveredState.participants[0].identity;
   }
+  recoveredState.turn_switched_at = latestSubmission?.meta.submitted_at ?? null;
+  recoveredState.turn_claimed_at = null;
 
   // 4a. Recover sub_phase from the latest validated filename.
-  if (state.phase === "implementation") {
-    state.sub_phase = latestSubmission?.sub_phase === "coding"
+  if (recoveredState.phase === "implementation") {
+    recoveredState.sub_phase = latestSubmission?.sub_phase === "coding"
       ? "review"
       : latestSubmission?.sub_phase === "review"
         ? "coding"
@@ -138,13 +143,36 @@ export async function reconstructFromHandoff(
   }
 
   // 4b. Recover last_submission_by_participant from validated metadata.
-  state.last_submission_by_participant = reconstructLastSubmissionByParticipant(
+  recoveredState.last_submission_by_participant = reconstructLastSubmissionByParticipant(
     currentPhaseSubmissions,
-    state.participants,
+    recoveredState.participants,
   );
 
-  console.log(`[pair-flow] Reconstructed state from ${wfDir}: phase=${state.phase}, participants=${state.participants.length}, round=${state.round}`);
-  return state;
+  console.log(`[pair-flow] Reconstructed state from ${wfDir}: phase=${recoveredState.phase}, participants=${recoveredState.participants.length}, round=${recoveredState.round}`);
+  return recoveredState;
+}
+
+function hasConsistentStructure(submissions: RecoveredSubmission[]): boolean {
+  for (const phase of PHASE_PRIORITY) {
+    const phaseSubmissions = submissions.filter((submission) => submission.phase === phase);
+    const rounds = new Set<number>();
+    const identityByParity = new Map<number, string>();
+    const parityByIdentity = new Map<string, number>();
+
+    for (const submission of phaseSubmissions) {
+      if (rounds.has(submission.round)) return false;
+      rounds.add(submission.round);
+
+      const parity = submission.round % 2;
+      const parityIdentity = identityByParity.get(parity);
+      if (parityIdentity && parityIdentity !== submission.identity) return false;
+      const identityParity = parityByIdentity.get(submission.identity);
+      if (identityParity !== undefined && identityParity !== parity) return false;
+      identityByParity.set(parity, submission.identity);
+      parityByIdentity.set(submission.identity, parity);
+    }
+  }
+  return true;
 }
 
 function determinePhase(submissions: RecoveredSubmission[]): RecoverablePhase {
@@ -162,11 +190,21 @@ async function collectValidSubmissions(wfDir: string): Promise<RecoveredSubmissi
     for (const file of files) {
       const parsed = parseFilename(basename(file));
       if (!parsed) continue;
+      const metaPath = join(phaseDir, file);
+      let content: string;
       try {
-        const meta = JSON.parse(await readFile(join(phaseDir, file), "utf-8"));
+        content = await readFile(metaPath, "utf-8");
+      } catch (error) {
+        throw recoveryReadError(metaPath, error);
+      }
+      try {
+        const meta = JSON.parse(content);
         if (!isValidSubmissionMeta(meta, phase, parsed)) continue;
-        submissions.push({ ...parsed, phase, meta, meta_path: join(phaseDir, file) });
-      } catch { /* ignore corrupt metadata */ }
+        submissions.push({ ...parsed, phase, meta, meta_path: metaPath });
+      } catch (error) {
+        if (error instanceof SyntaxError) continue;
+        throw error;
+      }
     }
   }
   return submissions;
@@ -185,6 +223,7 @@ function isValidSubmissionMeta(
   const task = meta.task as Record<string, unknown>;
   if (typeof task.spec_file !== "string" || !isAbsolute(task.spec_file)) return false;
   if (task.task_type !== "requirements" && task.task_type !== "development") return false;
+  if (task.task_type === "requirements" && (phase === "planning" || phase === "implementation")) return false;
 
   if (phase === "implementation") {
     const expectedSubPhase: SubPhase = parsed.round % 2 === 1 ? "coding" : "review";
@@ -221,27 +260,24 @@ function reconstructLastSubmissionByParticipant(
 }
 
 async function findFiles(dir: string, suffix: string): Promise<string[]> {
-  const results: string[] = [];
   try {
-    const absDir = resolve(dir);
-    const entries = await readdir(absDir, { withFileTypes: true, recursive: true });
-    for (const e of entries) {
-      if (e.isFile() && e.name.endsWith(suffix)) {
-        // P2-6: parentPath requires Node 22+; use relative() fallback for lower versions
-        const pp: string | undefined = (e as { parentPath?: string }).parentPath;
-        if (pp) {
-          const relDir = pp.startsWith(absDir) ? pp.slice(absDir.length).replace(/^[\\/]/, "") : pp;
-          results.push(relDir ? join(relDir, e.name) : e.name);
-        } else if ((e as unknown as { path?: string }).path) {
-          const relPath = relative(absDir, (e as unknown as { path: string }).path);
-          results.push(relPath);
-        } else {
-          results.push(e.name);
-        }
-      }
-    }
-  } catch { /* */ }
-  return results;
+    const entries = await readdir(resolve(dir), { withFileTypes: true });
+    return entries
+      .filter((entry) => entry.isFile() && entry.name.endsWith(suffix))
+      .map((entry) => entry.name);
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") return [];
+    throw recoveryReadError(dir, error);
+  }
 }
 
-/** Initialize crash recovery at startup. Call once before starting server. */
+function recoveryReadError(path: string, error: unknown): Error {
+  const code = errorCode(error) ?? "UNKNOWN";
+  return new Error(`failed to read recovery archive: ${path.replace(/\\/g, "/")} (${code})`, { cause: error });
+}
+
+function errorCode(error: unknown): string | undefined {
+  return error && typeof error === "object" && "code" in error
+    ? String((error as { code?: unknown }).code)
+    : undefined;
+}

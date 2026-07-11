@@ -42,8 +42,71 @@ function setupSummaryWorkflow(): RequestHandlerExtra<ServerRequest, ServerNotifi
 }
 
 beforeEach(() => {
+  vi.useRealTimers();
   unlinkMock.mockReset();
   deleteState(TEST_WORKFLOW_ID);
+});
+
+function setupAdvanceWorkflow(phase: "idle" | "requirements") {
+  const token = registerToken("alice");
+  bindWorkflow(token, TEST_WORKFLOW_ID);
+  setState(TEST_WORKFLOW_ID, {
+    ...defaultState(),
+    workflow_id: TEST_WORKFLOW_ID,
+    phase,
+    round: phase === "idle" ? 1 : 3,
+    turn: "alice",
+    task: { spec_file: "C:/project/task.md", task_type: "development" },
+    participants: [
+      { identity: "alice", is_supervisor: true, is_developer: false, registered_at: "now", work_dir: "C:/project" },
+      { identity: "bob", is_supervisor: false, is_developer: true, registered_at: "now", work_dir: "C:/project" },
+    ],
+    last_submission_by_participant: phase === "idle" ? {} : {
+      alice: { round: 2, sub_phase: null, commit_hash: "abcdef1", submitted_at: "now", file_path: "alice.md" },
+      bob: { round: 1, sub_phase: null, commit_hash: "abcdef2", submitted_at: "now", file_path: "bob.md" },
+    },
+  });
+  return {
+    signal: new AbortController().signal,
+    requestInfo: { headers: { "x-ai-identity": token } },
+  } as unknown as RequestHandlerExtra<ServerRequest, ServerNotification>;
+}
+
+describe("advance turn assignment timestamps", () => {
+  it("tells the supervisor that both participants must join through confirm_task", async () => {
+    const extra = setupAdvanceWorkflow("idle");
+    getState(TEST_WORKFLOW_ID)!.participants.pop();
+
+    const result = await advance({}, extra);
+    const payload = JSON.parse((result.content[0] as { text: string }).text);
+
+    expect(payload.ok).toBe(false);
+    expect(payload.tip).toContain("both participants must join via confirm_task");
+    expect(payload.tip).not.toContain("must register");
+  });
+
+  it("starts an unclaimed timer when the new turn belongs to the other participant", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-11T01:00:00.000Z"));
+
+    await advance({}, setupAdvanceWorkflow("idle"));
+
+    expect(getState(TEST_WORKFLOW_ID)!.turn).toBe("bob");
+    expect(getState(TEST_WORKFLOW_ID)!.turn_switched_at).toBe("2026-07-11T01:00:00.000Z");
+    expect(getState(TEST_WORKFLOW_ID)!.turn_claimed_at).toBeNull();
+  });
+
+  it("marks the new turn claimed when advance assigns it to the caller", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-11T02:00:00.000Z"));
+
+    await advance({}, setupAdvanceWorkflow("requirements"));
+
+    expect(getState(TEST_WORKFLOW_ID)!.phase).toBe("planning");
+    expect(getState(TEST_WORKFLOW_ID)!.turn).toBe("alice");
+    expect(getState(TEST_WORKFLOW_ID)!.turn_switched_at).toBe("2026-07-11T02:00:00.000Z");
+    expect(getState(TEST_WORKFLOW_ID)!.turn_claimed_at).toBe("2026-07-11T02:00:00.000Z");
+  });
 });
 
 describe("advance summary completion", () => {

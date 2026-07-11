@@ -67,7 +67,7 @@ export async function waitForTurn(
   if (!state) return err("workflow not found");
   return ok(
     { turn: state.turn, phase: state.phase, round: state.round },
-    `[行动] 等待超时(600s)。turn 仍在 ${state.turn}，已等待超过 10 分钟。建议向用户报告当前状态，由用户决定是否继续或手动干预。\n\n[当前] 你是 ${identity}。当前是第 ${state.round} 轮，轮到 ${state.turn}。`
+    `[行动] 单次等待已超时(600s)，turn 仍在 ${state.turn}。继续调用 wait_for_turn，保持自动轮转；不要仅因本次超时打断用户。\n\n[当前] 你是 ${identity}。当前是第 ${state.round} 轮，轮到 ${state.turn}。`
   );
 }
 

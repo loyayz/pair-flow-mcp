@@ -91,4 +91,32 @@ describe("wait_for_turn cancellation", () => {
     expect(outcome).toEqual({ type: "rejected", error: reason });
     expect(getState(TEST_WORKFLOW_ID)!.turn_claimed_at).toBeNull();
   });
+
+  it("tells the AI to continue waiting after a single 600-second timeout", async () => {
+    vi.useFakeTimers();
+    const token = registerToken("alice");
+    bindWorkflow(token, TEST_WORKFLOW_ID);
+    setState(TEST_WORKFLOW_ID, {
+      ...defaultState(),
+      workflow_id: TEST_WORKFLOW_ID,
+      phase: "planning",
+      turn: "bob",
+      participants: [
+        { identity: "alice", is_supervisor: true, is_developer: false, registered_at: "now" },
+        { identity: "bob", is_supervisor: false, is_developer: true, registered_at: "now" },
+      ],
+    });
+    const extra = {
+      signal: new AbortController().signal,
+      requestInfo: { headers: { "x-ai-identity": token } },
+    } as unknown as RequestHandlerExtra<ServerRequest, ServerNotification>;
+
+    const resultPromise = waitForTurn(extra);
+    await vi.advanceTimersByTimeAsync(600_000);
+    const result = await resultPromise;
+    const payload = JSON.parse((result.content[0] as { text: string }).text);
+
+    expect(payload.tip).toContain("继续调用 wait_for_turn");
+    expect(payload.tip).not.toContain("向用户报告");
+  });
 });
