@@ -1,6 +1,7 @@
 import { haveAllParticipantsSubmittedCurrentPhase } from "./state.js";
 import type { PairFlowState } from "./state.js";
 import { workflowArchivePath } from "./archive-path.js";
+import { formatTip } from "./tip-format.js";
 
 const SAFE_ID = /^[a-zA-Z0-9_-]{1,64}$/;
 
@@ -44,7 +45,7 @@ function getAction(state: PairFlowState, identity: string): string {
 
   if (state.phase === "idle") {
     const isSup = state.participants.some((p) => p.identity === identity && p.is_supervisor);
-    if (isSup) return "双方已就位。作为监督者，调用 advance 开始工作流";
+    if (isSup) return "调用 advance 开始工作流";
     return "等待监督者调用 advance 开始工作流";
   }
 
@@ -87,7 +88,7 @@ function getAction(state: PairFlowState, identity: string): string {
     else if (state.phase === "summary") advanceTarget = "结束工作流";
   }
   const advancePrefix = advanceTarget
-    ? `作为监督者，若确认目标已达成可直接调用 advance（${advanceTarget}），无需 submit。否则：`
+    ? `作为监督者，若确认目标已达成可直接调用 advance（${advanceTarget}）。否则：`
     : "";
 
   if (state.phase === "requirements") {
@@ -159,11 +160,13 @@ export function buildTip(state: PairFlowState, identity: string): string {
     ? "轮到你了"
     : `轮到 ${safe(state.turn)} 了`;
 
-  const productLine = state.phase === "idle" || !holdsTurn
-    ? ""
-    : `\n[产出] 完成后 git commit，调用 submit，file_path = ${outFile(state, identity)}\n`;
+  const product = state.phase === "idle" || !holdsTurn
+    ? undefined
+    : `完成后 git commit，调用 submit，file_path = ${outFile(state, identity)}`;
 
-  return `[行动] ${action}
-${productLine}
-[当前] 你是 ${label}。当前是第 ${state.round} 轮${phaseText}，${turnOwner}。`;
+  return formatTip({
+    action,
+    product,
+    current: `你是 ${label}。当前是第 ${state.round} 轮${phaseText}，${turnOwner}。`,
+  });
 }

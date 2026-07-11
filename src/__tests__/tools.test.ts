@@ -118,7 +118,9 @@ async function seedRecoveredWorkflow(workDir: string, task: string, wfId: string
   await writeFile(`${task}.pid`, wfId, "utf-8");
   const taskMeta = { spec_file: task, task_type: "development" };
   for (const [index, identity] of identities.entries()) {
-    await writeFile(resolve(phaseDir, `r${index + 1}_${identity}.meta.json`), JSON.stringify({
+    const filePrefix = `r${index + 1}_${identity}`;
+    await writeFile(resolve(phaseDir, `${filePrefix}.md`), `# ${identity} recovery artifact`, "utf-8");
+    await writeFile(resolve(phaseDir, `${filePrefix}.meta.json`), JSON.stringify({
       submitted_at: `2026-07-09T10:0${index}:00.000Z`,
       commit_hash: index === 0 ? "abc1234" : "def5678",
       sub_phase: null,
@@ -810,6 +812,8 @@ describe("Confirm task", () => {
       sub_phase: null,
       task: { spec_file: task, task_type: "development" },
     }));
+    await writeFile(resolve(phaseDir, "r1_old-a.md"), "# old requirements artifact", "utf-8");
+    await writeFile(resolve(phaseDir, "r2_old-b.md"), "# old development artifact", "utf-8");
 
     const registered = await mcpRequest("register", { identity: "task-type-conflict" });
     const confirmed = await mcpRequest("confirm_task", {

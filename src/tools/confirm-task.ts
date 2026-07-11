@@ -8,6 +8,7 @@ import { parseSession } from "../identity.js";
 import { getState, setState, getAllStates, getMutex, defaultState, formatWorkflowId, hasCompleteParticipantRoster, isRecoveryPlaceholderParticipant, type Participant } from "../state.js";
 import { reconstructFromHandoff } from "../crash-recovery.js";
 import { err, ok } from "../response.js";
+import { formatTip } from "../tip-format.js";
 import { bindWorkflow } from "../token-map.js";
 import { atomicWriteText } from "../atomic-write.js";
 import { findSymbolicLinkInPath } from "../path-safety.js";
@@ -354,12 +355,13 @@ export async function confirmTask(
         const raw = extra.requestInfo?.headers?.["x-ai-identity"] as string;
         if (raw) bindWorkflow(raw.trim(), wfId);
 
-        const turnIsSelf = state.turn === identity;
-        const turnInfo = turnIsSelf ? `turn 在 ${state.turn}（你）` : `turn 在 ${state.turn}（对方）`;
         const action = hasCompleteParticipantRoster(state)
-          ? `已重新加入工作流 ${wfId}。当前在 ${state.phase} 阶段第 ${state.round} 轮，${turnInfo}。调用 wait_for_turn（长轮询，10s 间隔，最多 600s）。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。`
-          : `已重新加入工作流 ${wfId}，但参与者尚未全部就位。等待第二位参与者使用相同 task_path 调用 confirm_task；在此之前不要调用 advance、wait_for_turn 或 submit。`;
-        const tip = `[行动] ${action}\n\n[当前] 你是 ${identity}（${responsibilityLabel(myParticipant)}）。工作流 ${wfId}。`;
+          ? "调用 wait_for_turn（长轮询，10s 间隔，最多 600s）。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。"
+          : "等待第二位参与者使用相同 task_path 调用 confirm_task；在此之前不要调用 advance、wait_for_turn 或 submit。";
+        const tip = formatTip({
+          action,
+          current: `你是 ${identity}（${responsibilityLabel(myParticipant)}）。工作流 ${wfId}，当前是 ${state.phase} 阶段第 ${state.round} 轮，turn 在 ${state.turn}${state.turn === identity ? "（你）" : "（对方）"}。`,
+        });
         return ok({
           task_path: resolvedTaskPath.replace(/\\/g, "/"),
           workflow_id: wfId,
@@ -413,15 +415,18 @@ export async function confirmTask(
   const curState = getState(wfId)!;
   const myResponsibilityLabel = responsibilityLabel({ is_supervisor: supervisor, is_developer: developer });
   const phaseText = curState.phase !== "idle" ? `，${curState.phase} 阶段第 ${curState.round} 轮` : "，idle 阶段";
-  const statusLine = `[当前] 你是 ${identity}（${myResponsibilityLabel}）。工作流 ${wfId}${phaseText}。`;
+  const status = `你是 ${identity}（${myResponsibilityLabel}）。工作流 ${wfId}${phaseText}。`;
 
   let actionLine: string;
+  let workflowStatus: string;
   if (isFirst) {
-    actionLine = `${recovered ? "已恢复" : "已创建"}工作流 ${wfId}。等待第二位参与者以相同 task_path 调用 confirm_task 加入；双方就位前不要调用 advance、wait_for_turn 或 submit。`;
+    actionLine = "等待第二位参与者以相同 task_path 调用 confirm_task 加入；双方就位前不要调用 advance、wait_for_turn 或 submit。";
+    workflowStatus = `${recovered ? "已恢复" : "已创建"}工作流 ${wfId}，当前只有一位已确认参与者。`;
   } else {
     const p = curState.participants;
     const names = p.map((x) => `${x.identity}（${responsibilityLabel(x)}）`).join(" + ");
-    actionLine = `已加入工作流 ${wfId}。双方已就位：${names}。调用 wait_for_turn（长轮询，10s 间隔，最多 600s）。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。`;
+    actionLine = "调用 wait_for_turn（长轮询，10s 间隔，最多 600s）。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。";
+    workflowStatus = `已加入工作流 ${wfId}。双方已就位：${names}。`;
   }
 
   return ok({
@@ -429,7 +434,7 @@ export async function confirmTask(
     workflow_id: wfId,
     phase: curState.phase,
     recovered,
-  }, `[行动] ${actionLine}\n\n${statusLine}`);
+  }, formatTip({ action: actionLine, current: `${status} ${workflowStatus}` }));
   });
   });
 }

@@ -1,6 +1,6 @@
 import { Mutex } from "async-mutex";
 
-// ── Types (§5.1 state.json schema) ──
+// ── Types (§5.1 in-memory state schema) ──
 
 export type Phase = "idle" | "requirements" | "planning" | "implementation" | "summary";
 export type SubPhase = "coding" | "review" | null;
@@ -27,7 +27,6 @@ export interface Task {
 }
 
 export interface PairFlowState {
-  schema_version: number;
   workflow_id: string | null;
   phase: Phase;
   sub_phase: SubPhase;
@@ -77,7 +76,6 @@ export function getAllStates(): Map<string, PairFlowState> {
 
 export function defaultState(): PairFlowState {
   return {
-    schema_version: 1,
     workflow_id: null,
     phase: "idle",
     sub_phase: null,

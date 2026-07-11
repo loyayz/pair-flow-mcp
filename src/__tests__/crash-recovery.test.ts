@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { writeFile, mkdir, rm, symlink } from "node:fs/promises";
+import { writeFile as fsWriteFile, mkdir, rm, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -9,6 +9,13 @@ import { defaultState } from "../state.js";
 const TEST_ROOT = join(tmpdir(), `pairflow-test-${randomUUID()}`);
 const origCwd = process.cwd();
 const HANDOFF_DIR = "handoff";
+
+async function writeFile(path: string, content: string, encoding: BufferEncoding = "utf-8"): Promise<void> {
+  await fsWriteFile(path, content, encoding);
+  if (path.endsWith(".meta.json")) {
+    await fsWriteFile(path.replace(/\.meta\.json$/, ".md"), "# recovered artifact\n", "utf-8");
+  }
+}
 
 function validMeta(overrides: Record<string, unknown> = {}): string {
   return JSON.stringify({
@@ -37,6 +44,30 @@ describe("Handoff reconstruction", () => {
   it("returns null when no handoff exists", async () => {
     const st = defaultState();
     const recovered = await reconstructFromHandoff(st, "00000000000000", TEST_ROOT, join(TEST_ROOT, "task.md"));
+    expect(recovered).toBeNull();
+  });
+
+  it("skips metadata whose artifact is missing", async () => {
+    const wfId = "20260622000023";
+    const requirementsDir = join(TEST_ROOT, HANDOFF_DIR, wfId, "requirements");
+    await mkdir(requirementsDir, { recursive: true });
+    await fsWriteFile(join(requirementsDir, "r1_alice.meta.json"), validMeta(), "utf-8");
+
+    const recovered = await reconstructFromHandoff(defaultState(), wfId, TEST_ROOT, join(TEST_ROOT, "task.md"));
+
+    expect(recovered).toBeNull();
+  });
+
+  it("skips metadata whose artifact is empty", async () => {
+    const wfId = "20260622000024";
+    const requirementsDir = join(TEST_ROOT, HANDOFF_DIR, wfId, "requirements");
+    const metaPath = join(requirementsDir, "r1_alice.meta.json");
+    await mkdir(requirementsDir, { recursive: true });
+    await writeFile(metaPath, validMeta());
+    await fsWriteFile(metaPath.replace(/\.meta\.json$/, ".md"), "", "utf-8");
+
+    const recovered = await reconstructFromHandoff(defaultState(), wfId, TEST_ROOT, join(TEST_ROOT, "task.md"));
+
     expect(recovered).toBeNull();
   });
 

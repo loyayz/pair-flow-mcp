@@ -177,4 +177,33 @@ describe("Tip guidance", () => {
     expect(tip).not.toContain("可直接调用 advance");
     expect(tip).toContain("调用 submit");
   });
+
+  it("keeps submission instructions out of the action section", () => {
+    const workDir = resolve("project");
+    const state: PairFlowState = {
+      ...defaultState(),
+      workflow_id: TEST_WF,
+      phase: "planning",
+      round: 3,
+      turn: "supervisor",
+      task: { spec_file: "C:/project/task.md", task_type: "development" },
+      participants: [
+        { identity: "supervisor", is_supervisor: true, is_developer: true, registered_at: "", work_dir: workDir },
+        { identity: "reviewer", is_supervisor: false, is_developer: false, registered_at: "", work_dir: workDir },
+      ],
+      last_submission_by_participant: {
+        supervisor: { round: 2, sub_phase: null, commit_hash: "def5678", submitted_at: "2026-07-10T00:01:00.000Z", file_path: "C:/project/handoff/wf/planning/r2_supervisor.md" },
+        reviewer: { round: 1, sub_phase: null, commit_hash: "abc1234", submitted_at: "2026-07-10T00:00:00.000Z", file_path: "C:/project/handoff/wf/planning/r1_reviewer.md" },
+      },
+    };
+
+    const tip = buildTip(state, "supervisor");
+    const [action, remainder] = tip.split("[产出]");
+
+    expect(action).toContain("planning/r1_reviewer.md");
+    expect(action).toContain("可直接调用 advance");
+    expect(action).not.toContain("submit");
+    expect(remainder).toContain("调用 submit");
+    expect(remainder).toContain("planning/r3_supervisor.md");
+  });
 });

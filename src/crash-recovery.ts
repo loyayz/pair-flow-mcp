@@ -1,4 +1,4 @@
-import { readdir, readFile } from "node:fs/promises";
+import { lstat, readdir, readFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import { RECOVERY_REGISTERED_AT, type PairFlowState, type Phase, type SubPhase, type Participant, type LastSubmission } from "./state.js";
 import { archivePath } from "./archive-path.js";
@@ -201,6 +201,7 @@ async function collectValidSubmissions(wfDir: string, recoveryRoot: string): Pro
       try {
         const meta = JSON.parse(content);
         if (!isValidSubmissionMeta(meta, phase, parsed)) continue;
+        if (!await hasRecoverableArtifact(metaPath)) continue;
         submissions.push({ ...parsed, phase, meta, meta_path: metaPath });
       } catch (error) {
         if (error instanceof SyntaxError) continue;
@@ -209,6 +210,16 @@ async function collectValidSubmissions(wfDir: string, recoveryRoot: string): Pro
     }
   }
   return submissions;
+}
+
+async function hasRecoverableArtifact(metaPath: string): Promise<boolean> {
+  const artifactPath = metaPath.replace(/\.meta\.json$/, ".md");
+  try {
+    const artifact = await lstat(artifactPath);
+    return artifact.isFile() && artifact.size > 0;
+  } catch {
+    return false;
+  }
 }
 
 function isValidSubmissionMeta(

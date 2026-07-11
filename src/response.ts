@@ -1,4 +1,5 @@
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import { formatTip } from "./tip-format.js";
 
 const REMINDER = "质量优先，完整完成任务目标。";
 
@@ -10,7 +11,7 @@ export function err(message: string, extra?: Record<string, unknown>): CallToolR
         ...extra,
         ok: false,
         error: message,
-        tip: `[行动] 请求被拒绝：${message}`,
+        tip: formatTip({ action: `请求被拒绝：${message}` }),
         reminder: REMINDER,
       }),
     }],
@@ -19,8 +20,13 @@ export function err(message: string, extra?: Record<string, unknown>): CallToolR
 }
 
 export function ok(data: Record<string, unknown>, tip?: string): CallToolResult {
+  const businessData = { ...data };
+  delete businessData.ok;
+  delete businessData.error;
+  delete businessData.tip;
+  delete businessData.reminder;
   const payload = {
-    ...data,
+    ...businessData,
     ok: true,
     reminder: REMINDER,
     ...(tip ? { tip } : {}),

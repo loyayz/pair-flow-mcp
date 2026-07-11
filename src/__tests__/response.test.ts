@@ -31,10 +31,17 @@ describe("tool response contract", () => {
   });
 
   it("does not allow response data to override successful contract fields", () => {
-    const result = payload(ok({ ok: false, reminder: "override" }));
+    const result = payload(ok({
+      ok: false,
+      error: "override",
+      tip: "override",
+      reminder: "override",
+    }));
 
     expect(result.ok).toBe(true);
     expect(result.reminder).toBe(REMINDER);
+    expect(result).not.toHaveProperty("error");
+    expect(result).not.toHaveProperty("tip");
   });
 
   it("does not allow error extras to override rejected contract fields", () => {

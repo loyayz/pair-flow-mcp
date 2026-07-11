@@ -8,6 +8,7 @@ import { getState, setState, getMutex, hasCompleteParticipantRoster, hasRecovery
 
 import { err, ok } from "../response.js";
 import { identityLabel, phaseLabel } from "../tip.js";
+import { formatTip } from "../tip-format.js";
 import { atomicWriteText } from "../atomic-write.js";
 import { archiveRoot, workflowArchivePath, workflowWorkDir } from "../archive-path.js";
 import { findSymbolicLinkInPath } from "../path-safety.js";
@@ -148,13 +149,13 @@ export async function submit(
 
     let action: string;
     if (bothSubmitted && supervisorParticipant && nextState.turn !== supervisorParticipant.identity) {
-      action = `双方已提交，但 turn 已切给 ${nextState.turn}。等待 ${nextState.turn} 继续处理或确认后自然交还监督者 ${supervisorParticipant.identity}`;
+      action = `等待 ${nextState.turn} 继续处理或确认后自然交还监督者 ${supervisorParticipant.identity}`;
     } else if (bothSubmitted && currentParticipant?.is_supervisor && nextState.phase === "summary") {
-      action = "双方已提交汇总。若确认汇总已收敛，可调用 advance 结束当前工作流";
+      action = "若确认汇总已收敛，可调用 advance 结束当前工作流";
     } else if (bothSubmitted && currentParticipant?.is_supervisor) {
-      action = "双方已提交。若确认当前阶段目标已达成，可调用 advance 进入下一阶段";
+      action = "若确认当前阶段目标已达成，可调用 advance 进入下一阶段";
     } else if (bothSubmitted && supervisorParticipant) {
-      action = `双方已提交。等待监督者 ${supervisorParticipant.identity} 判断是否调用 advance 推进`;
+      action = `等待监督者 ${supervisorParticipant.identity} 判断是否调用 advance 推进`;
     } else if (nextState.phase === "summary" && nextParticipant?.is_supervisor) {
       action = "调用 advance 结束当前工作流";
     } else if (nextState.phase === "summary") {
@@ -165,9 +166,11 @@ export async function submit(
       action = "等待对方操作。调用 wait_for_turn（长轮询，10s 间隔，最多 600s）。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。";
     }
 
-    const tip = `[行动] ${action}
-[产出] ${expectedFilePath.replace(/\\/g, "/")}（已提交）
-[当前] 你是 ${idLabel}。当前是第 ${nextState.round} 轮${phaseText}，turn 已切给 ${nextLabel}。`;
+    const tip = formatTip({
+      action,
+      product: `${expectedFilePath.replace(/\\/g, "/")}（已提交）`,
+      current: `你是 ${idLabel}。当前是第 ${nextState.round} 轮${phaseText}，turn 已切给 ${nextLabel}。${bothSubmitted ? " 本阶段双方已提交。" : ""}`,
+    });
     return ok({ ok: true, next_turn: nextState.turn }, tip);
   });
 }

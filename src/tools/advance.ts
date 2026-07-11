@@ -9,6 +9,7 @@ import { deleteState, getState, setState, getMutex, hasCompleteParticipantRoster
 import { err, ok } from "../response.js";
 import { workflowArchivePath, workflowWorkDir } from "../archive-path.js";
 import { unbindWorkflow } from "../token-map.js";
+import { formatTip } from "../tip-format.js";
 
 export async function advance(
   args: Record<string, unknown>,
@@ -58,7 +59,11 @@ export async function advance(
       setState(workflowId, next);
 
       const reqFile = workflowArchivePath(next, next.workflow_id!, "requirements", `r1_${nonSupervisor}.md`).replace(/\\/g, "/");
-      return ok({ ok: true, new_phase: "requirements", turn: nonSupervisor }, `[行动] 等待 ${nonSupervisor} 产出需求分析。对方调用 wait_for_turn 后将获得完整指引。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。\n\n[产出] ${nonSupervisor} 将产出到 ${reqFile}\n\n[当前] 你是 ${identity}（supervisor）。当前是第 1 轮需求分析，轮到 ${nonSupervisor} 了。`);
+      return ok({ ok: true, new_phase: "requirements", turn: nonSupervisor }, formatTip({
+        action: `等待 ${nonSupervisor} 产出需求分析。对方调用 wait_for_turn 后将获得完整指引。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。`,
+        product: `${nonSupervisor} 将产出到 ${reqFile}`,
+        current: `你是 ${identity}（supervisor）。当前是第 1 轮需求分析，轮到 ${nonSupervisor} 了。`,
+      }));
     }
 
     if (currentPhase === "requirements") {
@@ -67,7 +72,11 @@ export async function advance(
         setState(workflowId, next);
 
         const summaryFile = workflowArchivePath(next, next.workflow_id!, "summary", `r1_${identity}.md`).replace(/\\/g, "/");
-        return ok({ ok: true, new_phase: "summary", turn: identity }, `[行动] 产出汇总草稿，包含关键决策、遗留问题和后续建议。调用 wait_for_turn 获取完整指引。\n\n[产出] ${summaryFile}\n\n[当前] 你是 ${identity}（supervisor）。当前是第 1 轮汇总，轮到你了。`);
+        return ok({ ok: true, new_phase: "summary", turn: identity }, formatTip({
+          action: "产出汇总草稿，包含关键决策、遗留问题和后续建议。调用 wait_for_turn 获取完整指引。",
+          product: ownProduct(summaryFile),
+          current: `你是 ${identity}（supervisor）。当前是第 1 轮汇总，轮到你了。`,
+        }));
       }
       const reviewer = state.participants.find((p) => !p.is_developer);
       if (!reviewer) return err("no reviewer (is_developer=false) registered");
@@ -80,7 +89,11 @@ export async function advance(
         ? `产出实施计划。调用 wait_for_turn 获取完整指引。`
         : `等待 ${reviewer.identity} 产出实施计划。对方调用 wait_for_turn 后将获得完整指引。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。`;
       const planWho = turnIsSelf ? "轮到你了。" : `轮到 ${reviewer.identity} 了。`;
-      return ok({ ok: true, new_phase: "planning", turn: reviewer.identity }, `[行动] ${planAction}\n\n[产出] ${reviewer.identity} 将产出到 ${planFile}\n\n[当前] 你是 ${identity}（supervisor）。当前是第 1 轮实施计划，${planWho}`);
+      return ok({ ok: true, new_phase: "planning", turn: reviewer.identity }, formatTip({
+        action: planAction,
+        product: turnIsSelf ? ownProduct(planFile) : `${reviewer.identity} 将产出到 ${planFile}`,
+        current: `你是 ${identity}（supervisor）。当前是第 1 轮实施计划，${planWho}`,
+      }));
     }
 
     if (currentPhase === "planning") {
@@ -95,7 +108,11 @@ export async function advance(
         ? `进行代码实现(coding)。调用 wait_for_turn 获取完整指引。`
         : `等待 ${developer.identity} 产出代码实现(coding)。对方调用 wait_for_turn 后将获得完整指引。不要频繁调用 get_state，wait_for_turn 会在 turn 到你时自动返回。`;
       const implWho = turnIsSelf ? "轮到你了。" : `轮到 ${developer.identity} 了。`;
-      return ok({ ok: true, new_phase: "implementation", sub_phase: "coding", turn: developer.identity }, `[行动] ${implAction}\n\n[产出] ${developer.identity} 将产出到 ${implFile}\n\n[当前] 你是 ${identity}（supervisor）。当前是第 1 轮代码实现，${implWho}`);
+      return ok({ ok: true, new_phase: "implementation", sub_phase: "coding", turn: developer.identity }, formatTip({
+        action: implAction,
+        product: turnIsSelf ? ownProduct(implFile) : `${developer.identity} 将产出到 ${implFile}`,
+        current: `你是 ${identity}（supervisor）。当前是第 1 轮代码实现，${implWho}`,
+      }));
     }
 
     if (currentPhase === "implementation") {
@@ -103,7 +120,11 @@ export async function advance(
       setState(workflowId, next);
 
       const summaryFile = workflowArchivePath(next, next.workflow_id!, "summary", `r1_${identity}.md`).replace(/\\/g, "/");
-      return ok({ ok: true, new_phase: "summary", turn: identity }, `[行动] 产出汇总草稿，包含关键决策、遗留问题和后续建议。调用 wait_for_turn 获取完整指引。\n\n[产出] ${summaryFile}\n\n[当前] 你是 ${identity}（supervisor）。当前是第 1 轮汇总，轮到你了。`);
+      return ok({ ok: true, new_phase: "summary", turn: identity }, formatTip({
+        action: "产出汇总草稿，包含关键决策、遗留问题和后续建议。调用 wait_for_turn 获取完整指引。",
+        product: ownProduct(summaryFile),
+        current: `你是 ${identity}（supervisor）。当前是第 1 轮汇总，轮到你了。`,
+      }));
     }
 
     if (currentPhase === "summary") {
@@ -122,11 +143,19 @@ export async function advance(
       deleteState(workflowId);
       unbindWorkflow(workflowId);
 
-      return ok({ ok: true, new_phase: "idle" }, `[行动] 工作流已结束。全部产出归档于 ${finishedArchive}/。如需开始新任务，在服务未重启且 token 仍可用时可复用当前 token；双方分别调用 confirm_task，并使用相同 task_path。服务重启或 token 丢失时先重新 register。\n\n[当前] 你是 ${identity}（supervisor）。工作流已结束。`);
+      return ok({ ok: true, new_phase: "idle" }, formatTip({
+        action: "如需开始新任务，在服务未重启且 token 仍可用时可复用当前 token；双方分别调用 confirm_task，并使用相同 task_path。服务重启或 token 丢失时先重新 register。",
+        product: `已完成工作流的全部产出归档于 ${finishedArchive}/`,
+        current: `你是 ${identity}（supervisor）。工作流已结束。`,
+      }));
     }
 
     return err(`unknown phase: ${currentPhase}`);
   });
+}
+
+function ownProduct(filePath: string): string {
+  return `完成后 git commit，调用 submit，file_path = ${filePath}`;
 }
 
 function markTurnAssigned<T extends { turn: string; turn_switched_at: string | null; turn_claimed_at: string | null }>(
