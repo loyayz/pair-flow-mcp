@@ -8,7 +8,7 @@ import { getState, setState, getMutex, hasCompleteParticipantRoster, hasRecovery
 
 import { err, ok } from "../response.js";
 import { identityLabel, phaseLabel } from "../tip.js";
-import { formatTip } from "../tip-format.js";
+import { renderTip } from "../tip-template.js";
 import { atomicWriteText } from "../atomic-write.js";
 import { archiveRoot, workflowArchivePath, workflowWorkDir } from "../archive-path.js";
 import { findSymbolicLinkInPath } from "../path-safety.js";
@@ -163,20 +163,27 @@ export async function submit(
 function buildSubmissionSuccessTip(state: PairFlowState, identity: string, filePath: string): string {
   const supervisor = state.participants.find((participant) => participant.is_supervisor);
   const bothSubmitted = haveAllParticipantsSubmittedCurrentPhase(state);
-  let action: string;
-  if (bothSubmitted && supervisor && state.turn === supervisor.identity) {
-    action = `等待监督者 ${supervisor.identity} 判断是否调用 advance 推进`;
-  } else if (bothSubmitted && supervisor) {
-    action = `等待 ${state.turn} 继续处理或确认后自然交还监督者 ${supervisor.identity}`;
-  } else {
-    action = `等待 ${state.turn} 完成当前轮次。调用 wait_for_turn（长轮询，10s 间隔，最多 600s），turn 到你时会自动返回。不要频繁调用 get_state`;
-  }
+  const posixPath = filePath.replace(/\\/g, "/");
+  const label = identityLabel(state, identity);
+  const turnLabel = identityLabel(state, state.turn);
+  const phaseText = phaseLabel(state.phase, state.sub_phase);
+  const round = String(state.round);
 
-  return formatTip({
-    action,
-    product: `${filePath.replace(/\\/g, "/")}（已提交）`,
-    current: `你是 ${identityLabel(state, identity)}。当前是第 ${state.round} 轮${phaseLabel(state.phase, state.sub_phase)}，turn 已切给 ${identityLabel(state, state.turn)}。${bothSubmitted ? " 本阶段双方已提交。" : ""}`,
-  });
+  const common = {
+    identity_label: label,
+    turn_label: turnLabel,
+    round,
+    phase_label: phaseText,
+    file_path: posixPath,
+  };
+
+  if (bothSubmitted && supervisor && state.turn === supervisor.identity) {
+    return renderTip("submit.advance-ready", { ...common, supervisor: supervisor.identity });
+  }
+  if (bothSubmitted && supervisor) {
+    return renderTip("submit.both-submitted", { ...common, turn: state.turn, supervisor: supervisor.identity });
+  }
+  return renderTip("submit.wait", { ...common, turn: state.turn });
 }
 
 function expectedSubmissionPath(

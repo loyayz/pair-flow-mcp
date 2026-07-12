@@ -1,5 +1,5 @@
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import { formatTip } from "./tip-format.js";
+import { renderTip } from "./tip-template.js";
 
 const REMINDER = "质量优先，完整完成任务目标。";
 
@@ -11,7 +11,7 @@ export function err(message: string, extra?: Record<string, unknown>): CallToolR
         ...extra,
         ok: false,
         error: message,
-        tip: formatTip({ action: `请求被拒绝：${message}` }),
+        tip: renderTip("response.rejected", { message }),
         reminder: REMINDER,
       }),
     }],

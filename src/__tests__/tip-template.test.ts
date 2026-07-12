@@ -66,8 +66,8 @@ function writeAllTemplates(root: string) {
   writeTemplate(root, "requirements/rn-advance.md", "[行动]\n{{advance_target}}。否则审阅 {{prev_file}}（对方 commit: {{prev_commit}}）...\n\n[产出]\n完成后 git commit，调用 submit，file_path = {{file_path}}\n\n[当前]\n你是 {{identity_label}}。当前是第 {{round}} 轮{{phase_label}}，轮到你了。\n");
   // planning
   writeTemplate(root, "planning/r1.md", "[行动]\n读取 {{task_path}} 并产出实施计划...\n\n[产出]\n完成后 git commit，调用 submit，file_path = {{file_path}}\n\n[当前]\n你是 {{identity_label}}。当前是第 {{round}} 轮{{phase_label}}，轮到你了。\n");
-  writeTemplate(root, "planning/rn.md", "[行动]\n审阅 {{prev_file}}（对方 commit: {{prev_commit}}）...\n\n[产出]\n完成后 git commit，调用 submit，file_path = {{file_path}}\n\n[当前]\n你是 {{identity_label}}。当前是第 {{round}} 轮{{phase_label}}，轮到你了。\n");
-  writeTemplate(root, "planning/rn-advance.md", "[行动]\n{{advance_target}}。否则审阅 {{prev_file}}（对方 commit: {{prev_commit}}）...\n\n[产出]\n完成后 git commit，调用 submit，file_path = {{file_path}}\n\n[当前]\n你是 {{identity_label}}。当前是第 {{round}} 轮{{phase_label}}，轮到你了。\n");
+  writeTemplate(root, "planning/rn.md", "[行动]\n基于计划文档 {{plan_file}}，审阅 {{prev_file}}（对方 commit: {{prev_commit}}）...\n\n[产出]\n完成后 git commit，调用 submit，file_path = {{file_path}}\n\n[当前]\n你是 {{identity_label}}。当前是第 {{round}} 轮{{phase_label}}，轮到你了。\n");
+  writeTemplate(root, "planning/rn-advance.md", "[行动]\n{{advance_target}}。否则：基于计划文档 {{plan_file}}，审阅 {{prev_file}}（对方 commit: {{prev_commit}}）...\n\n[产出]\n完成后 git commit，调用 submit，file_path = {{file_path}}\n\n[当前]\n你是 {{identity_label}}。当前是第 {{round}} 轮{{phase_label}}，轮到你了。\n");
   // implementation
   writeTemplate(root, "implementation/coding-r1.md", "[行动]\n根据 {{plan_file}} 进行代码实现...\n\n[产出]\n完成后 git commit，调用 submit，file_path = {{file_path}}\n\n[当前]\n你是 {{identity_label}}。当前是第 {{round}} 轮{{phase_label}}，轮到你了。\n");
   writeTemplate(root, "implementation/coding-rn.md", "[行动]\n根据上一轮评审意见 {{prev_file}}（对方 commit: {{prev_commit}}）修改代码...\n\n[产出]\n完成后 git commit，调用 submit，file_path = {{file_path}}\n\n[当前]\n你是 {{identity_label}}。当前是第 {{round}} 轮{{phase_label}}，轮到你了。\n");

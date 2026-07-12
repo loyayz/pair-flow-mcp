@@ -101,8 +101,8 @@ const TEMPLATE_SPECS: Record<TemplateKey, TemplateSpec> = {
   "requirements.rn":             { file: "requirements/rn.md",                      allowed: ["task_path", "prev_file", "prev_commit", "file_path", "identity_label", "round", "phase_label"], required: ["prev_file", "prev_commit", "file_path", "identity_label", "round", "phase_label"] },
   "requirements.rn.advance":     { file: "requirements/rn-advance.md",              allowed: ["advance_target", "task_path", "prev_file", "prev_commit", "file_path", "identity_label", "round", "phase_label"], required: ["advance_target", "prev_file", "prev_commit", "file_path", "identity_label", "round", "phase_label"] },
   "planning.r1":                 { file: "planning/r1.md",                          allowed: ["task_path", "file_path", "identity_label", "round", "phase_label"], required: ["task_path", "file_path", "identity_label", "round", "phase_label"] },
-  "planning.rn":                 { file: "planning/rn.md",                          allowed: ["prev_file", "prev_commit", "file_path", "identity_label", "round", "phase_label"], required: ["prev_file", "prev_commit", "file_path", "identity_label", "round", "phase_label"] },
-  "planning.rn.advance":         { file: "planning/rn-advance.md",                  allowed: ["advance_target", "prev_file", "prev_commit", "file_path", "identity_label", "round", "phase_label"], required: ["advance_target", "prev_file", "prev_commit", "file_path", "identity_label", "round", "phase_label"] },
+  "planning.rn":                 { file: "planning/rn.md",                          allowed: ["plan_file", "prev_file", "prev_commit", "file_path", "identity_label", "round", "phase_label"], required: ["plan_file", "prev_file", "prev_commit", "file_path", "identity_label", "round", "phase_label"] },
+  "planning.rn.advance":         { file: "planning/rn-advance.md",                  allowed: ["advance_target", "plan_file", "prev_file", "prev_commit", "file_path", "identity_label", "round", "phase_label"], required: ["advance_target", "plan_file", "prev_file", "prev_commit", "file_path", "identity_label", "round", "phase_label"] },
   "implementation.coding.r1":    { file: "implementation/coding-r1.md",             allowed: ["plan_file", "file_path", "identity_label", "round", "phase_label"], required: ["plan_file", "file_path", "identity_label", "round", "phase_label"] },
   "implementation.coding.rn":    { file: "implementation/coding-rn.md",             allowed: ["prev_file", "prev_commit", "file_path", "identity_label", "round", "phase_label"], required: ["prev_file", "prev_commit", "file_path", "identity_label", "round", "phase_label"] },
   "implementation.review.r2":    { file: "implementation/review-r2.md",             allowed: ["plan_file", "prev_file", "prev_commit", "file_path", "identity_label", "round", "phase_label"], required: ["plan_file", "prev_file", "prev_commit", "file_path", "identity_label", "round", "phase_label"] },
@@ -212,7 +212,7 @@ export function initializeTipTemplates(root: string = DEFAULT_TIP_TEMPLATE_ROOT)
 
 export function renderTip(key: TemplateKey, values: Record<string, string | number>): string {
   if (!registry) {
-    throw new Error("tip templates not initialized — call initializeTipTemplates() first");
+    initializeTipTemplates();
   }
   const template = registry.get(key);
   if (!template) {

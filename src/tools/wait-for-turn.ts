@@ -5,7 +5,7 @@ import { parseSession } from "../identity.js";
 import { getState, setState, getMutex, hasCompleteParticipantRoster } from "../state.js";
 import { buildTip } from "../tip.js";
 import { err, ok } from "../response.js";
-import { formatTip } from "../tip-format.js";
+import { renderTip } from "../tip-template.js";
 
 const POLL_INTERVAL_MS = 10_000;
 const TIMEOUT_MS = 600_000;
@@ -46,7 +46,7 @@ async function waitForActiveTurn(
     const state = getState(workflowId);
     if (!state) {
       return lastSeenPhase === "summary"
-        ? completedWorkflowResult(identity, workflowId)
+        ? ok({ turn: "idle", phase: "idle" }, renderTip("wait.completed", { identity, workflow_id: workflowId }))
         : err("workflow not found");
     }
     lastSeenPhase = state.phase;
@@ -56,12 +56,10 @@ async function waitForActiveTurn(
       const confirmedAt = participant ? Date.parse(participant.registered_at) : Number.NaN;
       const elapsed = Number.isNaN(confirmedAt) ? 0 : (Date.now() - confirmedAt) / 60_000;
       if (elapsed > 30) {
+        const mins = Math.round(elapsed);
         return ok(
-          { turn: state.turn, phase: state.phase, round: state.round, warning: `另一位参与者已超过 ${Math.round(elapsed)} 分钟未完成 confirm_task` },
-          formatTip({
-            action: "建议向用户报告另一位参与者长时间未完成 confirm_task，由用户决定是否继续等待。",
-            current: `你是 ${identity}。工作流已等待参与者确认 ${Math.round(elapsed)} 分钟，roster 仍未完整。`,
-          }),
+          { turn: state.turn, phase: state.phase, round: state.round, warning: `另一位参与者已超过 ${mins} 分钟未完成 confirm_task` },
+          renderTip("wait.roster-warning", { identity, elapsed_minutes: String(mins) }),
         );
       }
       await sleep(POLL_INTERVAL_MS, signal);
@@ -91,43 +89,28 @@ async function waitForActiveTurn(
     if (state.turn_switched_at && !state.turn_claimed_at) {
       const elapsed = (Date.now() - new Date(state.turn_switched_at).getTime()) / 60_000;
       if (elapsed > 30) {
+        const mins = Math.round(elapsed);
         return ok(
-          { turn: state.turn, phase: state.phase, round: state.round, warning: `对方可能已掉线：turn 已于 ${Math.round(elapsed)} 分钟前切换给 ${state.turn}，但未被领取` },
-          formatTip({
-            action: "建议向用户报告 turn 长时间未领取，由用户决定是否继续等待。",
-            current: `你是 ${identity}。当前是第 ${state.round} 轮，turn 在 ${state.turn} 已超过 ${Math.round(elapsed)} 分钟未领取。`,
-          })
+          { turn: state.turn, phase: state.phase, round: state.round, warning: `对方可能已掉线：turn 已于 ${mins} 分钟前切换给 ${state.turn}，但未被领取` },
+          renderTip("wait.turn-warning", { identity, elapsed_minutes: String(mins), round: String(state.round), turn: state.turn }),
         );
       }
     }
     await sleep(POLL_INTERVAL_MS, signal);
   }
 
-  const state = getState(workflowId);
-  if (!state) {
+  const timeoutState = getState(workflowId);
+  if (!timeoutState) {
     return lastSeenPhase === "summary"
-      ? completedWorkflowResult(identity, workflowId)
+      ? ok({ turn: "idle", phase: "idle" }, renderTip("wait.completed", { identity, workflow_id: workflowId }))
       : err("workflow not found");
   }
-  const rosterReady = hasCompleteParticipantRoster(state);
+  const rosterReady = hasCompleteParticipantRoster(timeoutState);
   return ok(
-    { turn: state.turn, phase: state.phase, round: state.round },
-    formatTip({
-      action: "继续调用 wait_for_turn，保持自动轮转；不要仅因本次超时打断用户。",
-      current: rosterReady
-        ? `你是 ${identity}。单次等待已超时(600s)，当前是第 ${state.round} 轮，轮到 ${state.turn}。`
-        : `你是 ${identity}。单次等待已超时(600s)，参与者尚未全部完成 confirm_task。`,
-    })
-  );
-}
-
-function completedWorkflowResult(identity: string, workflowId: string): CallToolResult {
-  return ok(
-    { turn: "idle", phase: "idle" },
-    formatTip({
-      action: "工作流已由监督者结束。需要开始新任务时，复用当前 token 调用 confirm_task。",
-      current: `你是 ${identity}。工作流 ${workflowId} 已结束。`,
-    }),
+    { turn: timeoutState.turn, phase: timeoutState.phase, round: timeoutState.round },
+    rosterReady
+      ? renderTip("wait.timeout-ready", { identity, round: String(timeoutState.round) })
+      : renderTip("wait.timeout-roster", { identity }),
   );
 }
 
