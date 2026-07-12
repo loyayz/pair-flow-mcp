@@ -250,6 +250,67 @@ describe("tip-template engine", () => {
       ].join("\n"));
       expect(() => initializeTipTemplates(root)).toThrow(/requirements\.r1.*\[产出\] must precede \[当前\]/);
     });
+
+    it("rejects template with duplicate [行动]", () => {
+      root = tmpRoot();
+      writeAllTemplates(root);
+      writeTemplate(root, "requirements/r1.md", [
+        "[行动]",
+        "first",
+        "",
+        "[行动]",
+        "second",
+      ].join("\n"));
+      expect(() => initializeTipTemplates(root)).toThrow(/requirements\.r1.*duplicate.*\[行动\]/);
+    });
+
+    it("rejects template with duplicate [产出]", () => {
+      root = tmpRoot();
+      writeAllTemplates(root);
+      writeTemplate(root, "requirements/r1.md", [
+        "[行动]",
+        "action {{task_path}}",
+        "",
+        "[产出]",
+        "p1 {{file_path}}",
+        "",
+        "[产出]",
+        "p2",
+        "",
+        "[当前]",
+        "c {{identity_label}} {{round}} {{phase_label}}",
+      ].join("\n"));
+      expect(() => initializeTipTemplates(root)).toThrow(/requirements\.r1.*duplicate.*\[产出\]/);
+    });
+
+    it("rejects template with duplicate [当前]", () => {
+      root = tmpRoot();
+      writeAllTemplates(root);
+      writeTemplate(root, "requirements/r1.md", [
+        "[行动]",
+        "action {{task_path}}",
+        "",
+        "[当前]",
+        "c1 {{identity_label}} {{round}} {{phase_label}}",
+        "",
+        "[当前]",
+        "c2",
+      ].join("\n"));
+      expect(() => initializeTipTemplates(root)).toThrow(/requirements\.r1.*duplicate.*\[当前\]/);
+    });
+
+    it("rejects template with unknown section marker", () => {
+      root = tmpRoot();
+      writeAllTemplates(root);
+      writeTemplate(root, "requirements/r1.md", [
+        "[行动]",
+        "action {{task_path}}",
+        "",
+        "[其他]",
+        "unknown content",
+      ].join("\n"));
+      expect(() => initializeTipTemplates(root)).toThrow(/requirements\.r1.*unknown.*\[其他\]/);
+    });
   });
 
   describe("default root path", () => {

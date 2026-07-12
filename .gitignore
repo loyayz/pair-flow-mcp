@@ -19,3 +19,7 @@ Thumbs.db
 .pairflow-test-transport-handoff/
 .tmp/
 .handoff-backup*/
+
+# PairFlow runtime sidecars (never commit)
+handoff/**/*.meta.json
+*.md.pid

@@ -140,6 +140,29 @@ function extractPlaceholders(text: string): string[] {
 }
 
 function parseAndValidate(key: TemplateKey, filePath: string, raw: string, spec: TemplateSpec): ParsedTemplate {
+  // ── Strict section marker validation ──
+  const SECTION_RE = /^\[([^\]]+)\]$/gm;
+  const markers: { name: string; offset: number }[] = [];
+  let sm: RegExpExecArray | null;
+  SECTION_RE.lastIndex = 0;
+  while ((sm = SECTION_RE.exec(raw)) !== null) {
+    markers.push({ name: sm[1], offset: sm.index });
+  }
+  const ALLOWED = new Set(["行动", "产出", "当前"]);
+  const seen = new Set<string>();
+  for (const marker of markers) {
+    if (!ALLOWED.has(marker.name)) {
+      throw new Error(`tip template ${key} unknown section marker "[${marker.name}]" (allowed: 行动, 产出, 当前): ${filePath}`);
+    }
+    if (seen.has(marker.name)) {
+      throw new Error(`tip template ${key} duplicate section marker "[${marker.name}]": ${filePath}`);
+    }
+    seen.add(marker.name);
+  }
+  if (!seen.has("行动")) {
+    throw new Error(`tip template ${key} missing required [行动] section marker: ${filePath}`);
+  }
+
   // Parse into sections: [行动] / [产出] / [当前]
   const actionMatch = raw.match(/\[行动\]\s*\n([\s\S]*?)(?=\n\[产出\]|\n\[当前\]|$)/);
   const productMatch = raw.match(/\[产出\]\s*\n([\s\S]*?)(?=\n\[当前\]|$)/);
