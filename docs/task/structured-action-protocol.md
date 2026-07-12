@@ -389,3 +389,28 @@ Supervisor 可 advance 的场景不是单一确定动作：
 5. heartbeat 和阻塞原因上报。
 
 这些均不属于本任务实现范围。
+
+## 14. 需求分析共识与补充
+
+以下结论由 `claude` 第 1 轮分析与 `codex` 第 2 轮独立分析对照形成；未改变前述范围，只消除实施前的歧义。
+
+### 14.1 已确认共识
+
+1. `claude`、`codex` 一致确认：核心问题是机器动作缺少稳定协议，而不是 tip 文案写得不够结构化；不得让客户端解析模板文案或复制服务端状态机。
+2. `claude`、`codex` 一致确认：instruction 是增量、可选的响应字段，现有 tip、reminder、工具入参和 HTTP/MCP 封装保持兼容。
+3. `claude`、`codex` 一致确认：instruction 必须由现有状态、提交记录和路径 helper 生成；禁止从渲染后的 tip 反向提取动作、路径或权限。
+4. `claude`、`codex` 一致确认：主要风险是 tip/instruction 语义漂移、场景遗漏和保留字段被业务 data 覆盖，必须用契约、矩阵和一致性测试共同约束。
+
+### 14.2 Codex 补充与优先级修正
+
+1. `codex` 补充直接干系人“工作流操作者/任务发起人”：stale warning 的 `report_user` 会直接要求其决定是否继续等待，因此不能把人类仅视为完全间接、对 instruction 透明的角色。
+2. `codex` 将 `ok()`/`err()` 的 instruction 覆盖保护定为 P0，而非 `claude` 初稿中的 P2。原因是这属于响应契约完整性和安全边界，也是验收标准的前置条件，不是可延后优化。
+3. `codex` 明确 forward compatibility：reason code 禁止 `OTHER`/`UNKNOWN` 不代表客户端可以省略未知枚举兜底；客户端仍应对未来新增具体枚举采取安全失败或升级提示，但不得回退到解析 tip。
+4. `codex` 补充信息暴露约束：instruction 不应新增 token、PID、内部绝对路径或其他当前业务 tip 未授权公开的信息；references 和 required_output 仅包含执行本回合所必需的工作流路径。
+
+### 14.3 歧义决议
+
+1. `claude` 提出 instruction 可由独立 `buildInstruction(state, identity)` 生成；`codex` 认为若该函数自行重走状态分支，会违反“同一场景选择结果”原则。planning 可拆文件，但必须先得到唯一 guidance 场景，再由该场景同时渲染 tip 和构造 instruction。
+2. `claude` 对 confirm_task 成功且 roster 完整的临时方案使用 `TURN_READY`；`codex` 指出 confirm_task 的协议动作始终是先调用 `wait_for_turn`。最终要求：该响应的 `next_action` 固定为 `wait_for_turn`；reason code 必须描述 confirm 后的真实等待/领取状态，不得用 `TURN_READY` 暗示客户端可以绕过首次 wait 直接产出。若最小枚举无法准确表达，应新增具体 reason code。
+3. `claude`、`codex` 确认：roster/turn stale warning 使用 `report_user`；普通 600 秒请求上限使用 `wait_for_turn` + `WAIT_TIMEOUT`，不得升级为人工决策。
+4. `claude`、`codex` 确认：`sub_phase` 只在 implementation 有可靠值时返回；其他 phase 可省略或按契约返回 null，但全项目必须选择一种稳定表现并通过测试固定，不能随 handler 漂移。
