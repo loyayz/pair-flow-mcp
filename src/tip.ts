@@ -1,7 +1,8 @@
-import { haveAllParticipantsSubmittedCurrentPhase } from "./state.js";
+import { haveAllParticipantsSubmittedCurrentPhase, hasCompleteParticipantRoster } from "./state.js";
 import type { PairFlowState } from "./state.js";
 import { workflowArchivePath } from "./archive-path.js";
 import { renderTip, type TemplateKey } from "./tip-template.js";
+import type { Guidance, InstructionReasonCode, InstructionReference, PairFlowInstruction } from "./instruction.js";
 
 const SAFE_ID = /^[a-zA-Z0-9_-]{1,64}$/;
 
@@ -42,9 +43,133 @@ function planningDocument(state: PairFlowState): string {
   ).replace(/\\/g, "/");
 }
 
-type TipSelection = { key: TemplateKey; variables: Record<string, string | number> };
+// ── Instruction helpers ────────────────────────────────────────────
 
-function selectTip(state: PairFlowState, identity: string): TipSelection {
+function ctx(state: PairFlowState, identity: string): {
+  workflow_id?: string;
+  phase?: "idle" | "requirements" | "planning" | "implementation" | "summary";
+  sub_phase?: "coding" | "review" | null;
+  round?: number;
+  turn?: string;
+  holds_turn?: boolean;
+  can_advance?: boolean;
+} {
+  const c: ReturnType<typeof ctx> = {
+    phase: state.phase as typeof c.phase,
+    round: state.round,
+    turn: state.turn,
+    holds_turn: state.turn === identity,
+    can_advance: false,
+  };
+  if (state.phase === "implementation") {
+    c.sub_phase = state.sub_phase as typeof c.sub_phase;
+  }
+  if (state.workflow_id) c.workflow_id = state.workflow_id;
+  return c;
+}
+
+function outputReq(state: PairFlowState, identity: string) {
+  return {
+    file_path: outFile(state, identity),
+    commit_required: true as const,
+    submit_tool: "submit" as const,
+  };
+}
+
+function taskRef(state: PairFlowState): InstructionReference | null {
+  if (!state.task?.spec_file) return null;
+  return {
+    kind: "task",
+    file_path: state.task.spec_file.replace(/\\/g, "/"),
+    required: true,
+  };
+}
+
+function prevRef(state: PairFlowState, identity: string): InstructionReference | null {
+  const other = state.participants.find((p) => p.identity !== identity);
+  const sub = other ? state.last_submission_by_participant[other.identity] : null;
+  if (!sub?.file_path) return null;
+  const ref: InstructionReference = {
+    kind: state.phase === "implementation" && state.sub_phase === "review" ? "previous_output" : "previous_output",
+    file_path: sub.file_path.replace(/\\/g, "/"),
+    required: false,
+  };
+  if (sub.commit_hash) ref.commit = sub.commit_hash.toLowerCase();
+  return ref;
+}
+
+function planRef(state: PairFlowState): InstructionReference {
+  const path = planningDocument(state);
+  const reviewer = state.participants.find((p) => !p.is_developer);
+  const sub = reviewer ? state.last_submission_by_participant[reviewer.identity] : null;
+  const ref: InstructionReference = {
+    kind: "plan",
+    file_path: path,
+    required: true,
+  };
+  if (sub?.commit_hash) ref.commit = sub.commit_hash.toLowerCase();
+  return ref;
+}
+
+function prevReviewRef(state: PairFlowState, identity: string): InstructionReference | null {
+  if (state.round <= 2) return null;
+  const path = workflowArchivePath(
+    state,
+    safe(state.workflow_id),
+    safe(state.phase),
+    `r${state.round - 2}_review_${safe(identity)}.md`,
+  ).replace(/\\/g, "/");
+  const sub = state.last_submission_by_participant[identity];
+  const ref: InstructionReference = {
+    kind: "previous_review",
+    file_path: path,
+    required: false,
+  };
+  if (sub?.commit_hash) ref.commit = sub.commit_hash.toLowerCase();
+  return ref;
+}
+
+function archiveRootRef(state: PairFlowState): InstructionReference {
+  const path = workflowArchivePath(state, safe(state.workflow_id)).replace(/\\/g, "/");
+  return { kind: "archive", file_path: path, required: false };
+}
+
+// ── Guidance Selection ─────────────────────────────────────────────
+
+type GuidanceSelection = {
+  key: TemplateKey;
+  variables: Record<string, string | number>;
+  instruction: PairFlowInstruction;
+};
+
+function instruction(
+  action: PairFlowInstruction["next_action"],
+  reason: InstructionReasonCode,
+  state: PairFlowState,
+  identity: string,
+  opts?: {
+    allowedTools?: PairFlowInstruction["allowed_tools"];
+    output?: PairFlowInstruction["required_output"];
+    refs?: InstructionReference[];
+    decision?: PairFlowInstruction["decision"];
+    canAdvance?: boolean;
+  },
+): PairFlowInstruction {
+  const c = ctx(state, identity);
+  if (opts?.canAdvance !== undefined) c.can_advance = opts.canAdvance;
+  const inst: PairFlowInstruction = {
+    next_action: action,
+    allowed_tools: opts?.allowedTools ?? [],
+    reason_code: reason,
+    context: c,
+  };
+  if (opts?.output) inst.required_output = opts.output;
+  if (opts?.refs && opts.refs.length > 0) inst.references = opts.refs.filter(Boolean) as InstructionReference[];
+  if (opts?.decision) inst.decision = opts.decision;
+  return inst;
+}
+
+function selectGuidance(state: PairFlowState, identity: string): GuidanceSelection {
   const taskPath = (state.task?.spec_file ?? "任务文档").replace(/\\/g, "/");
   const other = state.participants.find((p) => p.identity !== identity);
   const otherSubmit = other ? state.last_submission_by_participant[other.identity] : null;
@@ -65,34 +190,11 @@ function selectTip(state: PairFlowState, identity: string): TipSelection {
     ...(prevCommit ? { prev_commit: prevCommit } : {}),
   };
 
-  if (state.phase === "idle") {
-    const isSup = state.participants.some((p) => p.identity === identity && p.is_supervisor);
-    return isSup
-      ? { key: "state.idle.supervisor", variables: { identity_label: label } }
-      : { key: "state.idle.other", variables: { identity_label: label } };
-  }
-
-  if (state.round === 1) {
-    if (state.phase === "requirements") {
-      return { key: "requirements.r1", variables: { task_path: taskPath, file_path: filePath, identity_label: label, round, phase_label: phaseText } };
-    }
-    if (state.phase === "planning") {
-      return { key: "planning.r1", variables: { task_path: taskPath, file_path: filePath, identity_label: label, round, phase_label: phaseText } };
-    }
-    if (state.phase === "implementation" && state.sub_phase === "coding") {
-      return { key: "implementation.coding.r1", variables: { plan_file: planningDocument(state), file_path: filePath, identity_label: label, round, phase_label: phaseText } };
-    }
-    if (state.phase === "summary") {
-      const archiveRoot = workflowArchivePath(state, safe(state.workflow_id)).replace(/\\/g, "/");
-      return { key: "summary.r1", variables: { task_path: taskPath, archive_root: archiveRoot, file_path: filePath, identity_label: label, round, phase_label: phaseText } };
-    }
-    return { key: "state.unknown", variables: { phase: safe(state.phase), sub_phase: safe(state.sub_phase), round } };
-  }
-
   const isSupervisor = state.participants.some((p) => p.identity === identity && p.is_supervisor);
   const canSupervisorAdvance = isSupervisor
     && state.turn === identity
     && haveAllParticipantsSubmittedCurrentPhase(state);
+  const rosterComplete = hasCompleteParticipantRoster(state);
 
   let advanceTarget = "";
   if (canSupervisorAdvance) {
@@ -102,51 +204,281 @@ function selectTip(state: PairFlowState, identity: string): TipSelection {
     else if (state.phase === "summary") advanceTarget = "结束工作流";
   }
 
+  // ── Idle ──────────────────────────────────────────────────────
+  if (state.phase === "idle") {
+    if (isSupervisor && rosterComplete) {
+      return {
+        key: "state.idle.supervisor",
+        variables: { identity_label: label },
+        instruction: instruction("advance", "TURN_READY", state, identity, {
+          allowedTools: ["advance"],
+          canAdvance: true,
+        }),
+      };
+    }
+    return {
+      key: "state.idle.other",
+      variables: { identity_label: label },
+      instruction: instruction("wait_for_turn", rosterComplete ? "WAITING_FOR_TURN" : "ROSTER_INCOMPLETE", state, identity, {
+        allowedTools: ["wait_for_turn"],
+      }),
+    };
+  }
+
+  // ── Round 1 ───────────────────────────────────────────────────
+  if (state.round === 1) {
+    if (state.phase === "requirements") {
+      const refs: InstructionReference[] = [];
+      const t = taskRef(state);
+      if (t) refs.push(t);
+      return {
+        key: "requirements.r1",
+        variables: { task_path: taskPath, file_path: filePath, identity_label: label, round, phase_label: phaseText },
+        instruction: instruction("produce_and_submit", "TURN_READY", state, identity, {
+          allowedTools: ["submit"],
+          output: outputReq(state, identity),
+          refs,
+        }),
+      };
+    }
+    if (state.phase === "planning") {
+      const refs: InstructionReference[] = [];
+      const t = taskRef(state);
+      if (t) refs.push(t);
+      return {
+        key: "planning.r1",
+        variables: { task_path: taskPath, file_path: filePath, identity_label: label, round, phase_label: phaseText },
+        instruction: instruction("produce_and_submit", "TURN_READY", state, identity, {
+          allowedTools: ["submit"],
+          output: outputReq(state, identity),
+          refs,
+        }),
+      };
+    }
+    if (state.phase === "implementation" && state.sub_phase === "coding") {
+      const refs: InstructionReference[] = [planRef(state)];
+      return {
+        key: "implementation.coding.r1",
+        variables: { plan_file: planningDocument(state), file_path: filePath, identity_label: label, round, phase_label: phaseText },
+        instruction: instruction("produce_and_submit", "TURN_READY", state, identity, {
+          allowedTools: ["submit"],
+          output: outputReq(state, identity),
+          refs,
+        }),
+      };
+    }
+    if (state.phase === "summary") {
+      const refs: InstructionReference[] = [archiveRootRef(state)];
+      const t = taskRef(state);
+      if (t) refs.push(t);
+      return {
+        key: "summary.r1",
+        variables: { task_path: taskPath, archive_root: workflowArchivePath(state, safe(state.workflow_id)).replace(/\\/g, "/"), file_path: filePath, identity_label: label, round, phase_label: phaseText },
+        instruction: instruction("produce_and_submit", "TURN_READY", state, identity, {
+          allowedTools: ["submit"],
+          output: outputReq(state, identity),
+          refs,
+        }),
+      };
+    }
+    return {
+      key: "state.unknown",
+      variables: { phase: safe(state.phase), sub_phase: safe(state.sub_phase), round },
+      instruction: instruction("report_user", "UNSUPPORTED_WORKFLOW_STATE", state, identity),
+    };
+  }
+
+  // ── Round ≥2 ──────────────────────────────────────────────────
+
+  // Convergence decision
+  if (canSupervisorAdvance) {
+    const refs: InstructionReference[] = [];
+    const p = prevRef(state, identity);
+    if (p) refs.push(p);
+    if (state.phase === "requirements") {
+      const t = taskRef(state);
+      if (t) refs.push(t);
+      return {
+        key: "requirements.rn.advance",
+        variables: { ...common, advance_target: advanceTarget },
+        instruction: instruction("decide_convergence", "PHASE_READY_FOR_CONVERGENCE_DECISION", state, identity, {
+          allowedTools: ["advance", "submit"],
+          output: outputReq(state, identity),
+          refs,
+          decision: { criterion: "phase_goal_met", when_true: "advance", when_false: "produce_and_submit" },
+          canAdvance: true,
+        }),
+      };
+    }
+    if (state.phase === "planning") {
+      refs.push(planRef(state));
+      return {
+        key: "planning.rn.advance",
+        variables: { ...common, plan_file: planningDocument(state), advance_target: advanceTarget },
+        instruction: instruction("decide_convergence", "PHASE_READY_FOR_CONVERGENCE_DECISION", state, identity, {
+          allowedTools: ["advance", "submit"],
+          output: outputReq(state, identity),
+          refs,
+          decision: { criterion: "phase_goal_met", when_true: "advance", when_false: "produce_and_submit" },
+          canAdvance: true,
+        }),
+      };
+    }
+    if (state.phase === "implementation" && state.sub_phase === "review") {
+      refs.push(planRef(state));
+      const prv = prevReviewRef(state, identity);
+      if (prv) refs.push(prv);
+      return {
+        key: "implementation.review.rn.advance",
+        variables: { ...common, plan_file: planningDocument(state), previous_review: prevReviewRef(state, identity)?.file_path ?? "", advance_target: advanceTarget },
+        instruction: instruction("decide_convergence", "PHASE_READY_FOR_CONVERGENCE_DECISION", state, identity, {
+          allowedTools: ["advance", "submit"],
+          output: outputReq(state, identity),
+          refs,
+          decision: { criterion: "phase_goal_met", when_true: "advance", when_false: "produce_and_submit" },
+          canAdvance: true,
+        }),
+      };
+    }
+    if (state.phase === "summary") {
+      return {
+        key: "summary.rn.advance",
+        variables: { ...common, advance_target: advanceTarget },
+        instruction: instruction("decide_convergence", "PHASE_READY_FOR_CONVERGENCE_DECISION", state, identity, {
+          allowedTools: ["advance", "submit"],
+          output: outputReq(state, identity),
+          refs,
+          decision: { criterion: "phase_goal_met", when_true: "advance", when_false: "produce_and_submit" },
+          canAdvance: true,
+        }),
+      };
+    }
+  }
+
+  // Non-convergence round ≥2
   if (state.phase === "requirements") {
     if (state.round === 2) {
-      return { key: "requirements.r2", variables: { ...common, task_path: taskPath } };
+      const refs: InstructionReference[] = [];
+      const t = taskRef(state);
+      if (t) refs.push(t);
+      const p = prevRef(state, identity);
+      if (p) refs.push(p);
+      return {
+        key: "requirements.r2",
+        variables: { ...common, task_path: taskPath },
+        instruction: instruction("produce_and_submit", "TURN_READY", state, identity, {
+          allowedTools: ["submit"],
+          output: outputReq(state, identity),
+          refs,
+        }),
+      };
     }
-    const key: TemplateKey = canSupervisorAdvance ? "requirements.rn.advance" : "requirements.rn";
-    return { key, variables: { ...common, ...(canSupervisorAdvance ? { advance_target: advanceTarget } : {}) } };
+    const refs: InstructionReference[] = [];
+    const p = prevRef(state, identity);
+    if (p) refs.push(p);
+    return {
+      key: "requirements.rn",
+      variables: common,
+      instruction: instruction("produce_and_submit", "TURN_READY", state, identity, {
+        allowedTools: ["submit"],
+        output: outputReq(state, identity),
+        refs,
+      }),
+    };
   }
 
   if (state.phase === "planning") {
-    const planFile = planningDocument(state);
-    const key: TemplateKey = canSupervisorAdvance ? "planning.rn.advance" : "planning.rn";
-    return { key, variables: { ...common, plan_file: planFile, ...(canSupervisorAdvance ? { advance_target: advanceTarget } : {}) } };
+    const refs: InstructionReference[] = [planRef(state)];
+    const p = prevRef(state, identity);
+    if (p) refs.push(p);
+    return {
+      key: "planning.rn",
+      variables: { ...common, plan_file: planningDocument(state) },
+      instruction: instruction("produce_and_submit", "TURN_READY", state, identity, {
+        allowedTools: ["submit"],
+        output: outputReq(state, identity),
+        refs,
+      }),
+    };
   }
 
   if (state.phase === "implementation" && state.sub_phase === "review") {
-    const planFile = planningDocument(state);
+    const refs: InstructionReference[] = [planRef(state)];
+    const p = prevRef(state, identity);
+    if (p) refs.push(p);
     if (state.round > 2) {
-      const myPrevReview = workflowArchivePath(state, safe(state.workflow_id), safe(state.phase), `r${state.round - 2}_review_${safe(identity)}.md`).replace(/\\/g, "/");
-      const key: TemplateKey = canSupervisorAdvance ? "implementation.review.rn.advance" : "implementation.review.rn";
+      const prv = prevReviewRef(state, identity);
+      if (prv) refs.push(prv);
       return {
-        key,
-        variables: {
-          ...common,
-          plan_file: planFile,
-          previous_review: myPrevReview,
-          ...(canSupervisorAdvance ? { advance_target: advanceTarget } : {}),
-        },
+        key: "implementation.review.rn",
+        variables: { ...common, plan_file: planningDocument(state), previous_review: prevReviewRef(state, identity)?.file_path ?? "" },
+        instruction: instruction("produce_and_submit", "TURN_READY", state, identity, {
+          allowedTools: ["submit"],
+          output: outputReq(state, identity),
+          refs,
+        }),
       };
     }
-    return { key: "implementation.review.r2", variables: { ...common, plan_file: planFile } };
+    return {
+      key: "implementation.review.r2",
+      variables: { ...common, plan_file: planningDocument(state) },
+      instruction: instruction("produce_and_submit", "TURN_READY", state, identity, {
+        allowedTools: ["submit"],
+        output: outputReq(state, identity),
+        refs,
+      }),
+    };
   }
 
   if (state.phase === "implementation" && state.sub_phase === "coding") {
-    return { key: "implementation.coding.rn", variables: common };
+    const refs: InstructionReference[] = [];
+    const p = prevRef(state, identity);
+    if (p) refs.push(p);
+    return {
+      key: "implementation.coding.rn",
+      variables: common,
+      instruction: instruction("produce_and_submit", "TURN_READY", state, identity, {
+        allowedTools: ["submit"],
+        output: outputReq(state, identity),
+        refs,
+      }),
+    };
   }
 
   if (state.phase === "summary") {
     if (state.round === 2) {
-      return { key: "summary.r2", variables: common };
+      const refs: InstructionReference[] = [];
+      const p = prevRef(state, identity);
+      if (p) refs.push(p);
+      return {
+        key: "summary.r2",
+        variables: common,
+        instruction: instruction("produce_and_submit", "TURN_READY", state, identity, {
+          allowedTools: ["submit"],
+          output: outputReq(state, identity),
+          refs,
+        }),
+      };
     }
-    const key: TemplateKey = canSupervisorAdvance ? "summary.rn.advance" : "summary.rn";
-    return { key, variables: { ...common, ...(canSupervisorAdvance ? { advance_target: advanceTarget } : {}) } };
+    const refs: InstructionReference[] = [];
+    const p = prevRef(state, identity);
+    if (p) refs.push(p);
+    return {
+      key: "summary.rn",
+      variables: common,
+      instruction: instruction("produce_and_submit", "TURN_READY", state, identity, {
+        allowedTools: ["submit"],
+        output: outputReq(state, identity),
+        refs,
+      }),
+    };
   }
 
-  return { key: "state.unknown", variables: { phase: safe(state.phase), sub_phase: safe(state.sub_phase), round } };
+  return {
+    key: "state.unknown",
+    variables: { phase: safe(state.phase), sub_phase: safe(state.sub_phase), round },
+    instruction: instruction("report_user", "UNSUPPORTED_WORKFLOW_STATE", state, identity),
+  };
 }
 
 export function phaseLabel(phase: string, subPhase: string | null): string {
@@ -157,19 +489,31 @@ export function phaseLabel(phase: string, subPhase: string | null): string {
   return phase;
 }
 
-export function buildTip(state: PairFlowState, identity: string): string {
+export function buildGuidance(state: PairFlowState, identity: string): Guidance {
   const holdsTurn = state.turn === identity;
 
   if (state.phase !== "idle" && !holdsTurn) {
     const label = identityLabel(state, identity);
-    return renderTip("state.wait.other", {
+    const rosterComplete = hasCompleteParticipantRoster(state);
+    const reason: InstructionReasonCode = rosterComplete ? "WAITING_FOR_TURN" : "ROSTER_INCOMPLETE";
+    const tip = renderTip("state.wait.other", {
       identity_label: label,
       turn: safe(state.turn),
       round: String(state.round),
       phase_label: phaseLabel(safe(state.phase), state.sub_phase),
     });
+    return {
+      tip,
+      instruction: instruction("wait_for_turn", reason, state, identity, {
+        allowedTools: ["wait_for_turn"],
+      }),
+    };
   }
 
-  const selection = selectTip(state, identity);
-  return renderTip(selection.key, selection.variables);
+  const selection = selectGuidance(state, identity);
+  return { tip: renderTip(selection.key, selection.variables), instruction: selection.instruction };
+}
+
+export function buildTip(state: PairFlowState, identity: string): string {
+  return buildGuidance(state, identity).tip;
 }
