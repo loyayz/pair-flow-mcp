@@ -4,7 +4,7 @@ import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sd
 import { sanitizeIdentity } from "../identity.js";
 import { err, ok } from "../response.js";
 import { registerToken } from "../token-map.js";
-import { renderTip } from "../tip-template.js";
+import { guidance } from "../instruction.js";
 
 function registerCurl(mcpUrl: string): string {
   return `curl -s -X POST ${mcpUrl} \\
@@ -36,7 +36,11 @@ export async function register(
 
   const token = registerToken(identity);
 
-  const tip = renderTip("register.success", { token, identity });
+  const g = guidance("register.success", { token, identity }, {
+    next_action: "confirm_task",
+    allowed_tools: ["confirm_task"],
+    reason_code: "REGISTERED_NEEDS_CONFIRMATION",
+  });
 
-  return ok({ ok: true, identity, token }, tip);
+  return ok({ ok: true, identity, token }, g);
 }

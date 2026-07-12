@@ -3,9 +3,9 @@ import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/proto
 import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
 import { parseSession } from "../identity.js";
 import { getState, setState, getMutex, hasCompleteParticipantRoster } from "../state.js";
-import { buildTip } from "../tip.js";
+import { buildGuidance } from "../tip.js";
 import { err, ok } from "../response.js";
-import { renderTip } from "../tip-template.js";
+import { guidance } from "../instruction.js";
 
 const POLL_INTERVAL_MS = 10_000;
 const TIMEOUT_MS = 600_000;
@@ -46,7 +46,11 @@ async function waitForActiveTurn(
     const state = getState(workflowId);
     if (!state) {
       return lastSeenPhase === "summary"
-        ? ok({ turn: "idle", phase: "idle" }, renderTip("wait.completed", { identity, workflow_id: workflowId }))
+        ? ok({ turn: "idle", phase: "idle" }, guidance("wait.completed", { identity, workflow_id: workflowId }, {
+            next_action: "stop",
+            allowed_tools: [],
+            reason_code: "WORKFLOW_COMPLETED",
+          }))
         : err("workflow not found");
     }
     lastSeenPhase = state.phase;
@@ -59,7 +63,11 @@ async function waitForActiveTurn(
         const mins = Math.round(elapsed);
         return ok(
           { turn: state.turn, phase: state.phase, round: state.round, warning: `另一位参与者已超过 ${mins} 分钟未完成 confirm_task` },
-          renderTip("wait.roster-warning", { identity, elapsed_minutes: String(mins) }),
+          guidance("wait.roster-warning", { identity, elapsed_minutes: String(mins) }, {
+            next_action: "report_user",
+            allowed_tools: [],
+            reason_code: "PARTICIPANT_CONFIRMATION_STALE",
+          }),
         );
       }
       await sleep(POLL_INTERVAL_MS, signal);
@@ -82,8 +90,8 @@ async function waitForActiveTurn(
       if (!claimed) continue;
       const claimedState = getState(workflowId);
       if (!claimedState) return err("workflow not found");
-      const tip = buildTip(claimedState, identity);
-      return ok({ turn: claimedState.turn, phase: claimedState.phase, round: claimedState.round }, tip);
+      const g = buildGuidance(claimedState, identity);
+      return ok({ turn: claimedState.turn, phase: claimedState.phase, round: claimedState.round }, g);
     }
 
     if (state.turn_switched_at && !state.turn_claimed_at) {
@@ -92,7 +100,11 @@ async function waitForActiveTurn(
         const mins = Math.round(elapsed);
         return ok(
           { turn: state.turn, phase: state.phase, round: state.round, warning: `对方可能已掉线：turn 已于 ${mins} 分钟前切换给 ${state.turn}，但未被领取` },
-          renderTip("wait.turn-warning", { identity, elapsed_minutes: String(mins), round: String(state.round), turn: state.turn }),
+          guidance("wait.turn-warning", { identity, elapsed_minutes: String(mins), round: String(state.round), turn: state.turn }, {
+            next_action: "report_user",
+            allowed_tools: [],
+            reason_code: "TURN_UNCLAIMED_STALE",
+          }),
         );
       }
     }
@@ -102,15 +114,27 @@ async function waitForActiveTurn(
   const timeoutState = getState(workflowId);
   if (!timeoutState) {
     return lastSeenPhase === "summary"
-      ? ok({ turn: "idle", phase: "idle" }, renderTip("wait.completed", { identity, workflow_id: workflowId }))
+      ? ok({ turn: "idle", phase: "idle" }, guidance("wait.completed", { identity, workflow_id: workflowId }, {
+          next_action: "stop",
+          allowed_tools: [],
+          reason_code: "WORKFLOW_COMPLETED",
+        }))
       : err("workflow not found");
   }
   const rosterReady = hasCompleteParticipantRoster(timeoutState);
   return ok(
     { turn: timeoutState.turn, phase: timeoutState.phase, round: timeoutState.round },
     rosterReady
-      ? renderTip("wait.timeout-ready", { identity, round: String(timeoutState.round), turn: timeoutState.turn })
-      : renderTip("wait.timeout-roster", { identity }),
+      ? guidance("wait.timeout-ready", { identity, round: String(timeoutState.round), turn: timeoutState.turn }, {
+          next_action: "wait_for_turn",
+          allowed_tools: ["wait_for_turn"],
+          reason_code: "WAIT_TIMEOUT",
+        })
+      : guidance("wait.timeout-roster", { identity }, {
+          next_action: "wait_for_turn",
+          allowed_tools: ["wait_for_turn"],
+          reason_code: "WAIT_TIMEOUT",
+        }),
   );
 }
 

@@ -8,7 +8,7 @@ import { parseSession } from "../identity.js";
 import { getState, setState, getAllStates, getMutex, defaultState, formatWorkflowId, hasCompleteParticipantRoster, isRecoveryPlaceholderParticipant, type Participant } from "../state.js";
 import { reconstructFromHandoff } from "../crash-recovery.js";
 import { err, ok } from "../response.js";
-import { renderTip } from "../tip-template.js";
+import { guidance } from "../instruction.js";
 import { bindWorkflow } from "../token-map.js";
 import { atomicWriteText } from "../atomic-write.js";
 import { findSymbolicLinkInPath } from "../path-safety.js";
@@ -403,7 +403,8 @@ export async function confirmTask(
         if (raw) bindWorkflow(raw.trim(), wfId);
 
         const turnRelation = state.turn === identity ? "你" : "对方";
-        const tip = renderTip("confirm.existing", {
+        const isRosterComplete = hasCompleteParticipantRoster(state);
+        const g = guidance("confirm.existing", {
           identity,
           responsibility: responsibilityLabel(myParticipant),
           workflow_id: wfId,
@@ -411,13 +412,25 @@ export async function confirmTask(
           round: String(state.round),
           turn: state.turn,
           turn_relation: turnRelation,
+        }, {
+          next_action: "wait_for_turn",
+          allowed_tools: ["wait_for_turn"],
+          reason_code: isRosterComplete ? "CONFIRMED_NEEDS_TURN_CLAIM" : "ROSTER_INCOMPLETE",
+          context: {
+            workflow_id: wfId,
+            phase: state.phase as "idle" | "requirements" | "planning" | "implementation" | "summary",
+            round: state.round,
+            turn: state.turn,
+            holds_turn: state.turn === identity,
+            can_advance: false,
+          },
         });
         return ok({
           task_path: resolvedTaskPath.replace(/\\/g, "/"),
           workflow_id: wfId,
           phase: state.phase,
           recovered: recovered || recoveringParticipant,
-        }, tip);
+        }, g);
       }
 
       // 检查是否已满
@@ -470,20 +483,45 @@ export async function confirmTask(
   const p = curState.participants;
   const names = p.map((x) => `${x.identity}（${responsibilityLabel(x)}）`).join(" + ");
 
-  let tip: string;
+  const rosterNowComplete = hasCompleteParticipantRoster(curState);
+  let g: ReturnType<typeof guidance>;
   if (isFirst) {
-    tip = renderTip(recovered ? "confirm.recovered" : "confirm.created", {
+    g = guidance(recovered ? "confirm.recovered" : "confirm.created", {
       identity,
       responsibility: myResponsibilityLabel,
       workflow_id: wfId,
+    }, {
+      next_action: "wait_for_turn",
+      allowed_tools: ["wait_for_turn"],
+      reason_code: "ROSTER_INCOMPLETE",
+      context: {
+        workflow_id: wfId,
+        phase: curState.phase as "idle" | "requirements" | "planning" | "implementation" | "summary",
+        round: curState.round,
+        turn: curState.turn,
+        holds_turn: curState.turn === identity,
+        can_advance: false,
+      },
     });
   } else {
-    tip = renderTip("confirm.joined", {
+    g = guidance("confirm.joined", {
       identity,
       responsibility: myResponsibilityLabel,
       workflow_id: wfId,
       phase_status: phaseStatus,
       participant_labels: names,
+    }, {
+      next_action: "wait_for_turn",
+      allowed_tools: ["wait_for_turn"],
+      reason_code: rosterNowComplete ? "CONFIRMED_NEEDS_TURN_CLAIM" : "ROSTER_INCOMPLETE",
+      context: {
+        workflow_id: wfId,
+        phase: curState.phase as "idle" | "requirements" | "planning" | "implementation" | "summary",
+        round: curState.round,
+        turn: curState.turn,
+        holds_turn: curState.turn === identity,
+        can_advance: false,
+      },
     });
   }
 
@@ -492,7 +530,7 @@ export async function confirmTask(
     workflow_id: wfId,
     phase: curState.phase,
     recovered,
-  }, tip);
+  }, g);
   });
   });
 }
