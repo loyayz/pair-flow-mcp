@@ -66,3 +66,16 @@ cp -r skills/pairflow ~/.claude/skills/pairflow
 PairFlow 信任本机进程，不提供外部用户身份认证；token 用于参与者身份路由和工作流操作授权，避免正常协作中的串身份与串工作流。
 
 完整设计文档见 `docs/design.md`。
+
+## 定制 Tip 模板
+
+PairFlow 所有 AI 行动指引（`tip` 字段）均由 `templates/tips/` 下的纯文本模板控制。fork 维护者可直接编辑这些文件来定制提示文案，无需修改 TypeScript 源码。
+
+**编辑流程**：
+1. 编辑 `templates/tips/` 下对应场景的 `.md` 文件
+2. 运行 `npx vitest run` 确认模板校验通过
+3. 重启 PairFlow 服务
+
+详细语法、变量列表和编辑示例见 `templates/tips/README.md`。
+
+> **注意**：v1 不支持 `--templates` CLI 参数或热加载。模板修改后需重启服务生效。模板加载失败会导致服务启动失败（不静默回退）。

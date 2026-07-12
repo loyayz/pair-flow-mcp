@@ -75,13 +75,12 @@ export async function advance(
       const next = markTurnAssigned(initPlanningPhase(state, reviewer.identity), identity);
       setState(workflowId, next);
 
-      const turnIsSelf = reviewer.identity === identity;
+      const planIsSelf = reviewer.identity === identity;
       const planFile = workflowArchivePath(next, next.workflow_id!, "planning", `r1_${reviewer.identity}.md`).replace(/\\/g, "/");
-      const planKey = turnIsSelf ? "advance.planning.self" : "advance.planning.other";
-      const planVars = turnIsSelf
-        ? { identity, file_path: planFile }
-        : { identity, turn: reviewer.identity, file_path: planFile };
-      return ok({ ok: true, new_phase: "planning", turn: reviewer.identity }, renderTip(planKey, planVars));
+      if (planIsSelf) {
+        return ok({ ok: true, new_phase: "planning", turn: reviewer.identity }, renderTip("advance.planning.self", { identity, file_path: planFile }));
+      }
+      return ok({ ok: true, new_phase: "planning", turn: reviewer.identity }, renderTip("advance.planning.other", { identity, turn: reviewer.identity, file_path: planFile }));
     }
 
     if (currentPhase === "planning") {
@@ -92,11 +91,10 @@ export async function advance(
 
       const implIsSelf = developer.identity === identity;
       const implFile = workflowArchivePath(next, next.workflow_id!, "implementation", `r1_coding_${developer.identity}.md`).replace(/\\/g, "/");
-      const implKey = implIsSelf ? "advance.implementation.self" : "advance.implementation.other";
-      const implVars = implIsSelf
-        ? { identity, file_path: implFile }
-        : { identity, turn: developer.identity, file_path: implFile };
-      return ok({ ok: true, new_phase: "implementation", sub_phase: "coding", turn: developer.identity }, renderTip(implKey, implVars));
+      if (implIsSelf) {
+        return ok({ ok: true, new_phase: "implementation", sub_phase: "coding", turn: developer.identity }, renderTip("advance.implementation.self", { identity, file_path: implFile }));
+      }
+      return ok({ ok: true, new_phase: "implementation", sub_phase: "coding", turn: developer.identity }, renderTip("advance.implementation.other", { identity, turn: developer.identity, file_path: implFile }));
     }
 
     if (currentPhase === "implementation") {

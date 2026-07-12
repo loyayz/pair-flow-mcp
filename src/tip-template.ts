@@ -214,7 +214,7 @@ export function renderTip(key: TemplateKey, values: Record<string, string | numb
   if (!registry) {
     initializeTipTemplates();
   }
-  const template = registry.get(key);
+  const template = registry!.get(key);
   if (!template) {
     throw new Error(`unknown tip template key: ${key}`);
   }

@@ -25,10 +25,10 @@ export async function getStateTool(
     turn: state.turn,
   };
   if (hasRecoveryPlaceholderParticipant(state)) {
-    return ok(workflowData, renderTip("get-state.recovery-pending", { identity, workflow_id: workflowId }));
+    return ok(workflowData, renderTip("get-state.recovery-pending", { identity, workflow_id: workflowId! }));
   }
   if (!hasCompleteParticipantRoster(state)) {
-    return ok(workflowData, renderTip("get-state.roster-pending", { identity, workflow_id: workflowId }));
+    return ok(workflowData, renderTip("get-state.roster-pending", { identity, workflow_id: workflowId! }));
   }
   return ok(workflowData, buildTip(state, identity));
 }
