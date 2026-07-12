@@ -15,6 +15,7 @@ import { confirmTask } from "./tools/confirm-task.js";
 import { HTTP_SERVER_OPTIONS } from "./http-server-policy.js";
 import { describeListenError, parseServerArgs, SERVER_HELP } from "./server-config.js";
 import { runWithTransportCleanup } from "./transport-lifecycle.js";
+import { initializeTipTemplates } from "./tip-template.js";
 
 const cliConfig = (() => {
   try {
@@ -28,6 +29,14 @@ if (cliConfig.help) {
   console.log(SERVER_HELP);
   process.exit(0);
 }
+
+try {
+  initializeTipTemplates();
+} catch (error) {
+  console.error(`[pair-flow] failed to load tip templates: ${error instanceof Error ? error.message : String(error)}`);
+  process.exit(1);
+}
+
 const PORT = cliConfig.port;
 const HOST = "127.0.0.1";
 const MAX_REQUEST_BODY_BYTES = 1024 * 1024;
