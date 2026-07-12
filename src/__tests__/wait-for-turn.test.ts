@@ -354,6 +354,19 @@ describe("wait_for_turn cancellation", () => {
 
     expect(payload.tip).toContain("继续调用 wait_for_turn");
     expect(payload.tip).not.toContain("向用户报告");
+
+    // instruction regression: timeout-ready must have context
+    expect(payload.instruction).toBeDefined();
+    expect(payload.instruction.reason_code).toBe("WAIT_TIMEOUT");
+    expect(payload.instruction.next_action).toBe("wait_for_turn");
+    expect(payload.instruction.context).toMatchObject({
+      workflow_id: TEST_WORKFLOW_ID,
+      phase: "planning",
+      round: 1,
+      turn: "bob",
+      holds_turn: false,
+      can_advance: false,
+    });
   });
 
   it("continues waiting after timeout when the participant roster is incomplete", async () => {
@@ -378,6 +391,13 @@ describe("wait_for_turn cancellation", () => {
 
     expect(payload.tip).toContain("继续调用 wait_for_turn");
     expect(payload.tip).toContain("参与者尚未全部完成 confirm_task");
+
+    // instruction regression: timeout-roster must have context
+    expect(payload.instruction).toBeDefined();
+    expect(payload.instruction.reason_code).toBe("WAIT_TIMEOUT");
+    expect(payload.instruction.next_action).toBe("wait_for_turn");
+    expect(payload.instruction.context).toBeDefined();
+    expect(payload.instruction.context!.phase).toBe("idle");
   });
 
   it("warns after the participant roster remains incomplete for 30 minutes", async () => {
@@ -402,5 +422,58 @@ describe("wait_for_turn cancellation", () => {
 
     expect(payload.warning).toContain("未完成 confirm_task");
     expect(payload.tip).toContain("建议向用户报告");
+
+    // instruction regression: roster warning must have context
+    expect(payload.instruction).toBeDefined();
+    expect(payload.instruction.reason_code).toBe("PARTICIPANT_CONFIRMATION_STALE");
+    expect(payload.instruction.next_action).toBe("report_user");
+    expect(payload.instruction.allowed_tools).toEqual([]);
+    expect(payload.instruction.context).toBeDefined();
+    expect(payload.instruction.context!.phase).toBe("idle");
+  });
+
+  it("warns when turn remains unclaimed for 30 minutes", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-11T01:31:00.000Z"));
+    const token = registerToken("alice");
+    bindWorkflow(token, TEST_WORKFLOW_ID);
+    setState(TEST_WORKFLOW_ID, {
+      ...defaultState(),
+      workflow_id: TEST_WORKFLOW_ID,
+      phase: "implementation",
+      sub_phase: "coding",
+      round: 1,
+      turn: "bob",
+      turn_switched_at: "2026-07-11T01:00:00.000Z",
+      turn_claimed_at: null,
+      participants: [
+        { identity: "alice", is_supervisor: true, is_developer: false, registered_at: "now" },
+        { identity: "bob", is_supervisor: false, is_developer: true, registered_at: "now" },
+      ],
+    });
+    const extra = {
+      signal: new AbortController().signal,
+      requestInfo: { headers: { "x-ai-identity": token } },
+    } as unknown as RequestHandlerExtra<ServerRequest, ServerNotification>;
+
+    const result = await waitForTurn(extra);
+    const payload = JSON.parse((result.content[0] as { text: string }).text);
+
+    expect(payload.warning).toContain("掉线");
+    expect(payload.tip).toContain("建议向用户报告");
+
+    // instruction regression: turn warning must have context
+    expect(payload.instruction).toBeDefined();
+    expect(payload.instruction.reason_code).toBe("TURN_UNCLAIMED_STALE");
+    expect(payload.instruction.next_action).toBe("report_user");
+    expect(payload.instruction.context).toMatchObject({
+      workflow_id: TEST_WORKFLOW_ID,
+      phase: "implementation",
+      sub_phase: "coding",
+      round: 1,
+      turn: "bob",
+      holds_turn: false,
+      can_advance: false,
+    });
   });
 });

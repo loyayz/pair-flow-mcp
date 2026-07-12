@@ -311,4 +311,29 @@ describe("instruction scenarios", () => {
     expect(json).not.toContain("token");
     expect(json).not.toContain(".pid");
   });
+
+  it("implementation review round >2 includes previous_review with required:true", () => {
+    const state = fixture({
+      phase: "implementation", sub_phase: "review", round: 4, turn: "sup",
+      last_submission_by_participant: {
+        sup: { round: 2, sub_phase: "review", commit_hash: "myreview1", submitted_at: new Date().toISOString(), file_path: "C:/repo/handoff/20260701000001/implementation/r2_review_sup.md" },
+        dev: { round: 3, sub_phase: "coding", commit_hash: "devcode3", submitted_at: new Date().toISOString(), file_path: "C:/repo/handoff/20260701000001/implementation/r3_coding_dev.md" },
+      },
+    });
+    const g = buildGuidance(state, "sup");
+
+    // Both participants have submitted → convergence scenario for supervisor
+    expect(g.instruction.next_action).toBe("decide_convergence");
+    expect(g.instruction.references).toBeDefined();
+
+    const prevOut = g.instruction.references!.find((r) => r.kind === "previous_output");
+    expect(prevOut).toBeDefined();
+    expect(prevOut!.required).toBe(true);
+
+    const prevRev = g.instruction.references!.find((r) => r.kind === "previous_review");
+    expect(prevRev).toBeDefined();
+    expect(prevRev!.required).toBe(true);
+    expect(prevRev!.file_path).toContain("r2_review_sup.md");
+    expect(prevRev!.commit).toBe("myreview1");
+  });
 });
