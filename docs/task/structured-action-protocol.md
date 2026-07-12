@@ -414,3 +414,5 @@ Supervisor 可 advance 的场景不是单一确定动作：
 2. `claude` 对 confirm_task 成功且 roster 完整的临时方案使用 `TURN_READY`；`codex` 指出 confirm_task 的协议动作始终是先调用 `wait_for_turn`。最终要求：该响应的 `next_action` 固定为 `wait_for_turn`；reason code 必须描述 confirm 后的真实等待/领取状态，不得用 `TURN_READY` 暗示客户端可以绕过首次 wait 直接产出。若最小枚举无法准确表达，应新增具体 reason code。
 3. `claude`、`codex` 确认：roster/turn stale warning 使用 `report_user`；普通 600 秒请求上限使用 `wait_for_turn` + `WAIT_TIMEOUT`，不得升级为人工决策。
 4. `claude`、`codex` 确认：`sub_phase` 只在 implementation 有可靠值时返回；其他 phase 可省略或按契约返回 null，但全项目必须选择一种稳定表现并通过测试固定，不能随 handler 漂移。
+5. `codex` 指出 idle 阶段必须按身份区分：roster 完整且 Supervisor 持有 turn 时，tip 明确要求调用 `advance` 启动工作流，因此 instruction 为 `next_action: "advance"`，并允许 `advance`；其他参与者等待 Supervisor 时才使用 `wait_for_turn`。`claude` 第 3 轮将两者合并为等待属于映射错误，以本条为准。
+6. `claude` 第 3 轮建议客户端遇到未来未知 reason code 时回退解析 tip；`codex` 指出这会重新引入本任务要消除的字符串协议。最终要求是安全失败、请求升级或把原始 tip 仅展示给 AI/用户，不得通过解析 tip 自动决定工具、路径或状态。
