@@ -386,3 +386,156 @@ codex 的复盘已从 Supervisor 角度全面覆盖了流程层面。以下从 D
 作为 Developer，本次协作体验的核心感受是：**PairFlow 的交替审阅机制确实优于单人自审，但 tip 作为唯一的信息通道太”窄”了。** 自然语言 tip 适合传达”怎么做”的思路启发，不适合传达”做什么、往哪存、能不能提交”的结构化指令。把这两层分开——结构化协议告诉 AI 该执行什么动作、模板文件告诉 AI 该怎么思考——是 PairFlow 从”能用”到”好用”的关键一步。
 
 本次模板化任务的完成，恰好为这个分离铺平了技术基础：模板引擎已经就位、文案已经外置、变量契约已经建立。下一步只需要在响应中增加独立的结构化字段，模板继续负责人类可编辑的”思考指引”部分。（claude）
+
+---
+
+## 11. 结构化行动协议工作流后的 PairFlow 增量复盘
+
+> 复盘角色：codex（Supervisor / Reviewer）
+>
+> 工作流：`20260712140521`
+>
+> 任务：结构化行动协议
+>
+> 日期：2026-07-12
+
+本轮已完成上文 P0-1：PairFlow 的 tip 业务响应具备机器可读 instruction，覆盖 action、allowed_tools、context、required_output、references、decision 和稳定 reason code。以下只记录该能力落地后进一步暴露的 **PairFlow 产品与协议问题**，不把实现者漏测、评审轮次或等待时长本身当作协作问题。
+
+### 11.1 运行中的 Server 缺少版本与能力可见性
+
+本轮修改的是 PairFlow Server 自身，但工作流必须继续由启动时的旧进程驱动。仓库代码已经支持 instruction，并不代表当前监听端口的进程已经加载该能力；客户端若只看仓库或包版本，可能误判线上实际协议。
+
+建议：
+
+- `/health` 增加 `server_version`、`protocol_version`、`build_commit` 和 `capabilities`；
+- register/get_state 返回稳定的协议能力集合，例如 `instruction_v1`；
+- skill 在初始化时记录并回显实际 Server 能力，而不是根据本地源码推断；
+- Server 自身升级任务结束时提示“当前进程仍运行旧 build，需在工作流结束后重启生效”，但不得在活跃 workflow 中自动重启。
+
+优先级：P0。没有能力协商，instruction 的客户端接入会出现“代码已支持、进程未支持”的隐性版本错配。（codex）
+
+### 11.2 `report_user` 缺少“用户已决定继续”的协议闭环
+
+turn 超过 30 分钟未领取后，`wait_for_turn` 返回 `report_user`。用户明确选择继续等待后，再次调用仍会立即返回同一 warning，因为原始时间戳和阈值没有变化。客户端只能自行限频重试，PairFlow 不知道该 warning 已被用户确认。
+
+建议增加显式确认机制，二选一即可：
+
+1. `ack_warning({ warning_id, decision: "continue" })`，服务端记录 acknowledgement 和下次提醒时间；或
+2. `wait_for_turn({ acknowledged_warning_id })`，本次继续等待，直到状态变化或新的提醒窗口到达。
+
+warning 应包含稳定 `warning_id`、`first_detected_at`、`acknowledged_at` 和 `next_report_at`。确认只抑制重复报告，不转移 turn、不推进 round，也不清除原始活性时间戳。
+
+优先级：P0。否则 `report_user` 只有“报告”没有“用户决策后的下一步”，自动客户端仍需在协议外发明状态。（codex）
+
+### 11.3 “未领取 turn”不能充分表达参与者活性
+
+当前活性判断以 `wait_for_turn` 写入 `turn_claimed_at` 为核心。如果参与者通过其他可靠通知得知 turn、恢复后直接工作，或客户端的领取响应丢失，PairFlow 会把“正在工作但没有 claim”报告为可能掉线。反过来，已 claim 后真正卡死又缺少持续信号。
+
+建议把活性拆成三层，而不是只看 claim：
+
+- `assigned_at`：服务端交接 turn；
+- `claimed_at`：参与者确认收到完整指引；
+- `last_active_at`：持有者通过轻量 heartbeat 更新。
+
+warning reason code 分为 `TURN_UNCLAIMED_STALE` 与 `TURN_CLAIMED_INACTIVE`。heartbeat 只更新遥测字段，不改变状态机权限；频率应受限，例如 2–5 分钟一次，避免形成高频轮询。
+
+优先级：P1。该能力与 11.2 的 warning acknowledgement 应统一设计。（codex）
+
+### 11.4 Instruction 仍需要运行时不变量，而不只是 TypeScript 类型
+
+当前 instruction 已有封闭联合类型，但业务对象仍由各场景直接组装。TypeScript 能限制字段名和值域，却不能自动保证跨字段约束，例如：
+
+- `produce_and_submit` 必须有 required_output；
+- `decide_convergence` 必须同时有 decision 与 required_output；
+- `stop` 的 allowed_tools 必须为空；
+- tip 明确要求读取的 reference 必须 `required:true`；
+- wait timeout/warning 应携带当时可可靠确定的 context；
+- 所有路径必须为 POSIX，commit 必须 canonical lowercase。
+
+建议将 guidance 构造收敛为按 action 区分的构造器，或在响应输出前执行轻量 `validateInstruction()`。开发/测试环境遇到无效组合直接失败；生产环境不得静默删除字段或回退解析 tip，而应返回明确内部协议错误并记录场景键。
+
+同时应逐步移除 `ok(data, stringTip)` legacy 入口。只要内部 API 仍允许“只有 tip、没有 instruction”，就无法从结构上保证所有新业务分支遵守双通道契约。
+
+优先级：P1。这是结构化协议从“当前实现正确”走向“后续扩展不易写错”的关键。（codex）
+
+### 11.5 完成响应缺少最终报告的规范定位
+
+Summary 草稿被对方确认后，Supervisor 可以直接 advance 结束；此时归档里同时存在 Supervisor 草稿和对方审阅文件。当前完成响应只给 archive_root，没有告诉客户端哪一份是最终被接受的报告、对应 commit 是什么，也没有机器可读的验收摘要。
+
+建议 SUMMARY → IDLE 返回：
+
+```json
+{
+  "final_summary": {
+    "file_path": "C:/.../summary/r1_codex.md",
+    "commit": "...",
+    "approved_by": ["codex", "claude"]
+  },
+  "archive_root": "C:/.../handoff/<workflow_id>",
+  "verification": {
+    "reported_by": "codex",
+    "commands": ["npx tsc --noEmit", "npx vitest run"]
+  }
+}
+```
+
+PairFlow 不需要读取或判断报告内容，也不应自己运行验证命令；它只根据已提交记录标记哪份 summary 被后续审阅明确接受。若最后一轮是修订稿，则 final_summary 指向最新被接受版本。
+
+优先级：P1。这样工作流结束不仅“有一堆归档”，还有稳定的最终交付入口。（codex）
+
+### 11.6 建议的下一步顺序
+
+1. P0：Server build/protocol capability 暴露与初始化回显；
+2. P0：warning acknowledgement / continue-wait 闭环；
+3. P1：claimed + heartbeat 活性模型；
+4. P1：instruction 运行时不变量与移除 legacy string tip；
+5. P1：完成响应返回 final_summary 与批准链。
+
+这五项都属于 PairFlow 协议、状态可观测性或交付契约，不要求 Server 执行 Git、测试、构建，也不把内容质量判断收回服务端。
+
+---
+
+## 12. Developer 视角补充（结构化行动协议工作流）
+
+> 补充人：claude（Developer）
+> 工作流：`20260712140521`
+> 日期：2026-07-12
+
+codex 的 §11 已从 Supervisor 角度覆盖了能力协商、warning 闭环、活性模型、运行时不变量和最终报告。以下从 Developer 视角补充本轮实现过程中暴露的 PairFlow 产品/协议问题，不重复已记录的实现者失误或评审轮次。
+
+### 12.1 advance 后"双跳"等待在调用者即产出者时是浪费
+
+本轮从 requirements→planning 和 planning→implementation 两次 advance 后，响应返回 `wait_for_turn / PHASE_ADVANCED`，调用者必须再发一次 `wait_for_turn` 才能拿到 `produce_and_submit` 完整指引。
+
+这个设计在 advance 调用者与新 phase 产出者不同时是合理的——advance 触发 phase 变更、turn 交给对方、调用者退回到等待。**但当 advance 调用者就是新 phase 的首个产出者时**（如本轮 implementation→summary：Supervisor advance 后 turn 是自己），advance 已知道 `new_phase=summary, turn=identity`，却仍返回 `wait_for_turn`，多了一次无意义的网络往返。
+
+**建议**：当 advance 后的 turn 属于调用者本人时，advance 响应直接返回 `produce_and_submit` + 完整 required_output/references，省略中间 wait。状态机逻辑不变——只是将 wait_for_turn 在 turn-ready 时的计算内联到自指向 advance 的响应中。这与"非最终 advance 返回 wait_for_turn"的设计不矛盾，后者针对 turn 交给对方的场景。（claude）
+
+### 12.2 implementation sub_phase 的机械交替缺少"连续 coding"逃生口
+
+当前 submit 必定切换 sub_phase：coding→review→coding→review……本轮严格交替没有问题，因为每一轮确实需要对方反馈。但如果 Developer 在提交后发现自己的实现有明显遗漏（例如漏了一个 handler），想连续补一版 coding 而不等待 review，当前协议强制必须经过 review 才能回到 coding。
+
+**建议**：允许 turn 持有者在 submit 时附带意图声明，当对方确认后 sub_phase 不切换、turn 交回原持有者继续。对方确认机制防止单方面跳过 review，但把"是否要 review"的决定权从机械交替还给参与者判断。PairFlow 只提供状态机分支，不替参与者决定何时需要互审。（claude）
+
+### 12.3 planning 修订后缺少"最终计划"的规范文件
+
+本轮 planning 阶段：r1_codex 提出原始计划 → r2_claude 审阅提 9 条建议 → r3_codex 声明已将 8 条纳入 r1 → r4_claude 确认。但被纳入修订的 r1_codex.md **仍叫 r1_codex.md**，没有生成一份"经双方确认的 r_final.md"。Implementation 阶段需要参考计划时，我必须同时读 r1_codex.md（结构）和 r3_codex.md（修订条款），再自行合并。
+
+这不是内容正确性问题——两份文件都在那里。但 PairFlow 的归档命名约定（`r{round}_{identity}.md`）没有给"被确认接受的最终版本"留下规范位置。
+
+**建议**：当 Supervisor 在 planning 阶段 advance 时，PairFlow 在 tip 中建议 Supervisor 提交一份 `r_final.md`（或检出最新被接受的 plan 路径作为 instruction.references 中的 `kind: "plan"` 权威引用）。不强制——如果原 r1 就是最终版且无修订，直接用 r1 即可。但如果 planning 经过多轮修订，最终引用应指向被双方明确接受的那个版本，而不是最早的草稿。（claude）
+
+### 12.4 长 coding turn 期间对方只能看到"等待"——缺乏工作进度信号
+
+本轮 r1 coding 从 Task 1 到 Task 5 连续实现约半小时。期间 Supervisor 调用 `wait_for_turn` 只看到"继续等待"或超时。对方无法区分"Developer 正在活跃工作中"还是"客户端已经卡死但 turn 被 claim 了"。codex 的 §11.3 已提出 heartbeat——从 Developer 角度完全同意：coding 期间应能周期性更新活性信号，让对方 wait 返回 `TURN_CLAIMED_ACTIVE` 而非 `TURN_UNCLAIMED_STALE`。（claude）
+
+### 12.5 建议的优先顺序
+
+与 codex §11.6 的建议互补，从 Developer 角度排序：
+
+1. **P1：advance 自指向优化**（12.1）——减少无意义往返，对 Developer 体验影响直接；
+2. **P1：heartbeat / 活性信号**（§11.3 + 12.4）——让双方在长 coding turn 中互见进度；
+3. **P2：planning 最终版本规范**（12.3）——改善 implementation 阶段的参考文件可发现性；
+4. **P2：sub_phase 跳过机制**（12.2）——给参与者更大的流程自主权。
+
+这些都需要协议层变更（新增 instruction 字段或状态机分支），不是客户端或 skill 能单方面解决的。（claude）
