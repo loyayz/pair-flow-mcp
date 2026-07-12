@@ -9,7 +9,7 @@ import { deleteState, getState, setState, getMutex, hasCompleteParticipantRoster
 import { err, ok } from "../response.js";
 import { workflowArchivePath, workflowWorkDir } from "../archive-path.js";
 import { unbindWorkflow } from "../token-map.js";
-import { renderTip } from "../tip-template.js";
+import { guidance } from "../instruction.js";
 
 export async function advance(
   args: Record<string, unknown>,
@@ -59,7 +59,19 @@ export async function advance(
       setState(workflowId, next);
 
       const reqFile = workflowArchivePath(next, next.workflow_id!, "requirements", `r1_${nonSupervisor}.md`).replace(/\\/g, "/");
-      return ok({ ok: true, new_phase: "requirements", turn: nonSupervisor }, renderTip("advance.requirements.other", { identity, turn: nonSupervisor, file_path: reqFile }));
+      return ok({ ok: true, new_phase: "requirements", turn: nonSupervisor }, guidance("advance.requirements.other", { identity, turn: nonSupervisor, file_path: reqFile }, {
+        next_action: "wait_for_turn",
+        allowed_tools: ["wait_for_turn"],
+        reason_code: "PHASE_ADVANCED",
+        context: {
+          workflow_id: next.workflow_id!,
+          phase: "requirements",
+          round: 1,
+          turn: nonSupervisor,
+          holds_turn: nonSupervisor === identity,
+          can_advance: false,
+        },
+      }));
     }
 
     if (currentPhase === "requirements") {
@@ -68,7 +80,19 @@ export async function advance(
         setState(workflowId, next);
 
         const summaryFile = workflowArchivePath(next, next.workflow_id!, "summary", `r1_${identity}.md`).replace(/\\/g, "/");
-        return ok({ ok: true, new_phase: "summary", turn: identity }, renderTip("advance.summary.self", { identity, file_path: summaryFile }));
+        return ok({ ok: true, new_phase: "summary", turn: identity }, guidance("advance.summary.self", { identity, file_path: summaryFile }, {
+          next_action: "wait_for_turn",
+          allowed_tools: ["wait_for_turn"],
+          reason_code: "PHASE_ADVANCED",
+          context: {
+            workflow_id: next.workflow_id!,
+            phase: "summary",
+            round: 1,
+            turn: identity,
+            holds_turn: true,
+            can_advance: false,
+          },
+        }));
       }
       const reviewer = state.participants.find((p) => !p.is_developer);
       if (!reviewer) return err("no reviewer (is_developer=false) registered");
@@ -78,9 +102,33 @@ export async function advance(
       const planIsSelf = reviewer.identity === identity;
       const planFile = workflowArchivePath(next, next.workflow_id!, "planning", `r1_${reviewer.identity}.md`).replace(/\\/g, "/");
       if (planIsSelf) {
-        return ok({ ok: true, new_phase: "planning", turn: reviewer.identity }, renderTip("advance.planning.self", { identity, file_path: planFile }));
+        return ok({ ok: true, new_phase: "planning", turn: reviewer.identity }, guidance("advance.planning.self", { identity, file_path: planFile }, {
+          next_action: "wait_for_turn",
+          allowed_tools: ["wait_for_turn"],
+          reason_code: "PHASE_ADVANCED",
+          context: {
+            workflow_id: next.workflow_id!,
+            phase: "planning",
+            round: 1,
+            turn: reviewer.identity,
+            holds_turn: true,
+            can_advance: false,
+          },
+        }));
       }
-      return ok({ ok: true, new_phase: "planning", turn: reviewer.identity }, renderTip("advance.planning.other", { identity, turn: reviewer.identity, file_path: planFile }));
+      return ok({ ok: true, new_phase: "planning", turn: reviewer.identity }, guidance("advance.planning.other", { identity, turn: reviewer.identity, file_path: planFile }, {
+        next_action: "wait_for_turn",
+        allowed_tools: ["wait_for_turn"],
+        reason_code: "PHASE_ADVANCED",
+        context: {
+          workflow_id: next.workflow_id!,
+          phase: "planning",
+          round: 1,
+          turn: reviewer.identity,
+          holds_turn: false,
+          can_advance: false,
+        },
+      }));
     }
 
     if (currentPhase === "planning") {
@@ -92,9 +140,35 @@ export async function advance(
       const implIsSelf = developer.identity === identity;
       const implFile = workflowArchivePath(next, next.workflow_id!, "implementation", `r1_coding_${developer.identity}.md`).replace(/\\/g, "/");
       if (implIsSelf) {
-        return ok({ ok: true, new_phase: "implementation", sub_phase: "coding", turn: developer.identity }, renderTip("advance.implementation.self", { identity, file_path: implFile }));
+        return ok({ ok: true, new_phase: "implementation", sub_phase: "coding", turn: developer.identity }, guidance("advance.implementation.self", { identity, file_path: implFile }, {
+          next_action: "wait_for_turn",
+          allowed_tools: ["wait_for_turn"],
+          reason_code: "PHASE_ADVANCED",
+          context: {
+            workflow_id: next.workflow_id!,
+            phase: "implementation",
+            sub_phase: "coding",
+            round: 1,
+            turn: developer.identity,
+            holds_turn: true,
+            can_advance: false,
+          },
+        }));
       }
-      return ok({ ok: true, new_phase: "implementation", sub_phase: "coding", turn: developer.identity }, renderTip("advance.implementation.other", { identity, turn: developer.identity, file_path: implFile }));
+      return ok({ ok: true, new_phase: "implementation", sub_phase: "coding", turn: developer.identity }, guidance("advance.implementation.other", { identity, turn: developer.identity, file_path: implFile }, {
+        next_action: "wait_for_turn",
+        allowed_tools: ["wait_for_turn"],
+        reason_code: "PHASE_ADVANCED",
+        context: {
+          workflow_id: next.workflow_id!,
+          phase: "implementation",
+          sub_phase: "coding",
+          round: 1,
+          turn: developer.identity,
+          holds_turn: false,
+          can_advance: false,
+        },
+      }));
     }
 
     if (currentPhase === "implementation") {
@@ -102,7 +176,19 @@ export async function advance(
       setState(workflowId, next);
 
       const summaryFile = workflowArchivePath(next, next.workflow_id!, "summary", `r1_${identity}.md`).replace(/\\/g, "/");
-      return ok({ ok: true, new_phase: "summary", turn: identity }, renderTip("advance.summary.self", { identity, file_path: summaryFile }));
+      return ok({ ok: true, new_phase: "summary", turn: identity }, guidance("advance.summary.self", { identity, file_path: summaryFile }, {
+        next_action: "wait_for_turn",
+        allowed_tools: ["wait_for_turn"],
+        reason_code: "PHASE_ADVANCED",
+        context: {
+          workflow_id: next.workflow_id!,
+          phase: "summary",
+          round: 1,
+          turn: identity,
+          holds_turn: true,
+          can_advance: false,
+        },
+      }));
     }
 
     if (currentPhase === "summary") {
@@ -121,7 +207,11 @@ export async function advance(
       deleteState(workflowId);
       unbindWorkflow(workflowId);
 
-      return ok({ ok: true, new_phase: "idle", turn: "idle" }, renderTip("advance.completed", { identity, archive_root: finishedArchive }));
+      return ok({ ok: true, new_phase: "idle", turn: "idle" }, guidance("advance.completed", { identity, archive_root: finishedArchive }, {
+        next_action: "stop",
+        allowed_tools: [],
+        reason_code: "WORKFLOW_COMPLETED",
+      }));
     }
 
     return err(`unknown phase: ${currentPhase}`);

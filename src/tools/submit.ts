@@ -8,7 +8,7 @@ import { getState, setState, getMutex, hasCompleteParticipantRoster, hasRecovery
 
 import { err, ok } from "../response.js";
 import { identityLabel, phaseLabel } from "../tip.js";
-import { renderTip } from "../tip-template.js";
+import { guidance, type Guidance } from "../instruction.js";
 import { atomicWriteText } from "../atomic-write.js";
 import { archiveRoot, workflowArchivePath, workflowWorkDir } from "../archive-path.js";
 import { findSymbolicLinkInPath } from "../path-safety.js";
@@ -61,7 +61,7 @@ export async function submit(
     if (isExactReplay) {
       return ok(
         { ok: true, next_turn: state.turn },
-        buildSubmissionSuccessTip(state, identity, previousSubmission.file_path!),
+        buildSubmissionSuccessGuidance(state, identity, previousSubmission.file_path!),
       );
     }
     if (!isCurrentHolder(state, identity)) return err(`not your turn — current turn: ${state.turn}`);
@@ -155,12 +155,12 @@ export async function submit(
 
     return ok(
       { ok: true, next_turn: nextState.turn },
-      buildSubmissionSuccessTip(nextState, identity, expectedFilePath),
+      buildSubmissionSuccessGuidance(nextState, identity, expectedFilePath),
     );
   });
 }
 
-function buildSubmissionSuccessTip(state: PairFlowState, identity: string, filePath: string): string {
+function buildSubmissionSuccessGuidance(state: PairFlowState, identity: string, filePath: string): Guidance {
   const supervisor = state.participants.find((participant) => participant.is_supervisor);
   const bothSubmitted = haveAllParticipantsSubmittedCurrentPhase(state);
   const posixPath = filePath.replace(/\\/g, "/");
@@ -177,13 +177,28 @@ function buildSubmissionSuccessTip(state: PairFlowState, identity: string, fileP
     file_path: posixPath,
   };
 
+  const inst = {
+    next_action: "wait_for_turn" as const,
+    allowed_tools: ["wait_for_turn" as const],
+    reason_code: "SUBMISSION_ACCEPTED" as const,
+    context: {
+      workflow_id: state.workflow_id!,
+      phase: state.phase as "implementation" | "requirements" | "planning" | "summary",
+      ...(state.phase === "implementation" && state.sub_phase ? { sub_phase: state.sub_phase as "coding" | "review" } : {}),
+      round: state.round,
+      turn: state.turn,
+      holds_turn: false,
+      can_advance: false,
+    },
+  };
+
   if (bothSubmitted && supervisor && state.turn === supervisor.identity) {
-    return renderTip("submit.advance-ready", { ...common, supervisor: supervisor.identity });
+    return guidance("submit.advance-ready", { ...common, supervisor: supervisor.identity }, inst);
   }
   if (bothSubmitted && supervisor) {
-    return renderTip("submit.both-submitted", { ...common, turn: state.turn, supervisor: supervisor.identity });
+    return guidance("submit.both-submitted", { ...common, turn: state.turn, supervisor: supervisor.identity }, inst);
   }
-  return renderTip("submit.wait", { ...common, turn: state.turn });
+  return guidance("submit.wait", { ...common, turn: state.turn }, inst);
 }
 
 function expectedSubmissionPath(
