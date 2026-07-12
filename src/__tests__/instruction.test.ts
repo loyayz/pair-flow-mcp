@@ -112,7 +112,7 @@ describe("instruction contract", () => {
     expect(extra).toEqual({ ok: true, instruction: { forged: true } });
   });
 
-  it("rejects paths containing backslashes in instruction", () => {
+  it("documents that instruction paths must use POSIX slashes (runtime enforcement in scenario tests)", () => {
     const badInstruction: PairFlowInstruction = {
       ...turnReadyInstruction,
       required_output: {

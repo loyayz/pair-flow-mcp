@@ -108,6 +108,7 @@ describe("instruction scenarios", () => {
     expect(g.instruction.references).toBeDefined();
     const prevRef = g.instruction.references!.find((r) => r.kind === "previous_output");
     expect(prevRef).toBeDefined();
+    expect(prevRef!.required).toBe(true);
     expect(prevRef!.commit).toBe("abc1234");
   });
 
@@ -161,6 +162,7 @@ describe("instruction scenarios", () => {
     expect(g.instruction.required_output!.file_path).toContain("r2_review_sup.md");
     const prevRef = g.instruction.references!.find((r) => r.kind === "previous_output");
     expect(prevRef).toBeDefined();
+    expect(prevRef!.required).toBe(true);
     expect(prevRef!.commit).toBe("def5678");
   });
 
@@ -170,7 +172,9 @@ describe("instruction scenarios", () => {
 
     expect(g.instruction.next_action).toBe("produce_and_submit");
     expect(g.instruction.context?.phase).toBe("summary");
-    expect(g.instruction.references!.some((r) => r.kind === "archive")).toBe(true);
+    const archiveRef = g.instruction.references!.find((r) => r.kind === "archive");
+    expect(archiveRef).toBeDefined();
+    expect(archiveRef!.required).toBe(true);
   });
 
   it("planning round 1 with task reference", () => {
@@ -293,6 +297,7 @@ describe("instruction scenarios", () => {
 
     const prevRef = g.instruction.references!.find((r) => r.kind === "previous_output");
     expect(prevRef).toBeDefined();
+    expect(prevRef!.required).toBe(true);
     if (prevRef!.commit) {
       expect(prevRef!.commit).toBe(prevRef!.commit.toLowerCase());
     }

@@ -90,9 +90,9 @@ function prevRef(state: PairFlowState, identity: string): InstructionReference |
   const sub = other ? state.last_submission_by_participant[other.identity] : null;
   if (!sub?.file_path) return null;
   const ref: InstructionReference = {
-    kind: state.phase === "implementation" && state.sub_phase === "review" ? "previous_output" : "previous_output",
+    kind: "previous_output",
     file_path: sub.file_path.replace(/\\/g, "/"),
-    required: false,
+    required: true,
   };
   if (sub.commit_hash) ref.commit = sub.commit_hash.toLowerCase();
   return ref;
@@ -123,7 +123,7 @@ function prevReviewRef(state: PairFlowState, identity: string): InstructionRefer
   const ref: InstructionReference = {
     kind: "previous_review",
     file_path: path,
-    required: false,
+    required: true,
   };
   if (sub?.commit_hash) ref.commit = sub.commit_hash.toLowerCase();
   return ref;
@@ -131,7 +131,7 @@ function prevReviewRef(state: PairFlowState, identity: string): InstructionRefer
 
 function archiveRootRef(state: PairFlowState): InstructionReference {
   const path = workflowArchivePath(state, safe(state.workflow_id)).replace(/\\/g, "/");
-  return { kind: "archive", file_path: path, required: false };
+  return { kind: "archive", file_path: path, required: true };
 }
 
 // ── Guidance Selection ─────────────────────────────────────────────

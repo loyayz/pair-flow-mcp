@@ -5,9 +5,25 @@ import { parseSession } from "../identity.js";
 import { getState, setState, getMutex, hasCompleteParticipantRoster } from "../state.js";
 import { buildGuidance } from "../tip.js";
 import { err, ok } from "../response.js";
-import { guidance } from "../instruction.js";
+import { guidance, type InstructionContext } from "../instruction.js";
+import type { PairFlowState } from "../state.js";
 
 const POLL_INTERVAL_MS = 10_000;
+
+function waitContext(state: PairFlowState, identity: string): InstructionContext {
+  const ctx: InstructionContext = {
+    workflow_id: state.workflow_id ?? undefined,
+    phase: state.phase as InstructionContext["phase"],
+    round: state.round,
+    turn: state.turn,
+    holds_turn: state.turn === identity,
+    can_advance: false,
+  };
+  if (state.phase === "implementation" && state.sub_phase) {
+    ctx.sub_phase = state.sub_phase as "coding" | "review";
+  }
+  return ctx;
+}
 const TIMEOUT_MS = 600_000;
 const activeWaits = new Map<string, AbortController>();
 
@@ -67,6 +83,7 @@ async function waitForActiveTurn(
             next_action: "report_user",
             allowed_tools: [],
             reason_code: "PARTICIPANT_CONFIRMATION_STALE",
+            context: waitContext(state, identity),
           }),
         );
       }
@@ -104,6 +121,7 @@ async function waitForActiveTurn(
             next_action: "report_user",
             allowed_tools: [],
             reason_code: "TURN_UNCLAIMED_STALE",
+            context: waitContext(state, identity),
           }),
         );
       }
@@ -122,6 +140,7 @@ async function waitForActiveTurn(
       : err("workflow not found");
   }
   const rosterReady = hasCompleteParticipantRoster(timeoutState);
+  const ctx = waitContext(timeoutState, identity);
   return ok(
     { turn: timeoutState.turn, phase: timeoutState.phase, round: timeoutState.round },
     rosterReady
@@ -129,11 +148,13 @@ async function waitForActiveTurn(
           next_action: "wait_for_turn",
           allowed_tools: ["wait_for_turn"],
           reason_code: "WAIT_TIMEOUT",
+          context: ctx,
         })
       : guidance("wait.timeout-roster", { identity }, {
           next_action: "wait_for_turn",
           allowed_tools: ["wait_for_turn"],
           reason_code: "WAIT_TIMEOUT",
+          context: ctx,
         }),
   );
 }
