@@ -122,7 +122,7 @@ describe("instruction contract", () => {
       },
     };
 
-    expect(badInstruction.required_output.file_path).toContain("\\");
+    expect(badInstruction.required_output!.file_path).toContain("\\");
 
     // Any instruction used in production should use POSIX paths.
     // This test documents the invariant — enforcement is in the

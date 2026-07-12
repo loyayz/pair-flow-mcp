@@ -1,7 +1,15 @@
 import { describe, it, expect } from "vitest";
+import { mkdirSync, writeFileSync, rmSync, readFileSync, cpSync } from "node:fs";
+import { resolve } from "node:path";
+import { tmpdir } from "node:os";
 import { defaultState } from "../state.js";
 import type { PairFlowState } from "../state.js";
 import { buildGuidance, buildTip } from "../tip.js";
+import {
+  resetTipTemplatesForTests,
+  initializeTipTemplates,
+  DEFAULT_TIP_TEMPLATE_ROOT,
+} from "../tip-template.js";
 
 function fixture(overrides: Partial<PairFlowState> = {}): PairFlowState {
   const base = defaultState();
@@ -178,7 +186,7 @@ describe("instruction scenarios", () => {
   it("state.unknown maps to report_user", () => {
     const state = fixture({ phase: "requirements", round: 1, turn: "dev" });
     // Force unknown by setting an impossible phase
-    (state as Record<string, unknown>).phase = "nonexistent";
+    (state as unknown as Record<string, unknown>).phase = "nonexistent";
     const g = buildGuidance(state as unknown as PairFlowState, "dev");
 
     expect(g.instruction.next_action).toBe("report_user");
@@ -207,5 +215,95 @@ describe("instruction scenarios", () => {
     const tip = buildTip(state, "dev");
 
     expect(tip).toBe(g.tip);
+  });
+
+  // ── Template independence ────────────────────────────────────
+
+  it("template customization does not alter instruction", () => {
+    const root = resolve(tmpdir(), `pairflow-inst-test-${Date.now()}`);
+    mkdirSync(root, { recursive: true });
+
+    cpSync(DEFAULT_TIP_TEMPLATE_ROOT, root, { recursive: true });
+
+    try {
+      resetTipTemplatesForTests();
+      initializeTipTemplates(root);
+
+      const state = fixture({ phase: "requirements", round: 1, turn: "dev" });
+      const g1 = buildGuidance(state, "dev");
+
+      // Modify the action text of the template
+      const tmplPath = resolve(root, "requirements/r1.md");
+      const original = readFileSync(tmplPath, "utf8");
+      const modified = original.replace("[行动]", "[行动]\n（自定义文案）");
+      writeFileSync(tmplPath, modified, "utf8");
+
+      resetTipTemplatesForTests();
+      initializeTipTemplates(root);
+
+      const g2 = buildGuidance(state, "dev");
+
+      // Tip should change
+      expect(g2.tip).not.toBe(g1.tip);
+      // Instruction must be identical
+      expect(g2.instruction).toEqual(g1.instruction);
+    } finally {
+      resetTipTemplatesForTests();
+      initializeTipTemplates(DEFAULT_TIP_TEMPLATE_ROOT);
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // ── Contract matrix invariants ───────────────────────────────
+
+  it("produce_and_submit always has required_output", () => {
+    const state = fixture({ phase: "requirements", round: 1, turn: "dev" });
+    const g = buildGuidance(state, "dev");
+    expect(g.instruction.next_action).toBe("produce_and_submit");
+    expect(g.instruction.required_output).toBeDefined();
+    expect(g.instruction.required_output!.commit_required).toBe(true);
+    expect(g.instruction.required_output!.submit_tool).toBe("submit");
+  });
+
+  it("decide_convergence has decision and required_output", () => {
+    const state = fixture({
+      phase: "requirements", round: 3, turn: "sup",
+      last_submission_by_participant: {
+        sup: { round: 1, sub_phase: null, commit_hash: "abc1111", submitted_at: new Date().toISOString(), file_path: "C:/repo/handoff/w/requirements/r1_sup.md" },
+        dev: { round: 2, sub_phase: null, commit_hash: "abc2222", submitted_at: new Date().toISOString(), file_path: "C:/repo/handoff/w/requirements/r2_dev.md" },
+      },
+    });
+    const g = buildGuidance(state, "sup");
+
+    expect(g.instruction.next_action).toBe("decide_convergence");
+    expect(g.instruction.decision).toBeDefined();
+    expect(g.instruction.decision!.criterion).toBe("phase_goal_met");
+    expect(g.instruction.required_output).toBeDefined();
+  });
+
+  it("commit references in instruction are lowercase", () => {
+    const state = fixture({
+      phase: "requirements", round: 2, turn: "dev",
+      last_submission_by_participant: {
+        sup: { round: 1, sub_phase: null, commit_hash: "ABCDEF1234567890", submitted_at: new Date().toISOString(), file_path: "C:/repo/handoff/w/requirements/r1_sup.md" },
+        dev: { round: null, sub_phase: null, commit_hash: null, submitted_at: null, file_path: null },
+      },
+    });
+    const g = buildGuidance(state, "dev");
+
+    const prevRef = g.instruction.references!.find((r) => r.kind === "previous_output");
+    expect(prevRef).toBeDefined();
+    if (prevRef!.commit) {
+      expect(prevRef!.commit).toBe(prevRef!.commit.toLowerCase());
+    }
+  });
+
+  it("instruction does not contain token or PID fields", () => {
+    const state = fixture({ phase: "requirements", round: 1, turn: "dev" });
+    const g = buildGuidance(state, "dev");
+    const json = JSON.stringify(g.instruction);
+
+    expect(json).not.toContain("token");
+    expect(json).not.toContain(".pid");
   });
 });
