@@ -43,7 +43,7 @@ function writeAllTemplates(root: string) {
   // wait
   writeTemplate(root, "wait/roster-warning.md", "[行动]\n建议向用户报告...\n\n[当前]\n你是 {{identity}}。已等待 {{elapsed_minutes}} 分钟。\n");
   writeTemplate(root, "wait/turn-warning.md", "[行动]\n建议向用户报告...\n\n[当前]\n你是 {{identity}}。第 {{round}} 轮，turn 在 {{turn}} 已超过 {{elapsed_minutes}} 分钟。\n");
-  writeTemplate(root, "wait/timeout-ready.md", "[行动]\n继续调用 wait_for_turn...\n\n[当前]\n你是 {{identity}}。超时(600s)，第 {{round}} 轮，轮到你。\n");
+  writeTemplate(root, "wait/timeout-ready.md", "[行动]\n继续调用 wait_for_turn...\n\n[当前]\n你是 {{identity}}。超时(600s)，第 {{round}} 轮，轮到 {{turn}}。\n");
   writeTemplate(root, "wait/timeout-roster.md", "[行动]\n继续调用 wait_for_turn...\n\n[当前]\n你是 {{identity}}。超时(600s)，参与者未就位。\n");
   writeTemplate(root, "wait/completed.md", "[行动]\n工作流已结束...\n\n[当前]\n你是 {{identity}}。工作流 {{workflow_id}} 已结束。\n");
   // advance
@@ -218,12 +218,10 @@ describe("tip-template engine", () => {
     });
   });
 
-  describe("formatTip integration", () => {
-    it("respects tip-format.ts section ordering", () => {
+  describe("section order validation", () => {
+    it("rejects template that doesn't start with [行动]", () => {
       root = tmpRoot();
       writeAllTemplates(root);
-      // Replace with template that has sections in non-standard order
-      // but formatTip() still outputs [行动] → [产出] → [当前]
       writeTemplate(root, "requirements/r1.md", [
         "[当前]",
         "current text {{identity_label}} {{round}} {{phase_label}}",
@@ -234,20 +232,23 @@ describe("tip-template engine", () => {
         "[行动]",
         "action text {{task_path}}",
       ].join("\n"));
-      initializeTipTemplates(root);
-      const result = renderTip("requirements.r1", {
-        task_path: "/t.md",
-        file_path: "/o.md",
-        identity_label: "x",
-        round: "1",
-        phase_label: "y",
-      });
-      // formatTip always outputs [行动] → [产出] → [当前], regardless of template parsing order
-      const actionIdx = result.indexOf("[行动]");
-      const productIdx = result.indexOf("[产出]");
-      const currentIdx = result.indexOf("[当前]");
-      expect(actionIdx).toBeLessThan(productIdx);
-      expect(productIdx).toBeLessThan(currentIdx);
+      expect(() => initializeTipTemplates(root)).toThrow(/requirements\.r1.*must start with \[行动\]/);
+    });
+
+    it("rejects template with [产出] after [当前]", () => {
+      root = tmpRoot();
+      writeAllTemplates(root);
+      writeTemplate(root, "requirements/r1.md", [
+        "[行动]",
+        "action text",
+        "",
+        "[当前]",
+        "current text",
+        "",
+        "[产出]",
+        "product text",
+      ].join("\n"));
+      expect(() => initializeTipTemplates(root)).toThrow(/requirements\.r1.*\[产出\] must precede \[当前\]/);
     });
   });
 

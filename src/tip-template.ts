@@ -82,7 +82,7 @@ const TEMPLATE_SPECS: Record<TemplateKey, TemplateSpec> = {
   "get-state.roster-pending":    { file: "get-state/roster-pending.md",             allowed: ["identity", "workflow_id"],           required: ["identity", "workflow_id"] },
   "wait.roster-warning":         { file: "wait/roster-warning.md",                  allowed: ["identity", "elapsed_minutes"],       required: ["identity", "elapsed_minutes"] },
   "wait.turn-warning":           { file: "wait/turn-warning.md",                    allowed: ["identity", "elapsed_minutes", "round", "turn"], required: ["identity", "elapsed_minutes", "round", "turn"] },
-  "wait.timeout-ready":          { file: "wait/timeout-ready.md",                   allowed: ["identity", "round"],                 required: ["identity", "round"] },
+  "wait.timeout-ready":          { file: "wait/timeout-ready.md",                   allowed: ["identity", "round", "turn"],          required: ["identity", "round", "turn"] },
   "wait.timeout-roster":         { file: "wait/timeout-roster.md",                  allowed: ["identity"],                          required: ["identity"] },
   "wait.completed":              { file: "wait/completed.md",                       allowed: ["identity", "workflow_id"],           required: ["identity", "workflow_id"] },
   "advance.requirements.other":  { file: "advance/requirements-other.md",           allowed: ["identity", "turn", "file_path"],     required: ["identity", "turn", "file_path"] },
@@ -152,6 +152,23 @@ function parseAndValidate(key: TemplateKey, filePath: string, raw: string, spec:
   const action = actionMatch[1].trim();
   const product = productMatch?.[1]?.trim() || undefined;
   const current = currentMatch?.[1]?.trim() || undefined;
+
+  // Validate section order: [行动] must be first, then [产出], then [当前]
+  const actionIdx = raw.indexOf("[行动]");
+  const productIdx = raw.indexOf("[产出]");
+  const currentIdx = raw.indexOf("[当前]");
+  if (actionIdx !== 0) {
+    throw new Error(`tip template ${key} must start with [行动]: ${filePath}`);
+  }
+  if (productIdx >= 0 && currentIdx >= 0 && productIdx > currentIdx) {
+    throw new Error(`tip template ${key} [产出] must precede [当前] in source: ${filePath}`);
+  }
+  if (productIdx >= 0 && productIdx <= actionIdx) {
+    throw new Error(`tip template ${key} [产出] must follow [行动]: ${filePath}`);
+  }
+  if (currentIdx >= 0 && currentIdx <= actionIdx) {
+    throw new Error(`tip template ${key} [当前] must follow [行动]: ${filePath}`);
+  }
 
   const sectionsText = [action, product, current].filter(Boolean).join("\n");
   const placeholders = extractPlaceholders(sectionsText);

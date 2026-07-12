@@ -109,7 +109,7 @@ async function waitForActiveTurn(
   return ok(
     { turn: timeoutState.turn, phase: timeoutState.phase, round: timeoutState.round },
     rosterReady
-      ? renderTip("wait.timeout-ready", { identity, round: String(timeoutState.round) })
+      ? renderTip("wait.timeout-ready", { identity, round: String(timeoutState.round), turn: timeoutState.turn })
       : renderTip("wait.timeout-roster", { identity }),
   );
 }

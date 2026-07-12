@@ -96,12 +96,10 @@ function selectTip(state: PairFlowState, identity: string): TipSelection {
 
   let advanceTarget = "";
   if (canSupervisorAdvance) {
-    let target = "";
-    if (state.phase === "requirements") target = "进入实施计划阶段";
-    else if (state.phase === "planning") target = "进入代码实现阶段";
-    else if (state.phase === "implementation") target = "进入汇总阶段";
-    else if (state.phase === "summary") target = "结束工作流";
-    advanceTarget = `作为监督者，若确认目标已达成可直接调用 advance（${target}）。否则：`;
+    if (state.phase === "requirements") advanceTarget = "进入实施计划阶段";
+    else if (state.phase === "planning") advanceTarget = "进入代码实现阶段";
+    else if (state.phase === "implementation") advanceTarget = "进入汇总阶段";
+    else if (state.phase === "summary") advanceTarget = "结束工作流";
   }
 
   if (state.phase === "requirements") {
