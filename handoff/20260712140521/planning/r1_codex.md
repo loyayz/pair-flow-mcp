@@ -98,7 +98,9 @@ export function guidance(key: TemplateKey, variables: Record<string, string | nu
 }
 ```
 
-Implement all interfaces exactly as §5.1, including `InstructionReference`, `RequiredOutput`, `InstructionContext`, and `decision`. Keep these plain serializable types; do not add Zod or a dependency.
+Implement all interfaces exactly as §5.1, including `InstructionReference`, `RequiredOutput`, `InstructionContext`, and `decision`. Keep these plain serializable types; do not add Zod or a dependency. `CONFIRMED_NEEDS_TURN_CLAIM` exists because successful confirm must still enter the first wait even when turn is already assigned; `UNSUPPORTED_WORKFLOW_STATE` exists because the successful `state.unknown` tip cannot honestly use `REQUEST_REJECTED`.
+
+Every direct handler calling `guidance()` must source paths and context from the same existing helpers/state used for the template variables (`outFile()`, `workflowArchivePath()`, `expectedSubmissionPath()` or the just-created next state). Manual path concatenation is forbidden.
 
 - [ ] **Step 4: Change response assembly atomically**
 
@@ -139,6 +141,8 @@ expect(buildGuidance(convergedRequirements, "sup").instruction).toMatchObject({
 });
 ```
 
+Add an incomplete-roster idle Supervisor fixture and assert wait / `ROSTER_INCOMPLETE` / `can_advance: false`; idle Supervisor may advance only after both real participants are present.
+
 Also assert `produce_and_submit` always has required_output, non-output actions do not; stop has no tools; all file paths reject `\\`; references contain canonical lowercase commit hashes.
 
 The existing `state.unknown` tip branch maps to `report_user` / no tools / `UNSUPPORTED_WORKFLOW_STATE`; it must not masquerade as a rejected request.
@@ -152,7 +156,7 @@ Expected: FAIL because `buildGuidance` is absent.
 
 Rename private `TipSelection`/`selectTip` to `GuidanceSelection`/`selectGuidance`. Each existing branch must return template key, variables and instruction in the same object. `buildGuidance()` handles the current non-holder wait branch and otherwise renders the selected object once.
 
-Context rules: include only reliable values; `workflow_id` only when non-null; `sub_phase` only for implementation; `holds_turn = state.turn === identity`; `can_advance` is true only for idle Supervisor or converged Supervisor. For output actions use `outFile()` directly. References are built from task, planning document, previous output/review and archive paths already used by that same template branch.
+Context rules: include only reliable values; `workflow_id` only when non-null; `sub_phase` only for implementation; `holds_turn = state.turn === identity`; `can_advance` is true only for complete-roster idle Supervisor or converged Supervisor. For output actions use `outFile()` directly. References are built from task, planning document, previous output/review and archive paths already used by that same template branch. Omit `commit` when the corresponding submission hash is null; never emit an empty string.
 
 - [ ] **Step 4: Preserve existing tip behavior**
 
@@ -200,6 +204,8 @@ Extend existing integration fixtures to assert:
 - ordinary 600s timeouts → wait / `WAIT_TIMEOUT`;
 - 30-minute roster and unclaimed-turn warnings → report / matching stale code;
 - completed wait → stop / `WORKFLOW_COMPLETED`.
+
+Confirm that register's missing/invalid identity paths already pass through the Task 1 `err()` wrapper and therefore receive fix_request / `REQUEST_REJECTED`. Both get-state unbound (valid token with no workflow binding) and inactive (binding no longer points at an active participant) use confirm_task / `WORKFLOW_UNBOUND` because the recovery action is identical.
 
 - [ ] **Step 2: Run RED**
 
@@ -261,11 +267,11 @@ Expected: FAIL on missing instructions.
 
 - [ ] **Step 3: Replace advance direct rendering with guidance**
 
-Create a local helper accepting template key, variables, next state and caller identity, so tip and instruction share the same selected branch. Every non-final advance returns `wait_for_turn`, matching the existing tip's requirement to obtain the complete new-turn guidance; the already computed `reqFile/planFile/implFile/summaryFile` may appear as a reference but not as a `required_output` until the subsequent wait/get_state returns `produce_and_submit`. Never parse the tip. Completed guidance has archive reference only if required by the contract and exposes no PID.
+Create a local helper accepting template key, variables, next state and caller identity, so tip and instruction share the same selected branch. Every non-final advance returns `wait_for_turn`, matching the existing tip's requirement to obtain the complete new-turn guidance. Do not place the just-computed future output path in `references`: it does not yet exist and is not an input the caller must read. The subsequent wait/get_state response supplies the real `required_output` and readable references. Never parse the tip. Completed guidance has archive reference only if required by the contract and exposes no PID.
 
 - [ ] **Step 4: Replace submit success-tip helper with success-guidance helper**
 
-Rename `buildSubmissionSuccessTip` to `buildSubmissionSuccessGuidance` and return `Guidance`. Select `submit.advance-ready`, `submit.both-submitted` or `submit.wait` once, then attach `SUBMISSION_ACCEPTED` and next-state context. Exact replay must reuse the same helper and produce the same instruction without advancing again.
+Rename `buildSubmissionSuccessTip` to `buildSubmissionSuccessGuidance` and return `Guidance`. Select `submit.advance-ready`, `submit.both-submitted` or `submit.wait` once, then attach `SUBMISSION_ACCEPTED` and next-state context. Exact replay must reuse the same helper and deep-equal every instruction field from the first successful submit without advancing again.
 
 - [ ] **Step 5: Run GREEN and commit**
 
@@ -293,7 +299,7 @@ Build a table of every current tip-bearing business branch and assert a legal in
 
 - [ ] **Step 2: Prove template customization cannot alter instruction**
 
-In the existing temporary template-root test, render the same state before and after rewriting its template action text. Assert `tip` changes and `instruction` deep-equals its prior value. Do this for one output scenario and one wait scenario.
+In the existing temporary template-root test, render the same state before and after rewriting the action, output and current sections, including one full valid replacement template. Assert `tip` changes while required_output, context and the entire instruction deep-equal their prior values. Do this for one output scenario and one wait scenario.
 
 - [ ] **Step 3: Update the authoritative design**
 
@@ -315,6 +321,8 @@ rg -n "instruction|CONFIRMED_NEEDS_TURN_CLAIM|decide_convergence" docs/design.md
 ```
 
 Expected: first command has no plan placeholders; second shows matching type names across code, tests and docs. Manually map every task-spec §4/§11/§12 item to a test above and add any missing case before committing.
+
+Create a nine-row acceptance trace for task-document §12, naming the exact test/command that proves each criterion; use `N/A` only with a written reason. This trace belongs in the test description or final implementation handoff, not in runtime code.
 
 - [ ] **Step 5: Run full verification**
 
