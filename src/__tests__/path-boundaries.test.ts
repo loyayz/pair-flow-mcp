@@ -24,6 +24,7 @@ async function confirm(taskPath: string, workDir: string): Promise<Record<string
   const token = registerToken(`path-${randomUUID()}`);
   const result = await confirmTask({
     task_path: taskPath,
+    task_type: "development",
     is_supervisor: true,
     is_developer: false,
     work_dir: workDir,

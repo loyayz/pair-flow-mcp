@@ -2,7 +2,15 @@ import { haveAllParticipantsSubmittedCurrentPhase, hasCompleteParticipantRoster 
 import type { PairFlowState } from "./state.js";
 import { workflowArchivePath } from "./archive-path.js";
 import { renderTip, type TemplateKey } from "./tip-template.js";
-import type { Guidance, InstructionReasonCode, InstructionReference, PairFlowInstruction } from "./instruction.js";
+import {
+  withInstructionProtocol,
+  type Guidance,
+  type InstructionContext,
+  type InstructionInput,
+  type InstructionReasonCode,
+  type InstructionReference,
+} from "./instruction.js";
+import { phaseSchema, subPhaseSchema } from "./instruction-protocol.js";
 
 const SAFE_ID = /^[a-zA-Z0-9_-]{1,64}$/;
 
@@ -45,27 +53,37 @@ function planningDocument(state: PairFlowState): string {
 
 // ── Instruction helpers ────────────────────────────────────────────
 
-function ctx(state: PairFlowState, identity: string): {
-  workflow_id?: string;
-  phase?: "idle" | "requirements" | "planning" | "implementation" | "summary";
-  sub_phase?: "coding" | "review" | null;
-  round?: number;
-  turn?: string;
-  holds_turn?: boolean;
-  can_advance?: boolean;
-} {
-  const c: ReturnType<typeof ctx> = {
-    phase: state.phase as typeof c.phase,
+export function reliableWorkflowPhase(
+  state: PairFlowState,
+): Pick<InstructionContext, "phase" | "sub_phase"> {
+  const parsedPhase = phaseSchema.safeParse(state.phase);
+  if (!parsedPhase.success) return {};
+  if (parsedPhase.data === "implementation") {
+    const parsedSubPhase = subPhaseSchema.safeParse(state.sub_phase);
+    if (!parsedSubPhase.success || parsedSubPhase.data === null) return {};
+    return { phase: parsedPhase.data, sub_phase: parsedSubPhase.data };
+  }
+  if (state.sub_phase !== null) return {};
+  return { phase: parsedPhase.data };
+}
+
+export function workflowInstructionContext(
+  state: PairFlowState,
+  identity: string,
+): InstructionContext {
+  const c: InstructionContext = {
+    ...reliableWorkflowPhase(state),
     round: state.round,
     turn: state.turn,
     holds_turn: state.turn === identity,
     can_advance: false,
   };
-  if (state.phase === "implementation") {
-    c.sub_phase = state.sub_phase as typeof c.sub_phase;
-  }
   if (state.workflow_id) c.workflow_id = state.workflow_id;
   return c;
+}
+
+function supportsInstructionState(state: PairFlowState): boolean {
+  return reliableWorkflowPhase(state).phase !== undefined;
 }
 
 function outputReq(state: PairFlowState, identity: string) {
@@ -139,25 +157,25 @@ function archiveRootRef(state: PairFlowState): InstructionReference {
 type GuidanceSelection = {
   key: TemplateKey;
   variables: Record<string, string | number>;
-  instruction: PairFlowInstruction;
+  instruction: InstructionInput;
 };
 
 function instruction(
-  action: PairFlowInstruction["next_action"],
+  action: InstructionInput["next_action"],
   reason: InstructionReasonCode,
   state: PairFlowState,
   identity: string,
   opts?: {
-    allowedTools?: PairFlowInstruction["allowed_tools"];
-    output?: PairFlowInstruction["required_output"];
+    allowedTools?: InstructionInput["allowed_tools"];
+    output?: InstructionInput["required_output"];
     refs?: InstructionReference[];
-    decision?: PairFlowInstruction["decision"];
+    decision?: InstructionInput["decision"];
     canAdvance?: boolean;
   },
-): PairFlowInstruction {
-  const c = ctx(state, identity);
+): InstructionInput {
+  const c = workflowInstructionContext(state, identity);
   if (opts?.canAdvance !== undefined) c.can_advance = opts.canAdvance;
-  const inst: PairFlowInstruction = {
+  const inst: InstructionInput = {
     next_action: action,
     allowed_tools: opts?.allowedTools ?? [],
     reason_code: reason,
@@ -198,7 +216,9 @@ function selectGuidance(state: PairFlowState, identity: string): GuidanceSelecti
 
   let advanceTarget = "";
   if (canSupervisorAdvance) {
-    if (state.phase === "requirements") advanceTarget = "进入实施计划阶段";
+    if (state.phase === "requirements") {
+      advanceTarget = state.task?.task_type === "requirements" ? "进入汇总阶段" : "进入实施计划阶段";
+    }
     else if (state.phase === "planning") advanceTarget = "进入代码实现阶段";
     else if (state.phase === "implementation") advanceTarget = "进入汇总阶段";
     else if (state.phase === "summary") advanceTarget = "结束工作流";
@@ -492,6 +512,20 @@ export function phaseLabel(phase: string, subPhase: string | null): string {
 export function buildGuidance(state: PairFlowState, identity: string): Guidance {
   const holdsTurn = state.turn === identity;
 
+  if (!supportsInstructionState(state)) {
+    const round = String(state.round);
+    return {
+      tip: renderTip("state.unknown", {
+        phase: safe(state.phase),
+        sub_phase: safe(state.sub_phase),
+        round,
+      }),
+      instruction: withInstructionProtocol(
+        instruction("report_user", "UNSUPPORTED_WORKFLOW_STATE", state, identity),
+      ),
+    };
+  }
+
   if (state.phase !== "idle" && !holdsTurn) {
     const label = identityLabel(state, identity);
     const rosterComplete = hasCompleteParticipantRoster(state);
@@ -504,14 +538,19 @@ export function buildGuidance(state: PairFlowState, identity: string): Guidance 
     });
     return {
       tip,
-      instruction: instruction("wait_for_turn", reason, state, identity, {
-        allowedTools: ["wait_for_turn"],
-      }),
+      instruction: withInstructionProtocol(
+        instruction("wait_for_turn", reason, state, identity, {
+          allowedTools: ["wait_for_turn"],
+        }),
+      ),
     };
   }
 
   const selection = selectGuidance(state, identity);
-  return { tip: renderTip(selection.key, selection.variables), instruction: selection.instruction };
+  return {
+    tip: renderTip(selection.key, selection.variables),
+    instruction: withInstructionProtocol(selection.instruction),
+  };
 }
 
 export function buildTip(state: PairFlowState, identity: string): string {

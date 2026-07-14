@@ -3,7 +3,7 @@ import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/proto
 import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
 import { parseSession } from "../identity.js";
 import { getState, setState, getMutex, hasCompleteParticipantRoster } from "../state.js";
-import { buildGuidance } from "../tip.js";
+import { buildGuidance, reliableWorkflowPhase, workflowInstructionContext } from "../tip.js";
 import { err, ok } from "../response.js";
 import { guidance, type InstructionContext } from "../instruction.js";
 import type { PairFlowState } from "../state.js";
@@ -11,18 +11,7 @@ import type { PairFlowState } from "../state.js";
 const POLL_INTERVAL_MS = 10_000;
 
 function waitContext(state: PairFlowState, identity: string): InstructionContext {
-  const ctx: InstructionContext = {
-    workflow_id: state.workflow_id ?? undefined,
-    phase: state.phase as InstructionContext["phase"],
-    round: state.round,
-    turn: state.turn,
-    holds_turn: state.turn === identity,
-    can_advance: false,
-  };
-  if (state.phase === "implementation" && state.sub_phase) {
-    ctx.sub_phase = state.sub_phase as "coding" | "review";
-  }
-  return ctx;
+  return workflowInstructionContext(state, identity);
 }
 const TIMEOUT_MS = 600_000;
 const activeWaits = new Map<string, AbortController>();
@@ -71,6 +60,13 @@ async function waitForActiveTurn(
     }
     lastSeenPhase = state.phase;
 
+    if (!reliableWorkflowPhase(state).phase) {
+      return ok(
+        { turn: state.turn, round: state.round, ...reliableWorkflowPhase(state) },
+        buildGuidance(state, identity),
+      );
+    }
+
     if (!hasCompleteParticipantRoster(state)) {
       const participant = state.participants.find((candidate) => candidate.identity === identity);
       const confirmedAt = participant ? Date.parse(participant.registered_at) : Number.NaN;
@@ -78,7 +74,7 @@ async function waitForActiveTurn(
       if (elapsed > 30) {
         const mins = Math.round(elapsed);
         return ok(
-          { turn: state.turn, phase: state.phase, round: state.round, warning: `另一位参与者已超过 ${mins} 分钟未完成 confirm_task` },
+          { turn: state.turn, round: state.round, ...reliableWorkflowPhase(state), warning: `另一位参与者已超过 ${mins} 分钟未完成 confirm_task` },
           guidance("wait.roster-warning", { identity, elapsed_minutes: String(mins) }, {
             next_action: "report_user",
             allowed_tools: [],
@@ -108,7 +104,7 @@ async function waitForActiveTurn(
       const claimedState = getState(workflowId);
       if (!claimedState) return err("workflow not found");
       const g = buildGuidance(claimedState, identity);
-      return ok({ turn: claimedState.turn, phase: claimedState.phase, round: claimedState.round }, g);
+      return ok({ turn: claimedState.turn, round: claimedState.round, ...reliableWorkflowPhase(claimedState) }, g);
     }
 
     if (state.turn_switched_at && !state.turn_claimed_at) {
@@ -116,7 +112,7 @@ async function waitForActiveTurn(
       if (elapsed > 30) {
         const mins = Math.round(elapsed);
         return ok(
-          { turn: state.turn, phase: state.phase, round: state.round, warning: `对方可能已掉线：turn 已于 ${mins} 分钟前切换给 ${state.turn}，但未被领取` },
+          { turn: state.turn, round: state.round, ...reliableWorkflowPhase(state), warning: `对方可能已掉线：turn 已于 ${mins} 分钟前切换给 ${state.turn}，但未被领取` },
           guidance("wait.turn-warning", { identity, elapsed_minutes: String(mins), round: String(state.round), turn: state.turn }, {
             next_action: "report_user",
             allowed_tools: [],
@@ -142,7 +138,7 @@ async function waitForActiveTurn(
   const rosterReady = hasCompleteParticipantRoster(timeoutState);
   const ctx = waitContext(timeoutState, identity);
   return ok(
-    { turn: timeoutState.turn, phase: timeoutState.phase, round: timeoutState.round },
+    { turn: timeoutState.turn, round: timeoutState.round, ...reliableWorkflowPhase(timeoutState) },
     rosterReady
       ? guidance("wait.timeout-ready", { identity, round: String(timeoutState.round), turn: timeoutState.turn }, {
           next_action: "wait_for_turn",

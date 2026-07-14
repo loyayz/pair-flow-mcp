@@ -13,6 +13,8 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 
 import { advance } from "../tools/advance.js";
 import { whoAmI } from "../tools/who-am-i.js";
+import { instructionOf } from "./instruction-assertions.js";
+import { buildGuidance } from "../tip.js";
 
 const TEST_WORKFLOW_ID = "20260710000002";
 
@@ -47,7 +49,10 @@ beforeEach(() => {
   deleteState(TEST_WORKFLOW_ID);
 });
 
-function setupAdvanceWorkflow(phase: "idle" | "requirements") {
+function setupAdvanceWorkflow(
+  phase: "idle" | "requirements",
+  taskType: "requirements" | "development" = "development",
+) {
   const token = registerToken("alice");
   bindWorkflow(token, TEST_WORKFLOW_ID);
   setState(TEST_WORKFLOW_ID, {
@@ -56,7 +61,7 @@ function setupAdvanceWorkflow(phase: "idle" | "requirements") {
     phase,
     round: phase === "idle" ? 1 : 3,
     turn: "alice",
-    task: { spec_file: "C:/project/task.md", task_type: "development" },
+    task: { spec_file: "C:/project/task.md", task_type: taskType },
     participants: [
       { identity: "alice", is_supervisor: true, is_developer: false, registered_at: "now", work_dir: "C:/project" },
       { identity: "bob", is_supervisor: false, is_developer: true, registered_at: "now", work_dir: "C:/project" },
@@ -73,6 +78,20 @@ function setupAdvanceWorkflow(phase: "idle" | "requirements") {
 }
 
 describe("advance turn assignment timestamps", () => {
+  it.each([
+    { taskType: "requirements" as const, target: "进入汇总阶段", newPhase: "summary" },
+    { taskType: "development" as const, target: "进入实施计划阶段", newPhase: "planning" },
+  ])("keeps requirements convergence tip parity for $taskType", async ({ taskType, target, newPhase }) => {
+    const extra = setupAdvanceWorkflow("requirements", taskType);
+    const before = getState(TEST_WORKFLOW_ID)!;
+    const convergence = buildGuidance(before, "alice");
+
+    expect(convergence.tip).toContain(`可直接调用 advance（${target}）`);
+    const result = await advance({}, extra);
+    const payload = JSON.parse((result.content[0] as { text: string }).text);
+    expect(payload.new_phase).toBe(newPhase);
+  });
+
   it("tells the supervisor that both participants must join through confirm_task", async () => {
     const extra = setupAdvanceWorkflow("idle");
     getState(TEST_WORKFLOW_ID)!.participants.pop();
@@ -83,17 +102,36 @@ describe("advance turn assignment timestamps", () => {
     expect(payload.ok).toBe(false);
     expect(payload.tip).toContain("both participants must join via confirm_task");
     expect(payload.tip).not.toContain("must register");
+    expect(instructionOf(payload)).toMatchObject({
+      next_action: "fix_request",
+      allowed_tools: [],
+      reason_code: "REQUEST_REJECTED",
+    });
   });
 
   it("starts an unclaimed timer when the new turn belongs to the other participant", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-11T01:00:00.000Z"));
 
-    await advance({}, setupAdvanceWorkflow("idle"));
+    const result = await advance({}, setupAdvanceWorkflow("idle"));
+    const payload = JSON.parse((result.content[0] as { text: string }).text);
 
     expect(getState(TEST_WORKFLOW_ID)!.turn).toBe("bob");
     expect(getState(TEST_WORKFLOW_ID)!.turn_switched_at).toBe("2026-07-11T01:00:00.000Z");
     expect(getState(TEST_WORKFLOW_ID)!.turn_claimed_at).toBeNull();
+    expect(instructionOf(payload)).toMatchObject({
+      next_action: "wait_for_turn",
+      allowed_tools: ["wait_for_turn"],
+      reason_code: "PHASE_ADVANCED",
+      context: {
+        workflow_id: TEST_WORKFLOW_ID,
+        phase: "requirements",
+        round: 1,
+        turn: "bob",
+        holds_turn: false,
+        can_advance: false,
+      },
+    });
   });
 
   it("marks the new turn claimed when advance assigns it to the caller", async () => {
@@ -138,6 +176,11 @@ describe("advance summary completion", () => {
     expect(payload.tip).toContain("双方分别调用 confirm_task");
     expect(payload.tip).toContain("服务重启或 token 丢失时先重新 register");
     expect(payload.tip).not.toContain("双方重新 register");
+    expect(instructionOf(payload)).toMatchObject({
+      next_action: "stop",
+      allowed_tools: [],
+      reason_code: "WORKFLOW_COMPLETED",
+    });
     expect(getState(TEST_WORKFLOW_ID)).toBeUndefined();
     expect(identityPayload.joined_workflow).toBe(false);
     expect(identityPayload.workflow_id).toBeNull();

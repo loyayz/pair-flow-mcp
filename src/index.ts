@@ -16,6 +16,12 @@ import { HTTP_SERVER_OPTIONS } from "./http-server-policy.js";
 import { describeListenError, parseServerArgs, SERVER_HELP } from "./server-config.js";
 import { runWithTransportCleanup } from "./transport-lifecycle.js";
 import { initializeTipTemplates } from "./tip-template.js";
+import {
+  MCP_SERVER_INSTRUCTIONS,
+  SERVER_INFO,
+  createHealthPayload,
+} from "./instruction-protocol.js";
+import { TOOL_OUTPUT_SCHEMAS } from "./tool-output.js";
 
 const cliConfig = (() => {
   try {
@@ -44,18 +50,18 @@ const INVALID_JSON = Symbol("invalid-json");
 
 function createServerWithTools() {
   const mcp = new McpServer(
-    { name: "pair-flow", version: "0.1.0" },
-    { capabilities: { tools: {} } }
+    SERVER_INFO,
+    { capabilities: { tools: {} }, instructions: MCP_SERVER_INSTRUCTIONS }
   );
 
-  mcp.registerTool("ping", { description: "连通性检查。匿名可用。" }, ping);
-  mcp.registerTool("who_am_i", { description: "身份确认 + 注册/工作流加入状态。解析 X-AI-Identity token。" }, whoAmI);
-  mcp.registerTool("register", { description: "注册身份并获取 token。identity 从 body 取，职责声明移至 confirm_task。", inputSchema: { identity: z.string() } }, register);
-  mcp.registerTool("confirm_task", { description: "确认任务文档和 Git 仓库根目录并声明职责。两个 AI 以相同规范化绝对 task_path 成对；进入流程后职责冻结。", inputSchema: { task_path: z.string(), task_type: z.enum(["requirements", "development"]).optional(), is_supervisor: z.boolean(), is_developer: z.boolean(), work_dir: z.string() } }, confirmTask);
+  mcp.registerTool("ping", { description: "连通性检查。匿名可用。", outputSchema: TOOL_OUTPUT_SCHEMAS.ping }, ping);
+  mcp.registerTool("who_am_i", { description: "身份确认 + 注册/工作流加入状态。解析 X-AI-Identity token。", outputSchema: TOOL_OUTPUT_SCHEMAS.who_am_i }, whoAmI);
+  mcp.registerTool("register", { description: "注册身份并获取 token。identity 从 body 取，职责声明移至 confirm_task。", inputSchema: { identity: z.string() }, outputSchema: TOOL_OUTPUT_SCHEMAS.register }, register);
+  mcp.registerTool("confirm_task", { description: "确认任务文档和 Git 仓库根目录并声明职责。两个 AI 以相同规范化绝对 task_path 成对；进入流程后职责冻结。", inputSchema: { task_path: z.string(), task_type: z.enum(["requirements", "development"]), is_supervisor: z.boolean(), is_developer: z.boolean(), work_dir: z.string() }, outputSchema: TOOL_OUTPUT_SCHEMAS.confirm_task }, confirmTask);
 
-  mcp.registerTool("advance", { description: "推进到下一阶段。仅监督者可用。", inputSchema: {} }, advance);
-  mcp.registerTool("get_state", { description: "返回当前执行指引（tip）。需要有效注册 token。" }, getStateTool);
-  mcp.registerTool("wait_for_turn", { description: "长轮询等待 turn 切换到调用方。10s 间隔，600s 超时。turn=自己时返回。" }, waitForTurn);
+  mcp.registerTool("advance", { description: "推进到下一阶段。仅监督者可用。", inputSchema: {}, outputSchema: TOOL_OUTPUT_SCHEMAS.advance }, advance);
+  mcp.registerTool("get_state", { description: "返回当前执行指引（tip）。需要有效注册 token。", outputSchema: TOOL_OUTPUT_SCHEMAS.get_state }, getStateTool);
+  mcp.registerTool("wait_for_turn", { description: "长轮询等待 turn 切换到调用方。10s 间隔，600s 超时。turn=自己时返回。", outputSchema: TOOL_OUTPUT_SCHEMAS.wait_for_turn }, waitForTurn);
   mcp.registerTool(
     "submit",
     {
@@ -64,6 +70,7 @@ function createServerWithTools() {
         file_path: z.string(),
         git_commit_hash: z.string(),
       },
+      outputSchema: TOOL_OUTPUT_SCHEMAS.submit,
     },
     submit
   );
@@ -122,7 +129,7 @@ const httpServer = createServer(HTTP_SERVER_OPTIONS, async (req: IncomingMessage
 
   if (pathname === "/health" && req.method === "GET") {
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ ok: true, uptime: process.uptime() }));
+    res.end(JSON.stringify(createHealthPayload(process.uptime())));
     return;
   }
 

@@ -12,6 +12,7 @@ import { guidance } from "../instruction.js";
 import { bindWorkflow } from "../token-map.js";
 import { atomicWriteText } from "../atomic-write.js";
 import { findSymbolicLinkInPath } from "../path-safety.js";
+import { workflowInstructionContext } from "../tip.js";
 const taskPathMutexes = new Map<string, Mutex>();
 const tokenMutexes = new Map<string, Mutex>();
 const recoveryMutexes = new Map<string, Mutex>();
@@ -204,9 +205,9 @@ export async function confirmTask(
   if (hasRelativeSegment(taskPath)) return err("task_path must not contain . or .. path segments");
 
   // Task type
-  if (args.task_type !== undefined && typeof args.task_type !== "string") return err("task_type must be a string");
-  const suppliedTaskType = args.task_type as string | undefined;
-  const taskType = suppliedTaskType || "development";
+  if (args.task_type === undefined || args.task_type === null || args.task_type === "") return err("task_type is required");
+  if (typeof args.task_type !== "string") return err("task_type must be a string");
+  const taskType = args.task_type;
   if (taskType !== "requirements" && taskType !== "development") {
     return err(`invalid task_type "${taskType}" — must be "requirements" or "development"`);
   }
@@ -359,9 +360,10 @@ export async function confirmTask(
     const existingResult = await getMutex(wfId).runExclusive(async (): Promise<CallToolResult | null> => {
       const state = getState(wfId);
       if (!state) return err("workflow state not found");
-      const existingTaskType = state.task?.task_type ?? "development";
-      if (suppliedTaskType && suppliedTaskType !== existingTaskType) {
-        return err(`task_type mismatch: "${suppliedTaskType}" vs "${existingTaskType}"`);
+      const existingTaskType = state.task?.task_type;
+      if (!existingTaskType) return err("workflow task_type is missing");
+      if (taskType !== existingTaskType) {
+        return err(`task_type mismatch: "${taskType}" vs "${existingTaskType}"`);
       }
 
       // 当前调用者可能已经在工作流中（恢复场景）
@@ -416,14 +418,7 @@ export async function confirmTask(
           next_action: "wait_for_turn",
           allowed_tools: ["wait_for_turn"],
           reason_code: isRosterComplete ? "CONFIRMED_NEEDS_TURN_CLAIM" : "ROSTER_INCOMPLETE",
-          context: {
-            workflow_id: wfId,
-            phase: state.phase as "idle" | "requirements" | "planning" | "implementation" | "summary",
-            round: state.round,
-            turn: state.turn,
-            holds_turn: state.turn === identity,
-            can_advance: false,
-          },
+          context: workflowInstructionContext(state, identity),
         });
         return ok({
           task_path: resolvedTaskPath.replace(/\\/g, "/"),
@@ -494,14 +489,7 @@ export async function confirmTask(
       next_action: "wait_for_turn",
       allowed_tools: ["wait_for_turn"],
       reason_code: "ROSTER_INCOMPLETE",
-      context: {
-        workflow_id: wfId,
-        phase: curState.phase as "idle" | "requirements" | "planning" | "implementation" | "summary",
-        round: curState.round,
-        turn: curState.turn,
-        holds_turn: curState.turn === identity,
-        can_advance: false,
-      },
+      context: workflowInstructionContext(curState, identity),
     });
   } else {
     g = guidance("confirm.joined", {
@@ -514,14 +502,7 @@ export async function confirmTask(
       next_action: "wait_for_turn",
       allowed_tools: ["wait_for_turn"],
       reason_code: rosterNowComplete ? "CONFIRMED_NEEDS_TURN_CLAIM" : "ROSTER_INCOMPLETE",
-      context: {
-        workflow_id: wfId,
-        phase: curState.phase as "idle" | "requirements" | "planning" | "implementation" | "summary",
-        round: curState.round,
-        turn: curState.turn,
-        holds_turn: curState.turn === identity,
-        can_advance: false,
-      },
+      context: workflowInstructionContext(curState, identity),
     });
   }
 

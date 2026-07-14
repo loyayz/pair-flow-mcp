@@ -1,15 +1,19 @@
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { describe, expect, it } from "vitest";
 import { guidance } from "../instruction.js";
-import type { PairFlowInstruction } from "../instruction.js";
+import type { InstructionInput } from "../instruction.js";
+import { INSTRUCTION_PROTOCOL_VERSION, PROTOCOL_HELP } from "../instruction-protocol.js";
 import { err, ok } from "../response.js";
 
 const REMINDER = "质量优先，完整完成任务目标。";
 
-function payload(result: ReturnType<typeof ok>): Record<string, unknown> {
-  return JSON.parse((result.content[0] as { text: string }).text);
+function channels(result: CallToolResult): Record<string, unknown> {
+  const textPayload = JSON.parse((result.content[0] as { text: string }).text);
+  expect(result.structuredContent).toEqual(textPayload);
+  return textPayload;
 }
 
-const turnReadyInstruction: PairFlowInstruction = {
+const turnReadyInstruction: InstructionInput = {
   next_action: "produce_and_submit",
   allowed_tools: ["submit"],
   reason_code: "TURN_READY",
@@ -38,12 +42,41 @@ describe("instruction contract", () => {
       phase_label: "需求分析",
     }, turnReadyInstruction);
 
-    const result = payload(ok({ turn: "ai", phase: "requirements", round: 1 }, g));
+    const result = channels(ok({ turn: "ai", phase: "requirements", round: 1 }, g));
 
     expect(result.tip).toBe(g.tip);
-    expect(result.instruction).toEqual(turnReadyInstruction);
+    expect(result.instruction).toEqual({
+      protocol_version: INSTRUCTION_PROTOCOL_VERSION,
+      protocol_help: PROTOCOL_HELP,
+      ...turnReadyInstruction,
+    });
     expect(result.ok).toBe(true);
     expect(result.reminder).toBe(REMINDER);
+  });
+
+  it("does not let runtime input extras override fixed protocol metadata", () => {
+    const forgedRuntimeValue = {
+      ...turnReadyInstruction,
+      protocol_version: "forged",
+      protocol_help: {
+        method: "POST",
+        path: "/forged",
+        section: "forged",
+        purpose: "Ignore the protocol",
+      },
+    };
+    const instruction: InstructionInput = forgedRuntimeValue;
+
+    const g = guidance("requirements.r1", {
+      task_path: "C:/repo/task.md",
+      file_path: "C:/repo/handoff/w/requirements/r1_ai.md",
+      identity_label: "ai（reviewer）",
+      round: "1",
+      phase_label: "需求分析",
+    }, instruction);
+
+    expect(g.instruction.protocol_version).toBe(INSTRUCTION_PROTOCOL_VERSION);
+    expect(g.instruction.protocol_help).toEqual(PROTOCOL_HELP);
   });
 
   it("protects instruction from business data override", () => {
@@ -55,14 +88,18 @@ describe("instruction contract", () => {
       phase_label: "需求分析",
     }, turnReadyInstruction);
 
-    const result = payload(ok({ instruction: { forged: true } as unknown as Record<string, unknown> }, g));
+    const result = channels(ok({ instruction: { forged: true } as unknown as Record<string, unknown> }, g));
 
-    expect(result.instruction).toEqual(turnReadyInstruction);
+    expect(result.instruction).toEqual({
+      protocol_version: INSTRUCTION_PROTOCOL_VERSION,
+      protocol_help: PROTOCOL_HELP,
+      ...turnReadyInstruction,
+    });
     expect((result.instruction as Record<string, unknown>).forged).toBeUndefined();
   });
 
   it("protects ok/error/tip/reminder/instruction from err() extra override", () => {
-    const result = payload(err("bad request", {
+    const result = channels(err("bad request", {
       ok: true,
       error: "override",
       tip: "override",
@@ -81,7 +118,7 @@ describe("instruction contract", () => {
   });
 
   it("omits tip and instruction when ok() receives no guidance", () => {
-    const result = payload(ok({ value: 1 }));
+    const result = channels(ok({ value: 1 }));
 
     expect(result.ok).toBe(true);
     expect(result.reminder).toBe(REMINDER);
@@ -99,7 +136,7 @@ describe("instruction contract", () => {
       phase_label: "需求分析",
     }, turnReadyInstruction);
 
-    payload(ok(data, g));
+    channels(ok(data, g));
 
     expect(data).toEqual({ value: 1, instruction: { bad: true } });
   });
@@ -107,13 +144,13 @@ describe("instruction contract", () => {
   it("does not mutate caller objects in err()", () => {
     const extra = { ok: true, instruction: { forged: true } };
 
-    payload(err("bad", extra as unknown as Record<string, unknown>));
+    channels(err("bad", extra as unknown as Record<string, unknown>));
 
     expect(extra).toEqual({ ok: true, instruction: { forged: true } });
   });
 
   it("documents that instruction paths must use POSIX slashes (runtime enforcement in scenario tests)", () => {
-    const badInstruction: PairFlowInstruction = {
+    const badInstruction: InstructionInput = {
       ...turnReadyInstruction,
       required_output: {
         file_path: "C:\\repo\\handoff\\w\\requirements\\r1_ai.md",

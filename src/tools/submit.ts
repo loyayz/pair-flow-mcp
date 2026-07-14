@@ -7,7 +7,7 @@ import { parseSession } from "../identity.js";
 import { getState, setState, getMutex, hasCompleteParticipantRoster, hasRecoveryPlaceholderParticipant, haveAllParticipantsSubmittedCurrentPhase, isCurrentHolder, getOtherIdentity, type PairFlowState } from "../state.js";
 
 import { err, ok } from "../response.js";
-import { identityLabel, phaseLabel } from "../tip.js";
+import { identityLabel, phaseLabel, workflowInstructionContext } from "../tip.js";
 import { guidance, type Guidance } from "../instruction.js";
 import { atomicWriteText } from "../atomic-write.js";
 import { archiveRoot, workflowArchivePath, workflowWorkDir } from "../archive-path.js";
@@ -181,15 +181,7 @@ function buildSubmissionSuccessGuidance(state: PairFlowState, identity: string, 
     next_action: "wait_for_turn" as const,
     allowed_tools: ["wait_for_turn" as const],
     reason_code: "SUBMISSION_ACCEPTED" as const,
-    context: {
-      workflow_id: state.workflow_id!,
-      phase: state.phase as "implementation" | "requirements" | "planning" | "summary",
-      ...(state.phase === "implementation" && state.sub_phase ? { sub_phase: state.sub_phase as "coding" | "review" } : {}),
-      round: state.round,
-      turn: state.turn,
-      holds_turn: false,
-      can_advance: false,
-    },
+    context: workflowInstructionContext(state, identity),
   };
 
   if (bothSubmitted && supervisor && state.turn === supervisor.identity) {

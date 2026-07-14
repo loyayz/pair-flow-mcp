@@ -40,6 +40,14 @@ _Avoid_: Claim, lock
 A participant's declared completion of the current turn's artifact. A submission records that the participant has contributed to the current phase.
 _Avoid_: Upload, save
 
+**Instruction**:
+The machine-readable workflow-control result returned for an actionable PairFlow business response. It identifies the current action, direct action tools, reason, reliable context, required artifact, references, and legal decision branches. It does not judge artifact quality or replace participant reasoning.
+_Avoid_: Tip, prompt, state snapshot, complete tool ACL
+
+**Tip**:
+The natural-language thinking, content, and quality guidance paired with an Instruction. A Tip helps a Participant perform the selected action well, but it is not the authority for tools, permissions, workflow state, paths, or decision branches.
+_Avoid_: Instruction, protocol, machine command
+
 **Convergence**:
 The point where document-marked disagreements have been resolved or explicitly escalated, both participants have had a chance to contribute, and the Turn has returned to the Supervisor. A phase cannot converge while another Participant still owns the Turn, because that participant may still continue their task.
 _Avoid_: Completion, approval, sign-off

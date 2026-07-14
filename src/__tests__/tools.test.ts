@@ -4,6 +4,7 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { execSync } from "node:child_process";
 import http from "node:http";
+import { instructionOf } from "./instruction-assertions.js";
 
 const PORT = 3199;
 const TEST_WORK_DIR = resolve(".pairflow-test-workdir");
@@ -103,10 +104,10 @@ async function setup() {
   if (!r1.ok || !r2.ok) throw new Error(`Setup failed: ${JSON.stringify(r1)} ${JSON.stringify(r2)}`);
   claudeToken = r1.token as string;
   codebuddyToken = r2.token as string;
-  const c1 = await mcpRequest("confirm_task", { task_path: TEST_TASK, is_supervisor: true, is_developer: false, work_dir: TEST_WORK_DIR }, { "x-ai-identity": claudeToken });
+  const c1 = await mcpRequest("confirm_task", { task_path: TEST_TASK, task_type: "development", is_supervisor: true, is_developer: false, work_dir: TEST_WORK_DIR }, { "x-ai-identity": claudeToken });
   if (!c1.ok) throw new Error(`confirm_task(claude) failed: ${JSON.stringify(c1)}`);
   workflowId = c1.workflow_id as string;
-  const c2 = await mcpRequest("confirm_task", { task_path: TEST_TASK, is_supervisor: false, is_developer: true, work_dir: TEST_WORK_DIR }, { "x-ai-identity": codebuddyToken });
+  const c2 = await mcpRequest("confirm_task", { task_path: TEST_TASK, task_type: "development", is_supervisor: false, is_developer: true, work_dir: TEST_WORK_DIR }, { "x-ai-identity": codebuddyToken });
   if (!c2.ok) throw new Error(`confirm_task(codebuddy) failed: ${JSON.stringify(c2)}`);
   const adv = await mcpRequest("advance", {}, { "x-ai-identity": claudeToken });
   if (!adv.ok) throw new Error(`Advance failed: ${JSON.stringify(adv)}`);
@@ -146,10 +147,23 @@ describe("Register", () => {
     const token = r.token as string;
     expect(token.length).toBeGreaterThan(0);
     expect(r.phase).toBeUndefined();
+    expect(instructionOf(r)).toMatchObject({
+      next_action: "confirm_task",
+      allowed_tools: ["confirm_task"],
+      reason_code: "REGISTERED_NEEDS_CONFIRMATION",
+    });
 
     const who = await mcpRequest("who_am_i", {}, { "x-ai-identity": token });
+    const state = await mcpRequest("get_state", {}, { "x-ai-identity": token });
     expect(who.registered).toBe(true);
     expect(who.joined_workflow).toBe(false);
+    const unboundInstruction = instructionOf(state);
+    expect(unboundInstruction).toMatchObject({
+      next_action: "confirm_task",
+      allowed_tools: ["confirm_task"],
+      reason_code: "WORKFLOW_UNBOUND",
+    });
+    expect(unboundInstruction.context).toBeUndefined();
   });
   it("normalizes registered identities to lowercase", async () => {
     const registered = await mcpRequest("register", { identity: "Alice_AGENT" });
@@ -170,7 +184,7 @@ describe("Register", () => {
   });
   it("requires a valid registered token for every protected tool", async () => {
     const protectedCalls: Array<[string, Record<string, unknown>]> = [
-      ["confirm_task", { task_path: TEST_TASK, is_supervisor: true, is_developer: false, work_dir: TEST_WORK_DIR }],
+      ["confirm_task", { task_path: TEST_TASK, task_type: "development", is_supervisor: true, is_developer: false, work_dir: TEST_WORK_DIR }],
       ["advance", {}],
       ["get_state", {}],
       ["wait_for_turn", {}],
@@ -195,6 +209,7 @@ describe("Register", () => {
 
     expect(registerTool?.inputSchema?.required ?? []).toContain("identity");
     expect(confirmTaskTool?.inputSchema?.required ?? []).toContain("task_path");
+    expect(confirmTaskTool?.inputSchema?.required ?? []).toContain("task_type");
     expect(confirmTaskTool?.inputSchema?.required ?? []).toContain("is_supervisor");
     expect(confirmTaskTool?.inputSchema?.required ?? []).toContain("is_developer");
     expect(confirmTaskTool?.inputSchema?.required ?? []).toContain("work_dir");
@@ -209,6 +224,7 @@ describe("Confirm task", () => {
     const r = await mcpRequest("register", { identity: "rel-task" });
     const c = await mcpRequest("confirm_task", {
       task_path: "docs/task.md",
+      task_type: "development",
       is_supervisor: true,
       is_developer: false,
       work_dir: TEST_WORK_DIR,
@@ -223,6 +239,7 @@ describe("Confirm task", () => {
     const r = await mcpRequest("register", { identity: "dot-task" });
     const c = await mcpRequest("confirm_task", {
       task_path: `${TEST_WORK_DIR}/./pairflow-dot-task.md`,
+      task_type: "development",
       is_supervisor: true,
       is_developer: false,
       work_dir: TEST_WORK_DIR,
@@ -239,6 +256,7 @@ describe("Confirm task", () => {
     const r = await mcpRequest("register", { identity: "rel-workdir" });
     const c = await mcpRequest("confirm_task", {
       task_path: task,
+      task_type: "development",
       is_supervisor: true,
       is_developer: false,
       work_dir: ".",
@@ -255,6 +273,7 @@ describe("Confirm task", () => {
     const registered = await mcpRequest("register", { identity: "file-workdir" });
     const confirmed = await mcpRequest("confirm_task", {
       task_path: file,
+      task_type: "development",
       is_supervisor: true,
       is_developer: false,
       work_dir: file,
@@ -274,6 +293,7 @@ describe("Confirm task", () => {
     const registered = await mcpRequest("register", { identity: "non-git-root" });
     const confirmed = await mcpRequest("confirm_task", {
       task_path: task,
+      task_type: "development",
       is_supervisor: true,
       is_developer: false,
       work_dir: workDir,
@@ -292,6 +312,7 @@ describe("Confirm task", () => {
     const registered = await mcpRequest("register", { identity: "linked-worktree" });
     const confirmed = await mcpRequest("confirm_task", {
       task_path: task,
+      task_type: "development",
       is_supervisor: true,
       is_developer: false,
       work_dir: workDir,
@@ -307,6 +328,7 @@ describe("Confirm task", () => {
     const registered = await mcpRequest("register", { identity: "directory-task" });
     const confirmed = await mcpRequest("confirm_task", {
       task_path: taskDirectory,
+      task_type: "development",
       is_supervisor: true,
       is_developer: false,
       work_dir: TEST_WORK_DIR,
@@ -324,6 +346,7 @@ describe("Confirm task", () => {
     const r = await mcpRequest("register", { identity: "dot-workdir" });
     const c = await mcpRequest("confirm_task", {
       task_path: task,
+      task_type: "development",
       is_supervisor: true,
       is_developer: false,
       work_dir: `${TEST_WORK_DIR}/./`,
@@ -341,12 +364,14 @@ describe("Confirm task", () => {
     const r2 = await mcpRequest("register", { identity: "wd-b" });
     const c1 = await mcpRequest("confirm_task", {
       task_path: task,
+      task_type: "development",
       is_supervisor: true,
       is_developer: false,
       work_dir: TEST_WORK_DIR,
     }, { "x-ai-identity": r1.token as string });
     const c2 = await mcpRequest("confirm_task", {
       task_path: task,
+      task_type: "development",
       is_supervisor: false,
       is_developer: true,
       work_dir: TEST_WORK_DIR,
@@ -354,6 +379,18 @@ describe("Confirm task", () => {
     expect(c1.ok).toBe(true);
     expect(c2.ok).toBe(true);
     expect(c1.tip).toContain("调用 wait_for_turn");
+    expect(instructionOf(c1)).toMatchObject({
+      next_action: "wait_for_turn",
+      allowed_tools: ["wait_for_turn"],
+      reason_code: "ROSTER_INCOMPLETE",
+      context: { holds_turn: false, can_advance: false },
+    });
+    expect(instructionOf(c2)).toMatchObject({
+      next_action: "wait_for_turn",
+      allowed_tools: ["wait_for_turn"],
+      reason_code: "CONFIRMED_NEEDS_TURN_CLAIM",
+      context: { holds_turn: false, can_advance: false },
+    });
     await rm(task, { force: true });
     await rm(`${task}.pid`, { force: true });
   });
@@ -370,6 +407,7 @@ describe("Confirm task", () => {
     const r = await mcpRequest("register", { identity: "wd-case" });
     const c = await mcpRequest("confirm_task", {
       task_path: task,
+      task_type: "development",
       is_supervisor: true,
       is_developer: false,
       work_dir: caseVariantWorkDir,
@@ -390,12 +428,14 @@ describe("Confirm task", () => {
     const r2 = await mcpRequest("register", { identity: "task-case-b" });
     const c1 = await mcpRequest("confirm_task", {
       task_path: task,
+      task_type: "development",
       is_supervisor: true,
       is_developer: false,
       work_dir: TEST_WORK_DIR,
     }, { "x-ai-identity": r1.token as string });
     const c2 = await mcpRequest("confirm_task", {
       task_path: caseVariantTask,
+      task_type: "development",
       is_supervisor: false,
       is_developer: true,
       work_dir: TEST_WORK_DIR,
@@ -419,12 +459,14 @@ describe("Confirm task", () => {
     const [c1, c2] = await Promise.all([
       mcpRequest("confirm_task", {
         task_path: task,
+        task_type: "development",
         is_supervisor: true,
         is_developer: false,
         work_dir: TEST_WORK_DIR,
       }, { "x-ai-identity": r1.token as string }),
       mcpRequest("confirm_task", {
         task_path: task,
+        task_type: "development",
         is_supervisor: false,
         is_developer: true,
         work_dir: TEST_WORK_DIR,
@@ -448,12 +490,14 @@ describe("Confirm task", () => {
     const headers = { "x-ai-identity": registered.token as string };
     const first = await mcpRequest("confirm_task", {
       task_path: firstTask,
+      task_type: "development",
       is_supervisor: true,
       is_developer: false,
       work_dir: TEST_WORK_DIR,
     }, headers);
     const second = await mcpRequest("confirm_task", {
       task_path: secondTask,
+      task_type: "development",
       is_supervisor: true,
       is_developer: false,
       work_dir: TEST_WORK_DIR,
@@ -469,7 +513,7 @@ describe("Confirm task", () => {
     await rm(`${secondTask}.pid`, { force: true });
   });
 
-  it("rejects explicit task_type mismatch and allows omitted task_type to inherit", async () => {
+  it("requires every participant to confirm the same explicit task_type", async () => {
     const task = resolve(TEST_WORK_DIR, "pairflow-task-type-task.md");
     await writeFile(task, "# task type task", "utf-8");
     const r1 = await mcpRequest("register", { identity: "tt-a" });
@@ -488,8 +532,9 @@ describe("Confirm task", () => {
       is_developer: true,
       work_dir: TEST_WORK_DIR,
     }, { "x-ai-identity": r2.token as string });
-    const inherited = await mcpRequest("confirm_task", {
+    const matching = await mcpRequest("confirm_task", {
       task_path: task,
+      task_type: "development",
       is_supervisor: false,
       is_developer: true,
       work_dir: TEST_WORK_DIR,
@@ -498,7 +543,7 @@ describe("Confirm task", () => {
     expect(c1.ok).toBe(true);
     expect(mismatch.ok).toBe(false);
     expect(mismatch.tip).toContain("task_type mismatch");
-    expect(inherited.ok).toBe(true);
+    expect(matching.ok).toBe(true);
     await rm(task, { force: true });
     await rm(`${task}.pid`, { force: true });
   });
@@ -510,12 +555,14 @@ describe("Confirm task", () => {
     const r2 = await mcpRequest("register", { identity: "nosup-b" });
     const c1 = await mcpRequest("confirm_task", {
       task_path: task,
+      task_type: "development",
       is_supervisor: false,
       is_developer: true,
       work_dir: TEST_WORK_DIR,
     }, { "x-ai-identity": r1.token as string });
     const c2 = await mcpRequest("confirm_task", {
       task_path: task,
+      task_type: "development",
       is_supervisor: false,
       is_developer: false,
       work_dir: TEST_WORK_DIR,
@@ -535,12 +582,14 @@ describe("Confirm task", () => {
     const r2 = await mcpRequest("register", { identity: "nodev-b" });
     const c1 = await mcpRequest("confirm_task", {
       task_path: task,
+      task_type: "development",
       is_supervisor: true,
       is_developer: false,
       work_dir: TEST_WORK_DIR,
     }, { "x-ai-identity": r1.token as string });
     const c2 = await mcpRequest("confirm_task", {
       task_path: task,
+      task_type: "development",
       is_supervisor: false,
       is_developer: false,
       work_dir: TEST_WORK_DIR,
@@ -560,12 +609,14 @@ describe("Confirm task", () => {
     const r2 = await mcpRequest("register", { identity: "combo-b" });
     const c1 = await mcpRequest("confirm_task", {
       task_path: task,
+      task_type: "development",
       is_supervisor: true,
       is_developer: true,
       work_dir: TEST_WORK_DIR,
     }, { "x-ai-identity": r1.token as string });
     const c2 = await mcpRequest("confirm_task", {
       task_path: task,
+      task_type: "development",
       is_supervisor: false,
       is_developer: false,
       work_dir: TEST_WORK_DIR,
@@ -588,6 +639,7 @@ describe("Confirm task", () => {
     const r1 = await mcpRequest("register", { identity: "rec-a" });
     const c1 = await mcpRequest("confirm_task", {
       task_path: task,
+      task_type: "development",
       is_supervisor: true,
       is_developer: false,
       work_dir: TEST_WORK_DIR,
@@ -628,6 +680,7 @@ describe("Confirm task", () => {
     const newIdentity = await mcpRequest("register", { identity: "recover-new" });
     const oldConfirmed = await mcpRequest("confirm_task", {
       task_path: task,
+      task_type: "development",
       is_supervisor: true,
       is_developer: false,
       work_dir: TEST_WORK_DIR,
@@ -640,6 +693,7 @@ describe("Confirm task", () => {
     }, { "x-ai-identity": oldIdentity.token as string });
     const newConfirmed = await mcpRequest("confirm_task", {
       task_path: task,
+      task_type: "development",
       is_supervisor: false,
       is_developer: true,
       work_dir: TEST_WORK_DIR,
@@ -666,6 +720,7 @@ describe("Confirm task", () => {
 
     const confirmed = await mcpRequest("confirm_task", {
       task_path: task,
+      task_type: "development",
       is_supervisor: true,
       is_developer: false,
       work_dir: TEST_WORK_DIR,
@@ -685,6 +740,7 @@ describe("Confirm task", () => {
 
     const confirmed = await mcpRequest("confirm_task", {
       task_path: task,
+      task_type: "development",
       is_supervisor: true,
       is_developer: false,
       work_dir: TEST_WORK_DIR,
@@ -710,6 +766,7 @@ describe("Confirm task", () => {
 
     const confirmed = await mcpRequest("confirm_task", {
       task_path: task,
+      task_type: "development",
       is_supervisor: true,
       is_developer: false,
       work_dir: TEST_WORK_DIR,
@@ -733,12 +790,14 @@ describe("Confirm task", () => {
     const r2 = await mcpRequest("register", { identity: "rec-role-b" });
     const c1 = await mcpRequest("confirm_task", {
       task_path: task,
+      task_type: "development",
       is_supervisor: false,
       is_developer: false,
       work_dir: TEST_WORK_DIR,
     }, { "x-ai-identity": r1.token as string });
     const c2 = await mcpRequest("confirm_task", {
       task_path: task,
+      task_type: "development",
       is_supervisor: false,
       is_developer: false,
       work_dir: TEST_WORK_DIR,
@@ -765,12 +824,14 @@ describe("Confirm task", () => {
     const r2 = await mcpRequest("register", { identity: "rec-wd-b" });
     const c1 = await mcpRequest("confirm_task", {
       task_path: task,
+      task_type: "development",
       is_supervisor: true,
       is_developer: false,
       work_dir: root,
     }, { "x-ai-identity": r1.token as string });
     const c2 = await mcpRequest("confirm_task", {
       task_path: task,
+      task_type: "development",
       is_supervisor: false,
       is_developer: true,
       work_dir: nested,
@@ -795,6 +856,7 @@ describe("Confirm task", () => {
     const registered = await mcpRequest("register", { identity: "new-workdir" });
     const confirmed = await mcpRequest("confirm_task", {
       task_path: task,
+      task_type: "development",
       is_supervisor: true,
       is_developer: false,
       work_dir: newWorkDir,
@@ -832,6 +894,7 @@ describe("Confirm task", () => {
     const registered = await mcpRequest("register", { identity: "task-type-conflict" });
     const confirmed = await mcpRequest("confirm_task", {
       task_path: task,
+      task_type: "development",
       is_supervisor: true,
       is_developer: false,
       work_dir: TEST_WORK_DIR,
@@ -860,6 +923,7 @@ describe("Confirm task", () => {
     }, { "x-ai-identity": r1.token as string });
     const c2 = await mcpRequest("confirm_task", {
       task_path: task,
+      task_type: "requirements",
       is_supervisor: false,
       is_developer: false,
       work_dir: TEST_WORK_DIR,
@@ -953,6 +1017,7 @@ describe("Wait for turn + submit", () => {
   it("rejects role overwrite that would create duplicate supervisors", async () => {
     const r = await mcpRequest("confirm_task", {
       task_path: TEST_TASK,
+      task_type: "development",
       is_supervisor: true,
       is_developer: true,
       work_dir: TEST_WORK_DIR,
@@ -977,6 +1042,11 @@ describe("Wait for turn + submit", () => {
     }, { "x-ai-identity": codebuddyToken });
     expect(r.ok).toBe(false);
     expect(r.tip).toContain("file_path must be an absolute path");
+    expect(instructionOf(r)).toMatchObject({
+      next_action: "fix_request",
+      allowed_tools: [],
+      reason_code: "REQUEST_REJECTED",
+    });
   });
   it("rejects submit file_path with relative path segments", async () => {
     const archiveFile = resolve(TEST_HANDOFF, workflowId, "requirements", "r1_codebuddy.md");
@@ -1019,6 +1089,12 @@ describe("Wait for turn + submit", () => {
       git_commit_hash: "def7654321",
     }, { "x-ai-identity": codebuddyToken });
     expect(r.ok).toBe(true);
+    expect(instructionOf(r)).toMatchObject({
+      next_action: "wait_for_turn",
+      allowed_tools: ["wait_for_turn"],
+      reason_code: "SUBMISSION_ACCEPTED",
+      context: { holds_turn: false, can_advance: false },
+    });
   });
 });
 

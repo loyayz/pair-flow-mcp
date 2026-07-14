@@ -50,6 +50,7 @@ describe("confirm_task workflow locking", () => {
 
     const pending = confirmTask({
       task_path: TASK_PATH,
+      task_type: "development",
       is_supervisor: true,
       is_developer: false,
       work_dir: WORK_DIR,
@@ -91,12 +92,14 @@ describe("confirm_task workflow locking", () => {
     const results = await Promise.all([
       confirmTask({
         task_path: firstTask,
+        task_type: "development",
         is_supervisor: true,
         is_developer: false,
         work_dir: WORK_DIR,
       }, extra(firstToken)),
       confirmTask({
         task_path: secondTask,
+        task_type: "development",
         is_supervisor: false,
         is_developer: true,
         work_dir: WORK_DIR,

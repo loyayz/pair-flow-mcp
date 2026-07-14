@@ -1,63 +1,52 @@
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import { renderTip } from "./tip-template.js";
 import type { Guidance } from "./instruction.js";
 import { guidance } from "./instruction.js";
+import { businessRejectionSchema } from "./tool-output.js";
 
 const REMINDER = "质量优先，完整完成任务目标。";
 
-export function err(message: string, extra?: Record<string, unknown>): CallToolResult {
-  const safeExtra = extra ? { ...extra } : {};
-  delete safeExtra.ok;
-  delete safeExtra.error;
-  delete safeExtra.tip;
-  delete safeExtra.reminder;
-  delete safeExtra.instruction;
-  const rejectionGuidance = guidance("response.rejected", { message }, {
-    next_action: "fix_request",
-    allowed_tools: [],
-    reason_code: "REQUEST_REJECTED",
-  });
-  return {
-    content: [{
-      type: "text",
-      text: JSON.stringify({
-        ...safeExtra,
-        ok: false,
-        error: message,
-        tip: rejectionGuidance.tip,
-        reminder: REMINDER,
-        instruction: rejectionGuidance.instruction,
-      }),
-    }],
-    isError: true,
-  };
-}
-
-export function ok(data: Record<string, unknown>, g?: Guidance | string): CallToolResult {
-  // Backward-compatible: accept string tip directly
+function sanitizeBusinessData(data: Record<string, unknown>): Record<string, unknown> {
   const businessData = { ...data };
   delete businessData.ok;
   delete businessData.error;
   delete businessData.tip;
   delete businessData.reminder;
   delete businessData.instruction;
+  return businessData;
+}
 
-  let tip: string | undefined;
-  let instruction = undefined;
+export function err(message: string, extra?: Record<string, unknown>): CallToolResult {
+  const safeExtra = sanitizeBusinessData(extra ?? {});
+  const rejectionGuidance = guidance("response.rejected", { message }, {
+    next_action: "fix_request",
+    allowed_tools: [],
+    reason_code: "REQUEST_REJECTED",
+  });
+  const payload = businessRejectionSchema.parse({
+    ...safeExtra,
+    ok: false,
+    error: message,
+    tip: rejectionGuidance.tip,
+    reminder: REMINDER,
+    instruction: rejectionGuidance.instruction,
+  });
+  return {
+    structuredContent: payload,
+    content: [{ type: "text", text: JSON.stringify(payload) }],
+    isError: true,
+  };
+}
 
-  if (g && typeof g === "object" && "instruction" in g) {
-    tip = g.tip;
-    instruction = g.instruction;
-  } else if (typeof g === "string") {
-    tip = g;
-  }
-
-  const payload: Record<string, unknown> = {
+export function ok(data: Record<string, unknown>, g?: Guidance): CallToolResult {
+  const businessData = sanitizeBusinessData(data);
+  const payload = {
     ...businessData,
     ok: true,
     reminder: REMINDER,
-    ...(tip ? { tip } : {}),
-    ...(instruction ? { instruction } : {}),
+    ...(g ? { tip: g.tip, instruction: g.instruction } : {}),
   };
-  return { content: [{ type: "text", text: JSON.stringify(payload) }] };
+  return {
+    structuredContent: payload,
+    content: [{ type: "text", text: JSON.stringify(payload) }],
+  };
 }

@@ -4,8 +4,20 @@ import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sd
 import { parseSession } from "../identity.js";
 import { getState, hasCompleteParticipantRoster, hasRecoveryPlaceholderParticipant } from "../state.js";
 import { err, ok } from "../response.js";
-import { buildGuidance } from "../tip.js";
-import { guidance } from "../instruction.js";
+import { buildGuidance, reliableWorkflowPhase, workflowInstructionContext } from "../tip.js";
+import { guidance, type InstructionContext } from "../instruction.js";
+import type { PairFlowState } from "../state.js";
+
+function getStatePhaseProjection(
+  state: PairFlowState,
+): Pick<InstructionContext, "phase" | "sub_phase"> {
+  const reliablePhase = reliableWorkflowPhase(state);
+  if (!reliablePhase.phase) return {};
+  return {
+    phase: reliablePhase.phase,
+    sub_phase: reliablePhase.phase === "implementation" ? reliablePhase.sub_phase : null,
+  };
+}
 
 export async function getStateTool(
   extra: RequestHandlerExtra<ServerRequest, ServerNotification>
@@ -29,24 +41,19 @@ export async function getStateTool(
   }
   const workflowData = {
     workflow_id: workflowId,
-    phase: state.phase,
-    sub_phase: state.sub_phase,
+    ...getStatePhaseProjection(state),
     round: state.round,
     turn: state.turn,
   };
+  if (!reliableWorkflowPhase(state).phase) {
+    return ok(workflowData, buildGuidance(state, identity));
+  }
   if (hasRecoveryPlaceholderParticipant(state)) {
     return ok(workflowData, guidance("get-state.recovery-pending", { identity, workflow_id: workflowId! }, {
       next_action: "wait_for_turn",
       allowed_tools: ["wait_for_turn"],
       reason_code: "ROSTER_INCOMPLETE",
-      context: {
-        workflow_id: workflowId!,
-        phase: state.phase as "idle" | "requirements" | "planning" | "implementation" | "summary",
-        round: state.round,
-        turn: state.turn,
-        holds_turn: false,
-        can_advance: false,
-      },
+      context: workflowInstructionContext(state, identity),
     }));
   }
   if (!hasCompleteParticipantRoster(state)) {
@@ -54,14 +61,7 @@ export async function getStateTool(
       next_action: "wait_for_turn",
       allowed_tools: ["wait_for_turn"],
       reason_code: "ROSTER_INCOMPLETE",
-      context: {
-        workflow_id: workflowId!,
-        phase: state.phase as "idle" | "requirements" | "planning" | "implementation" | "summary",
-        round: state.round,
-        turn: state.turn,
-        holds_turn: false,
-        can_advance: false,
-      },
+      context: workflowInstructionContext(state, identity),
     }));
   }
   return ok(workflowData, buildGuidance(state, identity));

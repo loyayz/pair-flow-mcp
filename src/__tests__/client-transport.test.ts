@@ -33,8 +33,23 @@ async function stopServer() {
 }
 
 async function call(client: Client, name: string, args: Record<string, unknown> = {}) {
-  const r = await client.callTool({ name, arguments: args });
-  return JSON.parse((r.content as Array<{ type: string; text: string }>)[0].text);
+  const result = await client.callTool({ name, arguments: args });
+  const textPayload = JSON.parse((result.content as Array<{ type: string; text: string }>)[0].text);
+  expect(result.structuredContent).toEqual(textPayload);
+  return textPayload;
+}
+
+function requestHealthPayload(): Promise<Record<string, any>> {
+  return new Promise((resolve, reject) => {
+    const request = get({ host: "127.0.0.1", port: PORT, path: "/health", timeout: 1000 }, (response) => {
+      let body = "";
+      response.setEncoding("utf-8");
+      response.on("data", (chunk) => { body += chunk; });
+      response.on("end", () => resolve(JSON.parse(body)));
+    });
+    request.on("timeout", () => request.destroy(new Error("request timed out")));
+    request.on("error", reject);
+  });
 }
 
 function requestHealth(host: string): Promise<number | undefined> {
@@ -103,6 +118,36 @@ describe("Client transport with identity injection", () => {
   it("exposes health checks only through GET", async () => {
     expect(await requestStatus("GET", "/health")).toBe(200);
     expect(await requestStatus("POST", "/health")).toBe(404);
+  });
+
+  it("exposes the instruction protocol through runtime discovery", async () => {
+    const health = await requestHealthPayload();
+    expect(health.server).toEqual({ name: "pair-flow", version: "0.1.0" });
+    expect(health.protocol.version).toBe("1.0");
+    expect(health.protocol.capabilities).toEqual([
+      "instruction_v1",
+      "structured_tool_output_v1",
+    ]);
+
+    const client = new Client({ name: "discovery-test", version: "1" }, {});
+    await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${PORT}/mcp`)));
+    expect(client.getServerVersion()).toEqual(health.server);
+    expect(client.getInstructions()).toContain("GET /health");
+    expect(client.getInstructions()).toContain("do not derive workflow control from tip");
+
+    const tools = await client.listTools();
+    expect(tools.tools.map((tool) => tool.name).sort()).toEqual([
+      "advance",
+      "confirm_task",
+      "get_state",
+      "ping",
+      "register",
+      "submit",
+      "wait_for_turn",
+      "who_am_i",
+    ]);
+    for (const tool of tools.tools) expect(tool.outputSchema?.type).toBe("object");
+    await client.close();
   });
 
   it("does not treat MCP path prefixes as the MCP endpoint", async () => {
@@ -223,5 +268,27 @@ describe("Client transport with identity injection", () => {
     expect(r.registered).toBe(false);
     expect(r.joined_workflow).toBe(false);
     await c.close();
+  });
+
+  it("validates successful structured output and preserves business rejections", async () => {
+    const url = `http://127.0.0.1:${PORT}/mcp`;
+    const anonymousClient = new Client({ name: "output-validation-test", version: "1" }, {});
+    await anonymousClient.connect(new StreamableHTTPClientTransport(new URL(url)));
+
+    expect((await call(anonymousClient, "ping")).ok).toBe(true);
+    expect((await call(anonymousClient, "who_am_i")).registered).toBe(false);
+    const registration = await call(anonymousClient, "register", { identity: "schema-user" });
+    await anonymousClient.close();
+
+    const authenticatedClient = new Client({ name: "rejection-test", version: "1" }, {});
+    await authenticatedClient.connect(createClientTransport(url, registration.token));
+    await authenticatedClient.listTools();
+    const rejection = await call(authenticatedClient, "advance");
+    expect(rejection.ok).toBe(false);
+    expect(rejection.instruction).toMatchObject({
+      next_action: "fix_request",
+      reason_code: "REQUEST_REJECTED",
+    });
+    await authenticatedClient.close();
   });
 });

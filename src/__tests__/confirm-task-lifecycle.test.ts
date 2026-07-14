@@ -15,6 +15,7 @@ import {
   type PairFlowState,
 } from "../state.js";
 import { registerToken, resolveSession } from "../token-map.js";
+import { instructionOf } from "./instruction-assertions.js";
 
 const WORKFLOW_ID = "20260711000002";
 const WORK_DIR = join(tmpdir(), `pairflow-confirm-lifecycle-${randomUUID()}`);
@@ -52,6 +53,7 @@ function participantState(phase: PairFlowState["phase"] = "idle", registeredAt =
 async function confirm(token: string, overrides: Record<string, unknown> = {}) {
   return responsePayload(await confirmTask({
     task_path: TASK_PATH,
+    task_type: "development",
     is_supervisor: true,
     is_developer: false,
     work_dir: WORK_DIR,
@@ -81,12 +83,26 @@ describe("confirm_task participant lifecycle", () => {
 
     const result = responsePayload(await confirmTask({
       task_path: TASK_PATH,
+      task_type: "development",
       is_supervisor: false,
       is_developer: true,
       work_dir: WORK_DIR,
     }, requestExtra(token)));
 
     expect(result.ok).toBe(true);
+    expect(instructionOf(result)).toMatchObject({
+      next_action: "wait_for_turn",
+      allowed_tools: ["wait_for_turn"],
+      reason_code: "CONFIRMED_NEEDS_TURN_CLAIM",
+      context: {
+        workflow_id: WORKFLOW_ID,
+        phase: "idle",
+        round: 1,
+        turn: "alice",
+        holds_turn: false,
+        can_advance: false,
+      },
+    });
     expect(getState(WORKFLOW_ID)).toMatchObject({
       turn: "alice",
       turn_switched_at: "2026-07-11T03:00:00.000Z",
@@ -102,6 +118,11 @@ describe("confirm_task participant lifecycle", () => {
 
     expect(result.ok).toBe(false);
     expect(result.tip).toContain("participant responsibilities are locked");
+    expect(instructionOf(result)).toMatchObject({
+      next_action: "fix_request",
+      allowed_tools: [],
+      reason_code: "REQUEST_REJECTED",
+    });
     expect(getState(WORKFLOW_ID)?.participants[0]).toMatchObject({
       is_supervisor: true,
       is_developer: false,
@@ -220,10 +241,20 @@ describe("confirm_task participant lifecycle", () => {
     expect(invalidTaskType.tip).toContain("task_type must be a string");
   });
 
+  it("requires task_type at the handler boundary", async () => {
+    const token = registerToken("alice");
+
+    const missingTaskType = await confirm(token, { task_type: undefined });
+
+    expect(missingTaskType.ok).toBe(false);
+    expect(missingTaskType.tip).toContain("task_type is required");
+  });
+
   it("serializes concurrent confirmation attempts made with the same token", async () => {
     const token = registerToken("alice");
     const args = (taskPath: string) => ({
       task_path: taskPath,
+      task_type: "development",
       is_supervisor: true,
       is_developer: false,
       work_dir: WORK_DIR,
@@ -258,6 +289,7 @@ describe("confirm_task participant lifecycle", () => {
 
     const result = responsePayload(await confirmTask({
       task_path: SECOND_TASK_PATH,
+      task_type: "development",
       is_supervisor: false,
       is_developer: true,
       work_dir: WORK_DIR,
