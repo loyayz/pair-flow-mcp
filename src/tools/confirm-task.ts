@@ -1,12 +1,14 @@
 import { lstat, readFile } from "node:fs/promises";
 import { isAbsolute, parse, resolve, sep } from "node:path";
+import { unlink } from "node:fs/promises";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
 import { Mutex } from "async-mutex";
 import { parseSession } from "../identity.js";
 import { assignTurn, getState, setState, getAllStates, getMutex, defaultState, formatWorkflowId, hasCompleteParticipantRoster, isRecoveryPlaceholderParticipant, replaceWaitWarningCycle, type Participant } from "../state.js";
-import { reconstructFromHandoff } from "../crash-recovery.js";
+import { phaseAfterAccepted, reconstructFromHandoff } from "../crash-recovery.js";
+import { collectValidatedSubmissions } from "../archive-submissions.js";
 import { err, ok } from "../response.js";
 import { guidance } from "../instruction.js";
 import { bindWorkflow } from "../token-map.js";
@@ -14,6 +16,7 @@ import { atomicWriteText } from "../atomic-write.js";
 import { findSymbolicLinkInPath } from "../path-safety.js";
 import { workflowInstructionContext } from "../tip.js";
 import { publishWorkflowChange } from "../workflow-events.js";
+import { readDeliveryManifest } from "../delivery-manifest.js";
 const taskPathMutexes = new Map<string, Mutex>();
 const tokenMutexes = new Map<string, Mutex>();
 const recoveryMutexes = new Map<string, Mutex>();
@@ -99,7 +102,17 @@ function reconcileRecoveredTurn(state: ReturnType<typeof defaultState>): void {
   const latest = Object.entries(state.last_submission_by_participant)
     .filter((entry): entry is [string, typeof entry[1] & { round: number }] => entry[1].round !== null)
     .sort((left, right) => right[1].round - left[1].round)[0];
-  if (!latest) return;
+  if (!latest) {
+    const supervisor = state.participants.find((participant) => participant.is_supervisor);
+    const developer = state.participants.find((participant) => participant.is_developer);
+    const reviewer = state.participants.find((participant) => !participant.is_developer);
+    const assigned = state.phase === "planning" ? reviewer?.identity
+      : state.phase === "implementation" ? developer?.identity
+        : state.phase === "summary" ? supervisor?.identity
+          : undefined;
+    if (assigned) assignTurn(state, assigned, new Date().toISOString());
+    return;
+  }
   const next = state.participants.find((participant) => participant.identity !== latest[0]);
   if (next) state.turn = next.identity;
 }
@@ -308,6 +321,22 @@ export async function confirmTask(
                 error: `workflow_id ${pidWfId} is already active for another task: ${posixPath(activePidState.task.spec_file)}`,
               };
         }
+        let persistedManifest;
+        try {
+          persistedManifest = await readDeliveryManifest(resolvedWorkDir, pidWfId);
+        } catch (error) {
+          return { existing: false, recovered: false, error: error instanceof Error ? error.message : "failed to read delivery manifest" };
+        }
+        if (persistedManifest?.manifest.status === "completed") {
+          try {
+            await unlink(`${resolvedTaskPath}.pid`);
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+              return { existing: false, recovered: false, error: `failed to clean completed workflow pid: ${persistedManifest.manifest_path} (${filesystemErrorCode(error)})` };
+            }
+          }
+          return { existing: false, recovered: false };
+        }
         const defState = defaultState();
         try {
           const recoveredState = await reconstructFromHandoff(
@@ -317,6 +346,28 @@ export async function confirmTask(
             resolvedTaskPath,
           );
           if (!recoveredState) return { existing: false, recovered: false };
+          if (persistedManifest) {
+            recoveredState.delivery_manifest = persistedManifest.manifest;
+            const accepted = persistedManifest.manifest.phases.implementation
+              ?? persistedManifest.manifest.phases.planning
+              ?? persistedManifest.manifest.phases.requirements;
+            if (accepted) {
+              const nextPhase = phaseAfterAccepted(accepted.phase, persistedManifest.manifest.task_type);
+              const submissions = await collectValidatedSubmissions(resolvedWorkDir, pidWfId);
+              if (nextPhase !== "completed" && !submissions.some((submission) => submission.phase === nextPhase)) {
+                recoveredState.phase = nextPhase;
+                recoveredState.round = 1;
+                recoveredState.sub_phase = nextPhase === "implementation" ? "coding" : null;
+                recoveredState.turn = "idle";
+                recoveredState.turn_switched_at = null;
+                recoveredState.turn_claimed_at = null;
+                recoveredState.last_submission_by_participant = Object.fromEntries(recoveredState.participants.map((participant) => [
+                  participant.identity,
+                  { round: null, sub_phase: null, commit_hash: null, submitted_at: null, file_path: null },
+                ]));
+              }
+            }
+          }
           setState(pidWfId, recoveredState);
           return { existing: true, recovered: true };
         } catch (error) {

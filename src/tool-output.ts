@@ -4,6 +4,7 @@ import {
   phaseSchema,
   subPhaseSchema,
 } from "./instruction-protocol.js";
+import { submissionReferenceSchema } from "./delivery-manifest-schema.js";
 
 const reminderSchema = z.literal("质量优先，完整完成任务目标。");
 const guidanceShape = {
@@ -25,6 +26,7 @@ export const businessRejectionSchema = z.object({
 
 function actionableToolOutputSchema<SuccessShape extends z.ZodRawShape>(
   successShape: SuccessShape,
+  validateSuccess?: (payload: z.infer<ReturnType<typeof z.object<SuccessShape>>>, context: z.RefinementCtx) => void,
 ) {
   const successSchema = z.object({
     ok: z.literal(true),
@@ -51,7 +53,36 @@ function actionableToolOutputSchema<SuccessShape extends z.ZodRawShape>(
         });
       }
     }
+    const successPayload = payload as Record<string, unknown>;
+    if (successPayload.ok === true && validateSuccess) validateSuccess(successPayload as z.infer<ReturnType<typeof z.object<SuccessShape>>>, context);
   });
+}
+
+const completionShape = {
+  manifest_path: z.string().min(1).optional(),
+  archive_root: z.string().min(1).optional(),
+  final_summary: submissionReferenceSchema.optional(),
+  cleanup_pending: z.boolean().optional(),
+  cleanup_error: z.string().min(1).optional(),
+};
+
+function completionFieldsForIdle(
+  payload: Record<string, unknown>,
+  context: z.RefinementCtx,
+  phaseField: "new_phase" | "phase",
+): void {
+  const completed = payload[phaseField] === "idle" && payload.turn === "idle";
+  for (const field of ["manifest_path", "archive_root", "final_summary"] as const) {
+    if ((payload[field] !== undefined) !== completed) {
+      context.addIssue({ code: "custom", path: [field], message: `${field} must be present exactly for idle completion` });
+    }
+  }
+  if ((payload.cleanup_error !== undefined) !== (payload.cleanup_pending === true)) {
+    context.addIssue({ code: "custom", path: ["cleanup_error"], message: "cleanup_error must be present exactly when cleanup_pending is true" });
+  }
+  if (!completed && payload.cleanup_pending !== undefined) {
+    context.addIssue({ code: "custom", path: ["cleanup_pending"], message: "cleanup warning is only valid for idle completion" });
+  }
 }
 
 export const TOOL_OUTPUT_SCHEMAS = {
@@ -84,7 +115,8 @@ export const TOOL_OUTPUT_SCHEMAS = {
     new_phase: phaseSchema,
     turn: z.string(),
     sub_phase: subPhaseSchema.optional(),
-  }),
+    ...completionShape,
+  }, (payload, context) => completionFieldsForIdle(payload, context, "new_phase")),
   get_state: actionableToolOutputSchema({
     workflow_id: z.string().optional(),
     phase: phaseSchema.optional(),
@@ -97,7 +129,8 @@ export const TOOL_OUTPUT_SCHEMAS = {
     phase: phaseSchema.optional(),
     round: z.number().int().optional(),
     warning: z.string().optional(),
-  }),
+    ...completionShape,
+  }, (payload, context) => completionFieldsForIdle(payload, context, "phase")),
   claim_turn: actionableToolOutputSchema({
     turn: z.string(),
     phase: phaseSchema,

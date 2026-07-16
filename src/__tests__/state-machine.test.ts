@@ -147,6 +147,10 @@ describe("Tip guidance", () => {
         developer: { round: 1, sub_phase: "coding", commit_hash: "abc1234", submitted_at: "2026-07-10T00:00:00.000Z", file_path: "handoff/wf/implementation/r1_coding_developer.md" },
         reviewer: { round: null, sub_phase: null, commit_hash: null, submitted_at: null, file_path: null },
       },
+      delivery_manifest: {
+        manifest_version: 1, status: "in_progress", workflow_id: TEST_WF, task_type: "development", archive_root: `C:/project/handoff/${TEST_WF}`, supervisor: "reviewer",
+        phases: { planning: { phase: "planning", advanced_by: "reviewer", accepted_at: "2026-07-10T00:00:00.000Z", acceptance_commit: "abc1234", canonical_plan: { round: 1, submitted_by: "reviewer", commit_hash: "abc1234", file_path: "C:/project/handoff/wf/planning/r1_reviewer.md" } } }, commit_verification: "caller_declared_unverified",
+      },
     };
 
     const tip = buildTip(state, "reviewer");
@@ -213,6 +217,14 @@ describe("Tip guidance", () => {
         { identity: "supervisor", is_supervisor: true, is_developer: false, registered_at: "", work_dir: resolve("project") },
         { identity: "developer", is_supervisor: false, is_developer: true, registered_at: "", work_dir: resolve("project") },
       ],
+      delivery_manifest: {
+        manifest_version: 1, status: "in_progress", workflow_id: TEST_WF, task_type: "development", archive_root: `C:/project/handoff/${TEST_WF}`, supervisor: "supervisor",
+        phases: {
+          requirements: { phase: "requirements", advanced_by: "supervisor", accepted_at: "2026-07-10T00:00:00.000Z", acceptance_commit: "abc1234", final_submission: { round: 1, submitted_by: "supervisor", commit_hash: "abc1234", file_path: "C:/project/handoff/wf/requirements/r1_supervisor.md" } },
+          planning: { phase: "planning", advanced_by: "supervisor", accepted_at: "2026-07-10T00:00:00.000Z", acceptance_commit: "abc1234", canonical_plan: { round: 1, submitted_by: "supervisor", commit_hash: "abc1234", file_path: "C:/project/handoff/wf/planning/r1_supervisor.md" } },
+          implementation: { phase: "implementation", advanced_by: "supervisor", accepted_at: "2026-07-10T00:00:00.000Z", acceptance_commit: "def5678", coding_submission: { round: 1, submitted_by: "developer", commit_hash: "abc1234", file_path: "C:/project/handoff/wf/implementation/r1_coding_developer.md", sub_phase: "coding" }, review_submission: { round: 2, submitted_by: "supervisor", commit_hash: "def5678", file_path: "C:/project/handoff/wf/implementation/r2_review_supervisor.md", sub_phase: "review" } },
+        }, commit_verification: "caller_declared_unverified",
+      },
     };
 
     const tip = buildTip(state, "supervisor");

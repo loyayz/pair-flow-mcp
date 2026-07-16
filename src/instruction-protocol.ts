@@ -415,7 +415,7 @@ const fields = {
 export const INSTRUCTION_PROTOCOL = Object.freeze({
   name: "pairflow-instruction",
   version: INSTRUCTION_PROTOCOL_VERSION,
-  capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1"] as const,
+  capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1", "delivery_manifest_v1"] as const,
   authority: {
     instruction: "Actions, workflow state, permissions, paths and decision branches",
     tip: "Natural-language thinking, content and quality guidance; do not derive workflow control from tip",

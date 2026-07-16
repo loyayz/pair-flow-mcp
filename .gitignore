@@ -22,4 +22,5 @@ Thumbs.db
 
 # PairFlow runtime sidecars (never commit)
 handoff/**/*.meta.json
+handoff/**/delivery-manifest.json
 *.md.pid

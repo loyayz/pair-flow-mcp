@@ -11,6 +11,7 @@ import { workflowArchivePath, workflowWorkDir } from "../archive-path.js";
 import { unbindWorkflow } from "../token-map.js";
 import { guidance } from "../instruction.js";
 import { publishWorkflowChange } from "../workflow-events.js";
+import { persistCompletedManifest, persistPhaseAcceptance, toCompletionSnapshot } from "../delivery-manifest.js";
 
 export async function advance(
   args: Record<string, unknown>,
@@ -81,7 +82,8 @@ export async function advance(
 
     if (currentPhase === "requirements") {
       if (state.task?.task_type === "requirements") {
-        const next = markTurnAssigned(initSummaryPhase(state, identity), state.wait_warning_cycle);
+        const persisted = await persistPhaseAcceptance(state, identity, new Date().toISOString());
+        const next = markTurnAssigned(initSummaryPhase({ ...state, delivery_manifest: persisted.manifest }, identity), state.wait_warning_cycle);
         setState(workflowId, next);
         publishWorkflowChange(workflowId);
 
@@ -102,7 +104,8 @@ export async function advance(
       }
       const reviewer = state.participants.find((p) => !p.is_developer);
       if (!reviewer) return err("no reviewer (is_developer=false) registered");
-      const next = markTurnAssigned(initPlanningPhase(state, reviewer.identity), state.wait_warning_cycle);
+      const persisted = await persistPhaseAcceptance(state, identity, new Date().toISOString());
+      const next = markTurnAssigned(initPlanningPhase({ ...state, delivery_manifest: persisted.manifest }, reviewer.identity), state.wait_warning_cycle);
       setState(workflowId, next);
       publishWorkflowChange(workflowId);
 
@@ -141,7 +144,8 @@ export async function advance(
     if (currentPhase === "planning") {
       const developer = state.participants.find((p) => p.is_developer);
       if (!developer) return err("no developer (is_developer=true) registered");
-      const next = markTurnAssigned(initImplementationPhase(state, developer.identity), state.wait_warning_cycle);
+      const persisted = await persistPhaseAcceptance(state, identity, new Date().toISOString());
+      const next = markTurnAssigned(initImplementationPhase({ ...state, delivery_manifest: persisted.manifest }, developer.identity), state.wait_warning_cycle);
       setState(workflowId, next);
       publishWorkflowChange(workflowId);
 
@@ -180,7 +184,8 @@ export async function advance(
     }
 
     if (currentPhase === "implementation") {
-      const next = markTurnAssigned(initSummaryPhase(state, identity), state.wait_warning_cycle);
+      const persisted = await persistPhaseAcceptance(state, identity, new Date().toISOString());
+      const next = markTurnAssigned(initSummaryPhase({ ...state, delivery_manifest: persisted.manifest }, identity), state.wait_warning_cycle);
       setState(workflowId, next);
       publishWorkflowChange(workflowId);
 
@@ -201,22 +206,17 @@ export async function advance(
     }
 
     if (currentPhase === "summary") {
-      if (state.task?.spec_file) {
-        const pidPath = resolve(`${state.task.spec_file}.pid`);
-        try {
-          await unlink(pidPath);
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-            return err(`failed to delete pid file: ${pidPath.replace(/\\/g, "/")}`);
-          }
-        }
+      let completion;
+      try {
+        completion = toCompletionSnapshot(await persistCompletedManifest(state, identity, new Date().toISOString()));
+      } catch (error) {
+        return err(error instanceof Error ? error.message : "failed to persist completed delivery manifest");
       }
-      const finishedId = state.workflow_id;
-      const finishedArchive = workflowArchivePath(state, finishedId!).replace(/\\/g, "/");
-      deleteState(workflowId);
+      deleteState(workflowId, completion);
       unbindWorkflow(workflowId);
+      const cleanupError = await removePidAfterCompletion(state.task?.spec_file);
 
-      return ok({ ok: true, new_phase: "idle", turn: "idle" }, guidance("advance.completed", { identity, archive_root: finishedArchive }, {
+      return ok({ ok: true, new_phase: "idle", turn: "idle", ...completion, ...(cleanupError ? { cleanup_pending: true, cleanup_error: cleanupError } : {}) }, guidance("advance.completed", { identity, archive_root: completion.archive_root }, {
         next_action: "stop",
         allowed_tools: [],
         reason_code: "WORKFLOW_COMPLETED",
@@ -225,6 +225,19 @@ export async function advance(
 
     return err(`unknown phase: ${currentPhase}`);
   });
+}
+
+async function removePidAfterCompletion(taskPath: string | undefined): Promise<string | null> {
+  if (!taskPath) return null;
+  const pidPath = resolve(`${taskPath}.pid`);
+  try {
+    await unlink(pidPath);
+    return null;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    const code = (error as NodeJS.ErrnoException).code ?? "UNKNOWN";
+    return `failed to delete pid file: ${pidPath.replace(/\\/g, "/")} (${code})`;
+  }
 }
 
 function markTurnAssigned(

@@ -56,7 +56,10 @@ describe("workflow event coordination", () => {
 
     publishWorkflowChange(id);
 
-    await expect(Promise.all([first, second])).resolves.toEqual([undefined, undefined]);
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      { terminated: false, completion: undefined },
+      { terminated: false, completion: undefined },
+    ]);
     expect(getWorkflowVersion(id)).toBe(observedVersion + 1);
   });
 
@@ -67,7 +70,7 @@ describe("workflow event coordination", () => {
     const signal = new AbortController().signal;
     const removeListener = vi.spyOn(signal, "removeEventListener");
 
-    await expect(waitForWorkflowChange(id, 0, signal)).resolves.toBeUndefined();
+    await expect(waitForWorkflowChange(id, 0, signal)).resolves.toEqual({ terminated: false, completion: undefined });
     publishWorkflowChange(id, { terminated: true });
 
     expect(removeListener).toHaveBeenCalledTimes(0);
@@ -89,7 +92,7 @@ describe("workflow event coordination", () => {
     const waiter = waitForWorkflowChange(id, observedVersion, signal);
 
     expect(addEventListener).not.toHaveBeenCalled();
-    await expect(waiter).resolves.toBeUndefined();
+    await expect(waiter).resolves.toEqual({ terminated: false, completion: undefined });
   });
 
   it("rechecks after registration so a change published during registration is not missed", async () => {
@@ -105,7 +108,7 @@ describe("workflow event coordination", () => {
       },
     } as unknown as AbortSignal;
 
-    await expect(waitForWorkflowChange(id, observedVersion, signal)).resolves.toBeUndefined();
+    await expect(waitForWorkflowChange(id, observedVersion, signal)).resolves.toEqual({ terminated: false, completion: undefined });
 
     expect(removeCount).toBe(1);
     expect(getWorkflowVersion(id)).toBe(observedVersion + 1);
@@ -136,8 +139,8 @@ describe("workflow event coordination", () => {
 
     deleteState(id);
 
-    await expect(waiter).resolves.toBeUndefined();
-    expect(publish).toHaveBeenCalledWith(id, { terminated: true });
+    await expect(waiter).resolves.toEqual({ terminated: true, completion: undefined });
+    expect(publish).toHaveBeenCalledWith(id, { terminated: true, completion: undefined });
     expect(getState(id)).toBeUndefined();
   });
 
@@ -180,7 +183,7 @@ describe("workflow event coordination", () => {
 
     expect(vi.getTimerCount()).toBe(0);
     expect(getWorkflowVersion(id)).toBe(initialVersion + 1);
-    await expect(waitForWorkflowChange(id, initialVersion, new AbortController().signal)).resolves.toBeUndefined();
+    await expect(waitForWorkflowChange(id, initialVersion, new AbortController().signal)).resolves.toEqual({ terminated: false, completion: undefined });
     expect(vi.getTimerCount()).toBe(0);
   });
 });

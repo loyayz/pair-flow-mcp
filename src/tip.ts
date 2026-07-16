@@ -42,13 +42,11 @@ export function outFile(state: PairFlowState, identity: string): string {
 }
 
 function planningDocument(state: PairFlowState): string {
+  const plan = state.delivery_manifest?.phases.planning?.canonical_plan;
+  if (plan) return plan.file_path;
+  if (state.phase !== "planning") throw new Error("accepted planning manifest record is missing");
   const reviewer = state.participants.find((participant) => !participant.is_developer);
-  return workflowArchivePath(
-    state,
-    safe(state.workflow_id),
-    "planning",
-    `r1_${safe(reviewer?.identity)}.md`,
-  ).replace(/\\/g, "/");
+  return workflowArchivePath(state, safe(state.workflow_id), "planning", `r1_${safe(reviewer?.identity)}.md`).replace(/\\/g, "/");
 }
 
 // ── Instruction helpers ────────────────────────────────────────────
@@ -117,16 +115,23 @@ function prevRef(state: PairFlowState, identity: string): InstructionReference |
 }
 
 function planRef(state: PairFlowState): InstructionReference {
-  const path = planningDocument(state);
-  const reviewer = state.participants.find((p) => !p.is_developer);
-  const sub = reviewer ? state.last_submission_by_participant[reviewer.identity] : null;
-  const ref: InstructionReference = {
+  const plan = state.delivery_manifest?.phases.planning?.canonical_plan;
+  if (!plan) {
+    if (state.phase !== "planning") throw new Error("accepted planning manifest record is missing");
+    const reviewer = state.participants.find((participant) => !participant.is_developer);
+    const latest = reviewer ? state.last_submission_by_participant[reviewer.identity] : null;
+    return { kind: "plan", file_path: planningDocument(state), required: true, ...(latest?.commit_hash ? { commit: latest.commit_hash.toLowerCase() } : {}) };
+  }
+  return {
     kind: "plan",
-    file_path: path,
+    file_path: plan.file_path,
     required: true,
+    commit: plan.commit_hash,
   };
-  if (sub?.commit_hash) ref.commit = sub.commit_hash.toLowerCase();
-  return ref;
+}
+
+function acceptedRef(kind: InstructionReference["kind"], reference: { file_path: string; commit_hash: string }): InstructionReference {
+  return { kind, file_path: reference.file_path, required: true, commit: reference.commit_hash };
 }
 
 function prevReviewRef(state: PairFlowState, identity: string): InstructionReference | null {
@@ -289,8 +294,17 @@ function selectGuidance(state: PairFlowState, identity: string): GuidanceSelecti
     }
     if (state.phase === "summary") {
       const refs: InstructionReference[] = [archiveRootRef(state)];
-      const t = taskRef(state);
-      if (t) refs.push(t);
+      const requirements = state.delivery_manifest?.phases.requirements?.final_submission;
+      if (!requirements) throw new Error("accepted requirements manifest record is missing");
+      refs.push(acceptedRef("requirements", requirements));
+      if (state.task?.task_type === "development") {
+        const plan = state.delivery_manifest?.phases.planning?.canonical_plan;
+        const implementation = state.delivery_manifest?.phases.implementation;
+        if (!plan || !implementation) throw new Error("accepted development manifest records are missing");
+        refs.push(acceptedRef("plan", plan));
+        refs.push(acceptedRef("previous_output", implementation.coding_submission));
+        refs.push(acceptedRef("previous_review", implementation.review_submission));
+      }
       return {
         key: "summary.r1",
         variables: { task_path: taskPath, archive_root: workflowArchivePath(state, safe(state.workflow_id)).replace(/\\/g, "/"), file_path: filePath, identity_label: label, round, phase_label: phaseText },

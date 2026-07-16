@@ -1,5 +1,7 @@
 import { Mutex } from "async-mutex";
 import { publishWorkflowChange } from "./workflow-events.js";
+import type { DeliveryManifest } from "./delivery-manifest-schema.js";
+import type { WorkflowCompletionSnapshot } from "./delivery-manifest-schema.js";
 
 // ── Types (§5.1 in-memory state schema) ──
 
@@ -47,6 +49,7 @@ export interface PairFlowState {
   task: Task | null;
   participants: Participant[];
   last_submission_by_participant: Record<string, LastSubmission>;
+  delivery_manifest: DeliveryManifest | null;
 }
 
 export const RECOVERY_REGISTERED_AT = "1970-01-01T00:00:00.000Z";
@@ -65,8 +68,8 @@ export function setState(workflowId: string, state: PairFlowState): void {
   states.set(workflowId, state);
 }
 
-export function deleteState(workflowId: string): void {
-  publishWorkflowChange(workflowId, { terminated: true });
+export function deleteState(workflowId: string, completion?: WorkflowCompletionSnapshot): void {
+  publishWorkflowChange(workflowId, { terminated: true, completion });
   states.delete(workflowId);
   mutexes.delete(workflowId);
 }
@@ -99,6 +102,7 @@ export function defaultState(): PairFlowState {
     task: null,
     participants: [],
     last_submission_by_participant: {},
+    delivery_manifest: null,
   };
 }
 

@@ -176,6 +176,7 @@ describe("Client transport with identity injection", () => {
       "instruction_v1",
       "structured_tool_output_v1",
       "json_response_v1",
+      "delivery_manifest_v1",
     ]);
 
     const client = new Client({ name: "discovery-test", version: "1" }, {});

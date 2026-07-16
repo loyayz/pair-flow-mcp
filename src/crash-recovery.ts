@@ -4,6 +4,7 @@ import { RECOVERY_REGISTERED_AT, type PairFlowState, type Phase, type SubPhase, 
 import { archivePath } from "./archive-path.js";
 import { isValidIdentity } from "./identity.js";
 import { findSymbolicLinkInPath } from "./path-safety.js";
+import { collectValidatedSubmissions } from "./archive-submissions.js";
 
 // ── Filename parsing ──
 
@@ -14,6 +15,16 @@ interface ParsedFilename {
 }
 
 type RecoverablePhase = Exclude<Phase, "idle">;
+
+export function phaseAfterAccepted(
+  phase: RecoverablePhase,
+  taskType: "requirements" | "development",
+): RecoverablePhase | "completed" {
+  if (phase === "requirements") return taskType === "requirements" ? "summary" : "planning";
+  if (phase === "planning") return "implementation";
+  if (phase === "implementation") return "summary";
+  return "completed";
+}
 
 interface SubmissionMeta {
   submitted_at: string;
@@ -91,7 +102,7 @@ export async function reconstructFromHandoff(
     last_submission_by_participant: {},
   };
 
-  const submissions = await collectValidSubmissions(wfDir, archivePath(workDir));
+  const submissions = await collectValidatedSubmissions(workDir, wfId);
   if (submissions.length === 0) return null;
   if (!hasConsistentStructure(submissions)) return null;
 
@@ -186,67 +197,6 @@ function determinePhase(submissions: RecoveredSubmission[]): RecoverablePhase {
   return "requirements";
 }
 
-async function collectValidSubmissions(wfDir: string, recoveryRoot: string): Promise<RecoveredSubmission[]> {
-  const submissions: RecoveredSubmission[] = [];
-  for (const phase of PHASE_PRIORITY) {
-    const phaseDir = join(wfDir, phase);
-    const files = await findFiles(phaseDir, ".meta.json", recoveryRoot);
-    for (const file of files) {
-      const parsed = parseFilename(basename(file), phase);
-      if (!parsed) continue;
-      const metaPath = join(phaseDir, file);
-      let content: string;
-      try {
-        content = await readFile(metaPath, "utf-8");
-      } catch (error) {
-        throw recoveryReadError(metaPath, error);
-      }
-      try {
-        const meta = JSON.parse(content);
-        if (!isValidSubmissionMeta(meta, phase, parsed)) continue;
-        if (!await hasRecoverableArtifact(metaPath)) continue;
-        submissions.push({ ...parsed, phase, meta, meta_path: metaPath });
-      } catch (error) {
-        if (error instanceof SyntaxError) continue;
-        throw error;
-      }
-    }
-  }
-  return submissions;
-}
-
-async function hasRecoverableArtifact(metaPath: string): Promise<boolean> {
-  const artifactPath = metaPath.replace(/\.meta\.json$/, ".md");
-  try {
-    const artifact = await lstat(artifactPath);
-    return artifact.isFile() && artifact.size > 0;
-  } catch {
-    return false;
-  }
-}
-
-function isValidSubmissionMeta(
-  value: unknown,
-  phase: RecoverablePhase,
-  parsed: ParsedFilename,
-): value is SubmissionMeta {
-  if (!value || typeof value !== "object") return false;
-  const meta = value as Record<string, unknown>;
-  if (typeof meta.submitted_at !== "string" || Number.isNaN(Date.parse(meta.submitted_at))) return false;
-  if (typeof meta.commit_hash !== "string" || !/^[0-9a-f]{7,40}$/.test(meta.commit_hash)) return false;
-  if (!meta.task || typeof meta.task !== "object") return false;
-  const task = meta.task as Record<string, unknown>;
-  if (typeof task.spec_file !== "string" || !isAbsolute(task.spec_file)) return false;
-  if (task.task_type !== "requirements" && task.task_type !== "development") return false;
-  if (task.task_type === "requirements" && (phase === "planning" || phase === "implementation")) return false;
-
-  if (phase === "implementation") {
-    const expectedSubPhase: SubPhase = parsed.round % 2 === 1 ? "coding" : "review";
-    return parsed.sub_phase === expectedSubPhase && meta.sub_phase === expectedSubPhase;
-  }
-  return parsed.sub_phase === null && meta.sub_phase === null;
-}
-
 // ── Field recovery helpers (retro-1 §2.2 + retro-2 §4.1) ──
 function reconstructLastSubmissionByParticipant(
   submissions: RecoveredSubmission[],
@@ -272,37 +222,4 @@ function reconstructLastSubmissionByParticipant(
   }
 
   return lsp;
-}
-
-async function findFiles(dir: string, suffix: string, recoveryRoot: string): Promise<string[]> {
-  let symbolicLinkPath: string | null;
-  try {
-    symbolicLinkPath = await findSymbolicLinkInPath(recoveryRoot, dir);
-  } catch (error) {
-    if (errorCode(error) === "ENOENT") return [];
-    throw recoveryReadError(dir, error);
-  }
-  if (symbolicLinkPath) {
-    throw new Error(`symbolic links are not allowed in recovery archive: ${symbolicLinkPath.replace(/\\/g, "/")}`);
-  }
-  try {
-    const entries = await readdir(resolve(dir), { withFileTypes: true });
-    return entries
-      .filter((entry) => entry.isFile() && entry.name.endsWith(suffix))
-      .map((entry) => entry.name);
-  } catch (error) {
-    if (errorCode(error) === "ENOENT") return [];
-    throw recoveryReadError(dir, error);
-  }
-}
-
-function recoveryReadError(path: string, error: unknown): Error {
-  const code = errorCode(error) ?? "UNKNOWN";
-  return new Error(`failed to read recovery archive: ${path.replace(/\\/g, "/")} (${code})`, { cause: error });
-}
-
-function errorCode(error: unknown): string | undefined {
-  return error && typeof error === "object" && "code" in error
-    ? String((error as { code?: unknown }).code)
-    : undefined;
 }

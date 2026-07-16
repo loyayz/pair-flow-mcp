@@ -4,12 +4,24 @@ import type { ServerNotification, ServerRequest } from "@modelcontextprotocol/sd
 import { bindWorkflow, registerToken } from "../token-map.js";
 import { defaultState, deleteState, getState, setState } from "../state.js";
 
-const unlinkMock = vi.hoisted(() => vi.fn());
+const { unlinkMock, lstatMock, collectSubmissionsMock, atomicWriteMock } = vi.hoisted(() => ({
+  unlinkMock: vi.fn(),
+  lstatMock: vi.fn(),
+  collectSubmissionsMock: vi.fn(),
+  atomicWriteMock: vi.fn(),
+}));
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
-  return { ...actual, unlink: unlinkMock };
+  return { ...actual, unlink: unlinkMock, lstat: lstatMock };
 });
+
+vi.mock("../archive-submissions.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../archive-submissions.js")>();
+  return { ...actual, collectValidatedSubmissions: collectSubmissionsMock };
+});
+
+vi.mock("../atomic-write.js", () => ({ atomicWriteText: atomicWriteMock }));
 
 import { advance } from "../tools/advance.js";
 import { claimTurn } from "../tools/claim-turn.js";
@@ -39,6 +51,20 @@ function setupSummaryWorkflow(): RequestHandlerExtra<ServerRequest, ServerNotifi
       alice: { round: 1, sub_phase: null, commit_hash: "abcdef1", submitted_at: "now", file_path: "alice.md" },
       bob: { round: 2, sub_phase: null, commit_hash: "abcdef2", submitted_at: "now", file_path: "bob.md" },
     },
+    delivery_manifest: {
+      manifest_version: 1,
+      status: "in_progress",
+      workflow_id: TEST_WORKFLOW_ID,
+      task_type: "development",
+      archive_root: "C:/project/handoff/20260710000002",
+      supervisor: "alice",
+      phases: {
+        requirements: { phase: "requirements", advanced_by: "alice", accepted_at: "2026-07-15T00:00:00.000Z", acceptance_commit: "abcdef1", final_submission: { round: 1, submitted_by: "alice", commit_hash: "abcdef1", file_path: "C:/project/handoff/w/requirements/r1_alice.md" } },
+        planning: { phase: "planning", advanced_by: "alice", accepted_at: "2026-07-15T00:00:00.000Z", acceptance_commit: "abcdef1", canonical_plan: { round: 1, submitted_by: "alice", commit_hash: "abcdef1", file_path: "C:/project/handoff/w/planning/r1_alice.md" } },
+        implementation: { phase: "implementation", advanced_by: "alice", accepted_at: "2026-07-15T00:00:00.000Z", acceptance_commit: "abcdef2", coding_submission: { round: 1, submitted_by: "bob", commit_hash: "abcdef1", file_path: "C:/project/handoff/w/implementation/r1_coding_bob.md", sub_phase: "coding" }, review_submission: { round: 2, submitted_by: "alice", commit_hash: "abcdef2", file_path: "C:/project/handoff/w/implementation/r2_review_alice.md", sub_phase: "review" } },
+      },
+      commit_verification: "caller_declared_unverified",
+    },
   });
   return {
     signal: new AbortController().signal,
@@ -49,6 +75,17 @@ function setupSummaryWorkflow(): RequestHandlerExtra<ServerRequest, ServerNotifi
 beforeEach(() => {
   vi.useRealTimers();
   unlinkMock.mockReset();
+  lstatMock.mockReset();
+  lstatMock.mockRejectedValue(Object.assign(new Error("missing"), { code: "ENOENT" }));
+  atomicWriteMock.mockReset();
+  collectSubmissionsMock.mockResolvedValue([
+    { phase: "requirements", round: 1, sub_phase: null, identity: "alice", meta: { submitted_at: "2026-07-15T00:00:00.000Z", commit_hash: "abcdef1", task: { spec_file: "C:/project/task.md", task_type: "development" } }, meta_path: "C:/project/handoff/w/requirements/r1_alice.meta.json", file_path: "C:/project/handoff/w/requirements/r1_alice.md" },
+    { phase: "planning", round: 1, sub_phase: null, identity: "alice", meta: { submitted_at: "2026-07-15T00:00:00.000Z", commit_hash: "abcdef1", task: { spec_file: "C:/project/task.md", task_type: "development" } }, meta_path: "C:/project/handoff/w/planning/r1_alice.meta.json", file_path: "C:/project/handoff/w/planning/r1_alice.md" },
+    { phase: "implementation", round: 1, sub_phase: "coding", identity: "bob", meta: { submitted_at: "2026-07-15T00:00:00.000Z", commit_hash: "abcdef1", task: { spec_file: "C:/project/task.md", task_type: "development" } }, meta_path: "C:/project/handoff/w/implementation/r1_coding_bob.meta.json", file_path: "C:/project/handoff/w/implementation/r1_coding_bob.md" },
+    { phase: "implementation", round: 2, sub_phase: "review", identity: "alice", meta: { submitted_at: "2026-07-15T00:00:00.000Z", commit_hash: "abcdef2", task: { spec_file: "C:/project/task.md", task_type: "development" } }, meta_path: "C:/project/handoff/w/implementation/r2_review_alice.meta.json", file_path: "C:/project/handoff/w/implementation/r2_review_alice.md" },
+    { phase: "summary", round: 1, sub_phase: null, identity: "alice", meta: { submitted_at: "2026-07-15T00:00:00.000Z", commit_hash: "abcdef1", task: { spec_file: "C:/project/task.md", task_type: "development" } }, meta_path: "C:/project/handoff/w/summary/r1_alice.meta.json", file_path: "C:/project/handoff/w/summary/r1_alice.md" },
+    { phase: "summary", round: 2, sub_phase: null, identity: "bob", meta: { submitted_at: "2026-07-15T00:00:00.000Z", commit_hash: "abcdef2", task: { spec_file: "C:/project/task.md", task_type: "development" } }, meta_path: "C:/project/handoff/w/summary/r2_bob.meta.json", file_path: "C:/project/handoff/w/summary/r2_bob.md" },
+  ]);
   deleteState(TEST_WORKFLOW_ID);
 });
 
@@ -251,7 +288,7 @@ describe("advance summary completion", () => {
     expect(getWorkflowVersion(TEST_WORKFLOW_ID)).toBe(versionBefore);
   });
 
-  it("keeps the workflow in summary when pid deletion fails", async () => {
+  it("completes the workflow and reports cleanup when pid deletion fails", async () => {
     const extra = setupSummaryWorkflow();
     unlinkMock.mockRejectedValueOnce(Object.assign(new Error("access denied"), { code: "EACCES" }));
     const versionBefore = getWorkflowVersion(TEST_WORKFLOW_ID);
@@ -259,10 +296,10 @@ describe("advance summary completion", () => {
     const result = await advance({}, extra);
     const payload = JSON.parse((result.content[0] as { text: string }).text);
 
-    expect(payload.ok).toBe(false);
-    expect(payload.tip).toContain("failed to delete pid file");
-    expect(getState(TEST_WORKFLOW_ID)!.phase).toBe("summary");
-    expect(getWorkflowVersion(TEST_WORKFLOW_ID)).toBe(versionBefore);
+    expect(payload).toMatchObject({ ok: true, new_phase: "idle", cleanup_pending: true });
+    expect(payload.cleanup_error).toContain("failed to delete pid file");
+    expect(getState(TEST_WORKFLOW_ID)).toBeUndefined();
+    expect(getWorkflowVersion(TEST_WORKFLOW_ID)).toBeGreaterThan(versionBefore);
   });
 
   it("finishes the workflow when the pid file is already absent", async () => {
@@ -284,6 +321,8 @@ describe("advance summary completion", () => {
     expect(payload.ok).toBe(true);
     expect(payload.new_phase).toBe("idle");
     expect(payload.turn).toBe("idle");
+    expect(payload.manifest_path).toContain("delivery-manifest.json");
+    expect(payload.final_summary).toMatchObject({ round: 1, submitted_by: "alice" });
     expect(payload.tip).toContain("复用当前 token");
     expect(payload.tip).toContain("双方分别调用 confirm_task");
     expect(payload.tip).toContain("服务重启或 token 丢失时先重新 register");

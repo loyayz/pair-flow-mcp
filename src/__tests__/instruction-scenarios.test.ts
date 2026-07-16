@@ -33,6 +33,20 @@ function fixture(overrides: Partial<PairFlowState> = {}): PairFlowState {
     { identity: "sup", is_supervisor: true, is_developer: false, registered_at: new Date().toISOString(), work_dir: "C:/repo" },
     { identity: "dev", is_supervisor: false, is_developer: true, registered_at: new Date().toISOString(), work_dir: "C:/repo" },
   ];
+  base.delivery_manifest = {
+    manifest_version: 1,
+    status: "in_progress",
+    workflow_id: "20260701000001",
+    task_type: "development",
+    archive_root: "C:/repo/handoff/20260701000001",
+    supervisor: "sup",
+    phases: {
+      requirements: { phase: "requirements", advanced_by: "sup", accepted_at: "2026-07-15T00:00:00.000Z", acceptance_commit: "abcdef1", final_submission: { round: 1, submitted_by: "sup", commit_hash: "abcdef1", file_path: "C:/repo/handoff/20260701000001/requirements/r1_sup.md" } },
+      planning: { phase: "planning", advanced_by: "sup", accepted_at: "2026-07-15T00:00:00.000Z", acceptance_commit: "abcdef1", canonical_plan: { round: 1, submitted_by: "sup", commit_hash: "abcdef1", file_path: "C:/repo/handoff/20260701000001/planning/r1_sup.md" } },
+      implementation: { phase: "implementation", advanced_by: "sup", accepted_at: "2026-07-15T00:00:00.000Z", acceptance_commit: "abcdef2", coding_submission: { round: 1, submitted_by: "dev", commit_hash: "abcdef1", file_path: "C:/repo/handoff/20260701000001/implementation/r1_coding_dev.md", sub_phase: "coding" }, review_submission: { round: 2, submitted_by: "sup", commit_hash: "abcdef2", file_path: "C:/repo/handoff/20260701000001/implementation/r2_review_sup.md", sub_phase: "review" } },
+    },
+    commit_verification: "caller_declared_unverified",
+  };
   return Object.assign(base, overrides) as PairFlowState;
 }
 

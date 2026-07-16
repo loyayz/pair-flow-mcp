@@ -1,10 +1,18 @@
+import type { WorkflowCompletionSnapshot } from "./delivery-manifest-schema.js";
+
+export interface WorkflowChangeSnapshot {
+  terminated: boolean;
+  completion?: WorkflowCompletionSnapshot;
+}
+
 interface WorkflowWaiter {
-  resolve: () => void;
+  resolve: (snapshot: WorkflowChangeSnapshot) => void;
 }
 
 interface WorkflowCoordinator {
   version: number;
   terminated: boolean;
+  completion?: WorkflowCompletionSnapshot;
   waiters: Set<WorkflowWaiter>;
 }
 
@@ -41,16 +49,16 @@ export function waitForWorkflowChange(
   workflowId: string,
   observedVersion: number,
   signal: AbortSignal,
-): Promise<void> {
+): Promise<WorkflowChangeSnapshot> {
   const coordinator = getCoordinator(workflowId);
   if (coordinator.terminated || coordinator.version !== observedVersion) {
-    return Promise.resolve();
+    return Promise.resolve({ terminated: coordinator.terminated, completion: coordinator.completion });
   }
   if (signal.aborted) {
     return Promise.reject(signal.reason ?? new DOMException("This operation was aborted", "AbortError"));
   }
 
-  return new Promise<void>((resolve, reject) => {
+  return new Promise<WorkflowChangeSnapshot>((resolve, reject) => {
     let settled = false;
     let waiter: WorkflowWaiter;
 
@@ -63,7 +71,8 @@ export function waitForWorkflowChange(
       return true;
     };
     const settleResolved = (): void => {
-      if (cleanup()) resolve();
+      const snapshot = { terminated: coordinator.terminated, completion: coordinator.completion };
+      if (cleanup()) resolve(snapshot);
     };
     const onAbort = (): void => {
       if (cleanup()) {
@@ -71,7 +80,7 @@ export function waitForWorkflowChange(
       }
     };
 
-    waiter = { resolve: settleResolved };
+    waiter = { resolve: () => settleResolved() };
     coordinator.waiters.add(waiter);
     signal.addEventListener("abort", onAbort, { once: true });
 
@@ -85,13 +94,17 @@ export function waitForWorkflowChange(
 
 export function publishWorkflowChange(
   workflowId: string,
-  options?: { terminated?: boolean },
+  options?: { terminated?: boolean; completion?: WorkflowCompletionSnapshot },
 ): void {
   const coordinator = getCoordinator(workflowId);
   coordinator.version += 1;
   versionClock += 1;
-  if (options?.terminated) coordinator.terminated = true;
+  if (options?.terminated) {
+    coordinator.terminated = true;
+    coordinator.completion = options.completion;
+  }
 
-  for (const waiter of [...coordinator.waiters]) waiter.resolve();
+  const snapshot = { terminated: coordinator.terminated, completion: coordinator.completion };
+  for (const waiter of [...coordinator.waiters]) waiter.resolve(snapshot);
   deleteTerminatedCoordinatorIfReleased(workflowId, coordinator);
 }

@@ -19,6 +19,7 @@ import {
   publishWorkflowChange,
   waitForWorkflowChange,
 } from "../workflow-events.js";
+import type { WorkflowCompletionSnapshot } from "../delivery-manifest-schema.js";
 
 const TIMEOUT_MS = 600_000;
 
@@ -153,6 +154,7 @@ async function waitForActiveTurn(
 ): Promise<CallToolResult> {
   let lastSeenPhase = initialPhase;
   let lastSeenState = structuredClone(getState(workflowId));
+  let completion: WorkflowCompletionSnapshot | undefined;
 
   while (true) {
     signal.throwIfAborted();
@@ -160,14 +162,14 @@ async function waitForActiveTurn(
     if (!release) {
       return lastSeenState
         ? timeoutResultForState(lastSeenState, identity)
-        : completedOrMissing(lastSeenPhase, workflowId, identity).result;
+        : completedOrMissing(lastSeenPhase, workflowId, identity, completion).result;
     }
     let decision: WaitDecision;
     try {
       signal.throwIfAborted();
       const state = getState(workflowId);
       if (!state) {
-        decision = completedOrMissing(lastSeenPhase, workflowId, identity);
+        decision = completedOrMissing(lastSeenPhase, workflowId, identity, completion);
       } else {
       lastSeenPhase = state.phase;
       lastSeenState = structuredClone(state);
@@ -216,10 +218,11 @@ async function waitForActiveTurn(
       requestDeadlineAt,
       signal,
     );
-    if (wake === "timeout") {
+    if (wake.kind === "event" && wake.completion) completion = wake.completion;
+    if (wake.kind === "timeout") {
       return lastSeenState
         ? timeoutResultForState(lastSeenState, identity)
-        : completedOrMissing(lastSeenPhase, workflowId, identity).result;
+        : completedOrMissing(lastSeenPhase, workflowId, identity, completion).result;
     }
   }
 }
@@ -364,7 +367,7 @@ async function waitForWake(
   warningDeadlineAt: number | undefined,
   requestDeadlineAt: number,
   signal: AbortSignal,
-): Promise<"event" | "deadline" | "timeout"> {
+): Promise<{ kind: "event" | "deadline" | "timeout"; completion?: WorkflowCompletionSnapshot }> {
   const eventController = new AbortController();
   let warningTimer: ReturnType<typeof setTimeout> | undefined;
   let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
@@ -375,23 +378,23 @@ async function waitForWake(
       workflowId,
       observedVersion,
       eventController.signal,
-    ).then(() => "event" as const);
+    ).then((snapshot) => ({ kind: "event" as const, ...(snapshot.completion ? { completion: snapshot.completion } : {}) }));
     const cancellation = new Promise<never>((_resolve, reject) => {
       onAbort = () => reject(signal.reason ?? new DOMException("This operation was aborted", "AbortError"));
       signal.addEventListener("abort", onAbort, { once: true });
       if (signal.aborted) onAbort();
     });
-    const timeout = new Promise<"timeout">((resolve) => {
+    const timeout = new Promise<{ kind: "timeout" }>((resolve) => {
       timeoutTimer = setTimeout(
-        () => resolve("timeout"),
+        () => resolve({ kind: "timeout" }),
         Math.max(0, requestDeadlineAt - Date.now()),
       );
     });
-    const races: Array<Promise<"event" | "deadline" | "timeout">> = [event, timeout];
+    const races: Array<Promise<{ kind: "event" | "deadline" | "timeout"; completion?: WorkflowCompletionSnapshot }>> = [event, timeout];
     if (warningDeadlineAt !== undefined) {
-      races.push(new Promise<"deadline">((resolve) => {
+      races.push(new Promise<{ kind: "deadline" }>((resolve) => {
         warningTimer = setTimeout(
-          () => resolve("deadline"),
+          () => resolve({ kind: "deadline" }),
           Math.max(0, warningDeadlineAt - Date.now()),
         );
       }));
@@ -434,12 +437,13 @@ function completedOrMissing(
   lastSeenPhase: PairFlowState["phase"],
   workflowId: string,
   identity: string,
+  completion?: WorkflowCompletionSnapshot,
 ): Extract<WaitDecision, { kind: "return" }> {
   return {
     kind: "return",
     result: lastSeenPhase === "summary"
       ? ok(
-          { turn: "idle", phase: "idle" },
+          { turn: "idle", phase: "idle", ...(completion ?? {}) },
           guidance("wait.completed", { identity, workflow_id: workflowId }, {
             next_action: "stop",
             allowed_tools: [],
