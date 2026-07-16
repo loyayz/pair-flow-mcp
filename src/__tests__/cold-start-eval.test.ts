@@ -82,7 +82,21 @@ async function readRequestBody(request: IncomingMessage): Promise<Record<string,
   return JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
 }
 
-function preflightToolDescriptions(missingOutputSchema?: string, missingRequiredInput?: string) {
+type PreflightToolOptions = {
+  missingTool?: string;
+  missingInputSchema?: string;
+  missingOutputSchema?: string;
+  nonObjectOutputSchema?: string;
+  missingInputProperty?: string;
+  missingRequiredInput?: string;
+  omitRequired?: string;
+  nonEmptyRequired?: string;
+  extraRequired?: string;
+  duplicateRequired?: string;
+  taskTypeValues?: string[];
+};
+
+function preflightToolDescriptions(options: PreflightToolOptions = {}) {
   const outputSchema = { type: "object", properties: {} };
   const tool = (
     name: string,
@@ -90,27 +104,43 @@ function preflightToolDescriptions(missingOutputSchema?: string, missingRequired
     required: string[] = [],
   ) => ({
     name,
-    inputSchema: {
-      type: "object",
-      properties,
-      ...(required.length > 0 ? { required: required.filter((field) => field !== missingRequiredInput) } : {}),
-    },
-    ...(name === missingOutputSchema ? {} : { outputSchema }),
+    ...(name === options.missingInputSchema ? {} : {
+      inputSchema: {
+        type: "object",
+        properties: Object.fromEntries(
+          Object.entries(properties).filter(([field]) => field !== options.missingInputProperty),
+        ),
+        ...(name === options.omitRequired ? {} : {
+          required: name === options.nonEmptyRequired
+            ? ["unexpected"]
+            : [
+                ...required.filter((field) => field !== options.missingRequiredInput),
+                ...(name === options.extraRequired ? ["unexpected"] : []),
+                ...(name === options.duplicateRequired && required[0] ? [required[0]] : []),
+              ],
+        }),
+      },
+    }),
+    ...(name === options.missingOutputSchema ? {} : {
+      outputSchema: name === options.nonObjectOutputSchema ? { type: "string" } : outputSchema,
+    }),
   });
   return [
     tool("register", { identity: { type: "string" } }, ["identity"]),
     tool("confirm_task", {
       task_path: { type: "string" },
-      task_type: { enum: ["requirements", "development"] },
+      task_type: { enum: options.taskTypeValues ?? ["requirements", "development"] },
       is_supervisor: { type: "boolean" },
       is_developer: { type: "boolean" },
       work_dir: { type: "string" },
     }, ["task_path", "task_type", "is_supervisor", "is_developer", "work_dir"]),
     tool("wait_for_turn", {}),
+    tool("claim_turn", {}),
     tool("get_state", {}),
     tool("advance", {}),
     tool("submit", { file_path: { type: "string" }, git_commit_hash: { type: "string" } }, ["file_path", "git_commit_hash"]),
-  ];
+    tool("ping", {}),
+  ].filter((description) => description.name !== options.missingTool);
 }
 
 function jsonRpcResult(id: unknown, result: unknown): string {
@@ -257,10 +287,24 @@ describe("standalone cold-start evaluator", () => {
   });
 
   it.each([
-    { name: "missing required health capability", capabilities: ["instruction_v1"], missingOutputSchema: undefined, missingRequiredInput: undefined },
-    { name: "missing actionable outputSchema", capabilities: ["instruction_v1", "structured_tool_output_v1"], missingOutputSchema: "submit", missingRequiredInput: undefined },
-    { name: "optional confirm_task task_type", capabilities: ["instruction_v1", "structured_tool_output_v1"], missingOutputSchema: undefined, missingRequiredInput: "task_type" },
-  ])("fails preflight before workspace mutation for $name", async ({ capabilities, missingOutputSchema, missingRequiredInput }) => {
+    { name: "missing instruction capability", capabilities: ["structured_tool_output_v1", "json_response_v1"], options: {}, error: "missing required capability instruction_v1" },
+    { name: "missing structured output capability", capabilities: ["instruction_v1", "json_response_v1"], options: {}, error: "missing required capability structured_tool_output_v1" },
+    { name: "missing JSON response capability", capabilities: ["instruction_v1", "structured_tool_output_v1"], options: {}, error: "missing required capability json_response_v1" },
+    { name: "missing required claim_turn tool", capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1"], options: { missingTool: "claim_turn" }, error: "does not define claim_turn" },
+    { name: "missing register inputSchema", capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1"], options: { missingInputSchema: "register" }, error: "register inputSchema must be an object" },
+    { name: "missing confirm_task input property", capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1"], options: { missingInputProperty: "task_type" }, error: "does not define task_type" },
+    { name: "optional confirm_task required input", capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1"], options: { missingRequiredInput: "task_type" }, error: "confirm_task input schema required must exactly equal" },
+    { name: "wait_for_turn omits empty required", capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1"], options: { omitRequired: "wait_for_turn" }, error: "wait_for_turn input schema required must exactly equal []" },
+    { name: "claim_turn has non-empty required", capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1"], options: { nonEmptyRequired: "claim_turn" }, error: "claim_turn input schema required must exactly equal []" },
+    { name: "get_state has extra required input", capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1"], options: { extraRequired: "get_state" }, error: "get_state input schema required must exactly equal []" },
+    { name: "register has extra required input", capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1"], options: { extraRequired: "register" }, error: "register input schema required must exactly equal" },
+    { name: "confirm_task has extra required input", capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1"], options: { extraRequired: "confirm_task" }, error: "confirm_task input schema required must exactly equal" },
+    { name: "submit has extra required input", capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1"], options: { extraRequired: "submit" }, error: "submit input schema required must exactly equal" },
+    { name: "submit duplicates a required input", capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1"], options: { duplicateRequired: "submit" }, error: "submit input schema required must exactly equal" },
+    { name: "confirm_task omits requirements task type", capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1"], options: { taskTypeValues: ["development"] }, error: "confirm_task input schema does not offer the requirements task type" },
+    { name: "missing expected outputSchema", capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1"], options: { missingOutputSchema: "submit" }, error: "submit outputSchema must be an object" },
+    { name: "non-object extra-tool outputSchema", capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1"], options: { nonObjectOutputSchema: "ping" }, error: "ping outputSchema must have type object" },
+  ])("fails preflight before workspace mutation for $name", async ({ capabilities, options, error }) => {
     const server = createServer(async (request, response) => {
       if (request.method === "GET" && request.url === "/health") {
         response.writeHead(200, { "Content-Type": "application/json" });
@@ -269,13 +313,13 @@ describe("standalone cold-start evaluator", () => {
       }
       const body = await readRequestBody(request);
       if (body.method === "notifications/initialized") {
-        response.writeHead(202).end();
+        response.writeHead(202, { "Content-Type": "application/json" }).end();
         return;
       }
       const result = body.method === "initialize"
         ? { protocolVersion: "2025-03-26", capabilities: { tools: {} }, serverInfo: { name: "pair-flow", version: "1" } }
         : body.method === "tools/list"
-          ? { tools: preflightToolDescriptions(missingOutputSchema, missingRequiredInput) }
+          ? { tools: preflightToolDescriptions(options) }
           : undefined;
       if (result === undefined) {
         response.writeHead(500).end("preflight should finish before tool calls");
@@ -293,6 +337,62 @@ describe("standalone cold-start evaluator", () => {
         "--base-url", `http://127.0.0.1:${address.port}`,
       ]);
       expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain(error);
+      expect(existsSync(join(copy, "runs"))).toBe(false);
+    } finally {
+      await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+    }
+  });
+
+  it.each([
+    {
+      name: "SSE content type",
+      contentType: "text/event-stream",
+      body: 'data: {"jsonrpc":"2.0","id":1,"result":{}}\n\n',
+      error: "must use application/json",
+    },
+    {
+      name: "SSE framing labeled as JSON",
+      contentType: "application/json",
+      body: 'data: {"jsonrpc":"2.0","id":1,"result":{}}\n\n',
+      error: "is not valid JSON",
+    },
+    {
+      name: "JSON-RPC envelope array",
+      contentType: "application/json",
+      body: '[{"jsonrpc":"2.0","id":1,"result":{}}]',
+      error: "must be one JSON-RPC response envelope",
+    },
+    {
+      name: "JSON body without JSON content type",
+      contentType: "text/plain",
+      body: '{"jsonrpc":"2.0","id":1,"result":{}}',
+      error: "must use application/json",
+    },
+  ])("rejects $name before creating runs", async ({ contentType, body: responseBody, error }) => {
+    const server = createServer(async (request, response) => {
+      if (request.method === "GET" && request.url === "/health") {
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(JSON.stringify({
+          ok: true,
+          protocol: { capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1"] },
+        }));
+        return;
+      }
+      const requestBody = await readRequestBody(request);
+      response.writeHead(200, { "Content-Type": contentType });
+      response.end(responseBody.replace('"id":1', `"id":${JSON.stringify(requestBody.id)}`));
+    });
+    await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("test server did not bind");
+      const copy = makeExternalCopy();
+      const result = await runScriptAsync(join(copy, "scripts", "instruction.ts"), copy, [
+        "--base-url", `http://127.0.0.1:${address.port}`,
+      ]);
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain(error);
       expect(existsSync(join(copy, "runs"))).toBe(false);
     } finally {
       await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
@@ -318,14 +418,14 @@ describe("standalone cold-start evaluator", () => {
         response.writeHead(200, { "Content-Type": "application/json" });
         response.end(JSON.stringify({ ok: true, protocol: {
           version: "1.0",
-          capabilities: ["instruction_v1", "structured_tool_output_v1"],
+          capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1"],
           actions: {}, reason_codes: {}, unknown_value_policy: {},
         } }));
         return;
       }
       const body = await readRequestBody(request);
       if (body.method === "notifications/initialized") {
-        response.writeHead(202).end();
+        response.writeHead(202, { "Content-Type": "application/json" }).end();
         return;
       }
       let result: unknown;
@@ -341,8 +441,10 @@ describe("standalone cold-start evaluator", () => {
           { ok: true, identity: args.identity, token: "developer-secret", instruction: instruction("confirm_task", ["confirm_task"]) },
           { ok: true, task_path: args.task_path, workflow_id: "w", phase: "idle", recovered: false, instruction: instruction("wait_for_turn", ["wait_for_turn"]) },
           { ok: true, task_path: args.task_path, workflow_id: "w", phase: "idle", recovered: false, instruction: instruction("wait_for_turn", ["wait_for_turn"]) },
+          { ok: true, turn: "supervisor", phase: "idle", instruction: instruction("claim_turn", ["claim_turn"]) },
           { ok: true, turn: "supervisor", phase: "idle", instruction: instruction("advance", ["advance"]) },
           { ok: true, new_phase: "requirements", turn: "developer", instruction: instruction("wait_for_turn", ["wait_for_turn"]) },
+          { ok: true, turn: "developer", phase: "requirements", instruction: instruction("claim_turn", ["claim_turn"]) },
           { ok: true, turn: "developer", phase: "requirements", instruction: instruction("produce_and_submit", ["submit"], {
             required_output: { file_path: outsideSentinel, commit_required: true, submit_tool: "submit" },
           }) },
@@ -417,16 +519,21 @@ describe("standalone cold-start evaluator", () => {
       "confirm_task",
       "confirm_task",
       "wait_for_turn",
+      "claim_turn",
       "advance",
       "wait_for_turn",
+      "claim_turn",
       "get_state",
       "submit",
       "submit",
       "wait_for_turn",
+      "claim_turn",
       "submit",
       "wait_for_turn",
+      "claim_turn",
       "submit",
       "wait_for_turn",
+      "claim_turn",
       "advance",
     ];
     const server = createServer(async (request, response) => {
@@ -439,7 +546,7 @@ describe("standalone cold-start evaluator", () => {
           protocol: {
             name: "pairflow-instruction",
             version: "1.0",
-            capabilities: ["instruction_v1", "structured_tool_output_v1"],
+            capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1"],
             authority: {
               instruction: "Actions, workflow state, permissions, paths and decision branches",
               tip: "Natural-language thinking, content and quality guidance",
@@ -461,6 +568,7 @@ describe("standalone cold-start evaluator", () => {
             actions: {
               confirm_task: { meaning: "Confirm the task.", procedure: ["Call confirm_task."] },
               wait_for_turn: { meaning: "Wait for a turn.", procedure: ["Call wait_for_turn."] },
+              claim_turn: { meaning: "Claim an assigned turn.", procedure: ["Call claim_turn with no arguments."] },
               produce_and_submit: { meaning: "Produce an artifact.", procedure: ["Call submit."] },
               decide_convergence: { meaning: "Decide convergence.", procedure: ["Choose a decision branch."] },
               advance: { meaning: "Advance the workflow.", procedure: ["Call advance."] },
@@ -477,6 +585,12 @@ describe("standalone cold-start evaluator", () => {
               },
               PARTICIPANT_CONFIRMATION_STALE: {
                 meaning: "A participant confirmation is stale.",
+                actions: ["report_user"],
+                automatic: false,
+                report_user: true,
+              },
+              TURN_UNCLAIMED_STALE: {
+                meaning: "An assigned turn remains unclaimed.",
                 actions: ["report_user"],
                 automatic: false,
                 report_user: true,
@@ -510,39 +624,18 @@ describe("standalone cold-start evaluator", () => {
       });
 
       if (method === "notifications/initialized") {
-        response.writeHead(202).end();
+        response.writeHead(202, { "Content-Type": "application/json" }).end();
         return;
       }
 
       if (method === "initialize") {
-        response.writeHead(200, { "Content-Type": "text/event-stream" });
-        response.end([
-          "event: message",
-          'data: {"jsonrpc":"2.0","id":999,"result":{"ignored":true}}',
-          "",
-          "event: message",
-          `data: ${JSON.stringify({
-            jsonrpc: "2.0",
-            id: body.id,
-            method: "sampling/createMessage",
-            params: { messages: [] },
-          })}`,
-          "",
-          "event: message",
-          `data: ${JSON.stringify({
-            jsonrpc: "2.0",
-            id: body.id,
-            result: {
-              protocolVersion: "2025-03-26",
-              capabilities: { tools: {} },
-              serverInfo: { name: "pair-flow", version: "0.1.0" },
-              instructions: "Read GET /health before using tools.",
-            },
-          })}`,
-          "",
-          "data: [DONE]",
-          "",
-        ].join("\n"));
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(jsonRpcResult(body.id, {
+          protocolVersion: "2025-03-26",
+          capabilities: { tools: {} },
+          serverInfo: { name: "pair-flow", version: "0.1.0" },
+          instructions: "Read GET /health before using tools.",
+        }));
         return;
       }
 
@@ -558,9 +651,10 @@ describe("standalone cold-start evaluator", () => {
                 task_path: { type: "string" }, task_type: { enum: ["requirements", "development"] },
                 is_supervisor: { type: "boolean" }, is_developer: { type: "boolean" }, work_dir: { type: "string" },
               }, required: ["task_path", "task_type", "is_supervisor", "is_developer", "work_dir"] }, outputSchema: { type: "object", properties: {} } },
-              { name: "wait_for_turn", inputSchema: { type: "object", properties: {} }, outputSchema: { type: "object", properties: {} } },
-              { name: "get_state", inputSchema: { type: "object", properties: {} }, outputSchema: { type: "object", properties: {} } },
-              { name: "advance", inputSchema: { type: "object", properties: {} }, outputSchema: { type: "object", properties: {} } },
+              { name: "wait_for_turn", inputSchema: { type: "object", properties: {}, required: [] }, outputSchema: { type: "object", properties: {} } },
+              { name: "claim_turn", inputSchema: { type: "object", properties: {}, required: [] }, outputSchema: { type: "object", properties: {} } },
+              { name: "get_state", inputSchema: { type: "object", properties: {}, required: [] }, outputSchema: { type: "object", properties: {} } },
+              { name: "advance", inputSchema: { type: "object", properties: {}, required: [] }, outputSchema: { type: "object", properties: {} } },
               { name: "submit", inputSchema: { type: "object", properties: {
                 file_path: { type: "string" }, git_commit_hash: { type: "string" },
               }, required: ["file_path", "git_commit_hash"] }, outputSchema: { type: "object", properties: {} } },
@@ -635,11 +729,24 @@ describe("standalone cold-start evaluator", () => {
               required_output: { file_path: path, commit_required: true, submit_tool: "submit" },
             },
           );
+          const assigned = (turn: string, phase = "requirements") => toolResult({
+            ok: true,
+            turn,
+            phase,
+            tip: misleadingTip,
+            reminder: "质量优先，完整完成任务目标。",
+            instruction: instruction("claim_turn", "TURN_ASSIGNED", ["claim_turn"], {
+              context: { phase, holds_turn: true, can_advance: false },
+            }),
+          });
           switch (toolCallIndex) {
             case 4:
-              result = waiting("advance", "TURN_READY", ["advance"], { context: { phase: "idle", holds_turn: true, can_advance: true } });
+              result = assigned("supervisor", "idle");
               break;
             case 5:
+              result = waiting("advance", "TURN_READY", ["advance"], { context: { phase: "idle", holds_turn: true, can_advance: true } });
+              break;
+            case 6:
               result = toolResult({
                 ok: true,
                 new_phase: "requirements",
@@ -649,11 +756,14 @@ describe("standalone cold-start evaluator", () => {
                 instruction: instruction("wait_for_turn", "PHASE_ADVANCED", ["wait_for_turn"]),
               });
               break;
-            case 6:
             case 7:
-              result = production(returnedPaths[0], 1);
+              result = assigned("developer");
               break;
             case 8:
+            case 9:
+              result = production(returnedPaths[0], 1);
+              break;
+            case 10:
               result = toolResult({
                 ok: false,
                 error: "file_path must be an absolute path",
@@ -662,36 +772,45 @@ describe("standalone cold-start evaluator", () => {
                 instruction: instruction("fix_request", "REQUEST_REJECTED", []),
               }, true);
               break;
-            case 9:
+            case 11:
               result = toolResult({ ok: true, next_turn: "supervisor", tip: misleadingTip, reminder: "质量优先，完整完成任务目标。", instruction: instruction("wait_for_turn", "SUBMISSION_ACCEPTED", ["wait_for_turn"], { context: { round: 101, turn: "supervisor" } }) });
               break;
-            case 10:
-              result = production(returnedPaths[1], 1);
-              break;
-            case 11:
-              result = toolResult({ ok: true, next_turn: "developer", tip: misleadingTip, reminder: "质量优先，完整完成任务目标。", instruction: instruction("wait_for_turn", "SUBMISSION_ACCEPTED", ["wait_for_turn"], { context: { round: 202, turn: "developer" } }) });
-              break;
             case 12:
-              result = production(returnedPaths[2], 2);
+              result = assigned("supervisor");
               break;
             case 13:
-              result = toolResult({ ok: true, next_turn: "supervisor", tip: misleadingTip, reminder: "质量优先，完整完成任务目标。", instruction: instruction("wait_for_turn", "SUBMISSION_ACCEPTED", ["wait_for_turn"], { context: { round: 303, turn: "supervisor" } }) });
+              result = production(returnedPaths[1], 1);
               break;
             case 14:
+              result = toolResult({ ok: true, next_turn: "developer", tip: misleadingTip, reminder: "质量优先，完整完成任务目标。", instruction: instruction("wait_for_turn", "SUBMISSION_ACCEPTED", ["wait_for_turn"], { context: { round: 202, turn: "developer" } }) });
+              break;
+            case 15:
+              result = assigned("developer");
+              break;
+            case 16:
+              result = production(returnedPaths[2], 2);
+              break;
+            case 17:
+              result = toolResult({ ok: true, next_turn: "supervisor", tip: misleadingTip, reminder: "质量优先，完整完成任务目标。", instruction: instruction("wait_for_turn", "SUBMISSION_ACCEPTED", ["wait_for_turn"], { context: { round: 303, turn: "supervisor" } }) });
+              break;
+            case 18:
+              result = assigned("supervisor");
+              break;
+            case 19:
               result = waiting("decide_convergence", "PHASE_READY_FOR_CONVERGENCE_DECISION", ["advance", "submit"], {
                 context: { phase: "requirements", round: 2, holds_turn: true, can_advance: true },
                 required_output: { file_path: returnedPaths[3], commit_required: true, submit_tool: "submit" },
                 decision: { criterion: "phase_goal_met", when_true: "advance", when_false: "produce_and_submit" },
               });
               break;
-            case 15:
+            case 20:
               result = toolResult({ ok: true, new_phase: "summary", turn: "developer", tip: misleadingTip, reminder: "质量优先，完整完成任务目标。", instruction: instruction("wait_for_turn", "PHASE_ADVANCED", ["wait_for_turn"]) });
               break;
             default:
               throw new Error(`unexpected tool call index ${toolCallIndex}`);
           }
         }
-        if (name === "submit" && toolCallIndex !== 8) {
+        if (name === "submit" && toolCallIndex !== 10) {
           const submittedPath = String(argumentsValue.file_path);
           if (!returnedPaths.includes(submittedPath) || !existsSync(submittedPath)) {
             response.writeHead(422, { "Content-Type": "text/plain" });
@@ -763,25 +882,31 @@ describe("standalone cold-start evaluator", () => {
         provenance: match[2],
         response: JSON.parse(match[3]) as unknown,
       }));
-      expect(caseBlocks).toHaveLength(20);
+      expect(caseBlocks).toHaveLength(26);
       expect(caseBlocks.map((entry) => [entry.id, entry.provenance])).toEqual([
         ["real-register-participants", "real_runtime"],
         ["real-confirm-supervisor", "real_runtime"],
         ["real-confirm-developer", "real_runtime"],
+        ["real-supervisor-idle-assigned", "real_runtime"],
         ["real-supervisor-idle-turn", "real_runtime"],
         ["real-requirements-transition", "real_runtime"],
+        ["real-developer-assigned-r1", "real_runtime"],
         ["real-developer-production-r1", "real_runtime"],
         ["real-developer-same-state", "real_runtime"],
         ["real-invalid-argument-rejection", "real_runtime"],
         ["real-developer-submit-r1", "real_runtime"],
+        ["real-supervisor-assigned-r1", "real_runtime"],
         ["real-supervisor-production-r1", "real_runtime"],
         ["real-supervisor-submit-r1", "real_runtime"],
+        ["real-developer-assigned-r2", "real_runtime"],
         ["real-developer-production-r2", "real_runtime"],
         ["real-developer-submit-r2", "real_runtime"],
+        ["real-supervisor-assigned-convergence", "real_runtime"],
         ["real-supervisor-convergence", "real_runtime"],
         ["real-summary-transition", "real_runtime"],
         ["temporal-wait-timeout", "synthetic_temporal"],
         ["temporal-stale-confirmation", "synthetic_temporal"],
+        ["temporal-stale-unclaimed-turn", "synthetic_temporal"],
         ["adversarial-unknown-version", "synthetic_adversarial"],
         ["adversarial-unknown-enum", "synthetic_adversarial"],
         ["adversarial-tip-conflict", "synthetic_adversarial"],
@@ -812,6 +937,21 @@ describe("standalone cold-start evaluator", () => {
         },
       });
       const realResponse = (id: string) => caseBlocks.find((entry) => entry.id === id)?.response as Record<string, unknown>;
+      for (const [assignedId, claimedId, claimedAction] of [
+        ["real-supervisor-idle-assigned", "real-supervisor-idle-turn", "advance"],
+        ["real-developer-assigned-r1", "real-developer-production-r1", "produce_and_submit"],
+        ["real-supervisor-assigned-r1", "real-supervisor-production-r1", "produce_and_submit"],
+        ["real-developer-assigned-r2", "real-developer-production-r2", "produce_and_submit"],
+        ["real-supervisor-assigned-convergence", "real-supervisor-convergence", "decide_convergence"],
+      ]) {
+        const assignedInstruction = realResponse(assignedId).instruction as Record<string, unknown>;
+        const claimedInstruction = realResponse(claimedId).instruction as Record<string, unknown>;
+        expect(assignedInstruction.next_action, assignedId).toBe("claim_turn");
+        expect(assignedInstruction.allowed_tools, assignedId).toEqual(["claim_turn"]);
+        expect(assignedInstruction, assignedId).not.toHaveProperty("required_output");
+        expect((assignedInstruction.context as Record<string, unknown>).can_advance, assignedId).toBe(false);
+        expect(claimedInstruction.next_action, claimedId).toBe(claimedAction);
+      }
       const submitContexts = [
         realResponse("real-developer-submit-r1"),
         realResponse("real-supervisor-submit-r1"),
@@ -839,8 +979,9 @@ describe("standalone cold-start evaluator", () => {
         (caseBlocks.find((entry) => entry.id === id)?.response as Record<string, unknown>).instruction as Record<string, unknown>
       );
       const temporalWait = caseInstruction("temporal-wait-timeout");
-      const temporalStale = caseInstruction("temporal-stale-confirmation");
-      for (const temporalInstruction of [temporalWait, temporalStale]) {
+      const temporalStaleConfirmation = caseInstruction("temporal-stale-confirmation");
+      const temporalStaleTurn = caseInstruction("temporal-stale-unclaimed-turn");
+      for (const temporalInstruction of [temporalWait, temporalStaleConfirmation, temporalStaleTurn]) {
         const reason = renderedReasons[String(temporalInstruction.reason_code)];
         expect(reason).toBeDefined();
         expect(temporalInstruction.next_action).toBe((reason.actions as string[])[0]);
@@ -850,11 +991,20 @@ describe("standalone cold-start evaluator", () => {
       expect(temporalWait.allowed_tools).toEqual(
         (realResponse("real-confirm-developer").instruction as Record<string, unknown>).allowed_tools,
       );
-      expect(renderedReasons[String(temporalStale.reason_code)].report_user).toBe(true);
-      expect(temporalStale.allowed_tools).toEqual([]);
+      for (const staleInstruction of [temporalStaleConfirmation, temporalStaleTurn]) {
+        expect(renderedReasons[String(staleInstruction.reason_code)].report_user).toBe(true);
+        expect(staleInstruction.next_action).toBe("report_user");
+        expect(staleInstruction.allowed_tools).toEqual([]);
+        expect(staleInstruction.decision).toEqual({
+          criterion: "user_wants_to_continue_waiting",
+          when_true: "wait_for_turn",
+          when_false: "stop",
+        });
+      }
       for (const id of [
         "temporal-wait-timeout",
         "temporal-stale-confirmation",
+        "temporal-stale-unclaimed-turn",
         "adversarial-unknown-version",
         "adversarial-unknown-enum",
       ]) {
@@ -880,6 +1030,9 @@ describe("standalone cold-start evaluator", () => {
       };
       const conflictCases = caseBlocks.filter((entry) => entry.id === "adversarial-tip-conflict");
       expect(conflictCases).toHaveLength(1);
+      expect(Object.keys(conflictCases[0].response as Record<string, unknown>).sort()).toEqual([
+        "instruction", "ok", "reminder", "tip",
+      ]);
       expect(countTipKeys(conflictCases[0].response)).toBe(1);
       for (const entry of caseBlocks.filter((item) => item.id !== "adversarial-tip-conflict")) {
         expect(countTipKeys(entry.response), entry.id).toBe(0);
@@ -887,12 +1040,14 @@ describe("standalone cold-start evaluator", () => {
 
       expect(requests.map((request) => request.method)).toEqual([
         "initialize",
-        "notifications/initialized",
         "tools/list",
         ...expectedToolCalls.map(() => "tools/call"),
       ]);
       const toolCalls = requests.filter((request) => request.method === "tools/call");
       expect(toolCalls.map((request) => request.name)).toEqual(expectedToolCalls);
+      expect(toolCalls.filter((request) => request.name === "claim_turn").map((request) => request.arguments)).toEqual([
+        {}, {}, {}, {}, {},
+      ]);
       expect(toolCalls[0].arguments?.identity).toMatch(/^cold-start-supervisor-\d+-[a-f0-9]+$/);
       expect(toolCalls[1].arguments?.identity).toMatch(/^cold-start-developer-\d+-[a-f0-9]+$/);
       expect(toolCalls[0].arguments?.identity).not.toBe(toolCalls[1].arguments?.identity);
@@ -906,16 +1061,16 @@ describe("standalone cold-start evaluator", () => {
       expect(secondConfirm).toMatchObject({ is_supervisor: false, is_developer: true });
       expect(existsSync(String(firstConfirm.task_path))).toBe(true);
       expect(existsSync(join(String(firstConfirm.work_dir), ".git"))).toBe(true);
-      expect(toolCalls.slice(9, 14).filter((call) => call.name === "submit").map((call) => call.arguments?.file_path)).toEqual(returnedPaths.slice(0, 3));
-      for (const call of toolCalls.filter((entry, index) => entry.name === "submit" && index !== 8)) {
+      expect(toolCalls.filter((call, index) => call.name === "submit" && index !== 10).map((call) => call.arguments?.file_path)).toEqual(returnedPaths.slice(0, 3));
+      for (const call of toolCalls.filter((entry, index) => entry.name === "submit" && index !== 10)) {
         expect(existsSync(String(call.arguments?.file_path))).toBe(true);
         expect(call.arguments?.git_commit_hash).toMatch(/^[a-f0-9]+$/);
       }
-      const hashes = toolCalls.filter((entry, index) => entry.name === "submit" && index !== 8).map((call) => call.arguments?.git_commit_hash);
+      const hashes = toolCalls.filter((entry, index) => entry.name === "submit" && index !== 10).map((call) => call.arguments?.git_commit_hash);
       expect(new Set(hashes).size).toBe(hashes.length);
-      expect(toolCalls[8].arguments?.file_path).toBe("relative-invalid-output.md");
+      expect(toolCalls[10].arguments?.file_path).toBe("relative-invalid-output.md");
       expect(toolCalls[4].token).toBe("supervisor-token");
-      expect(toolCalls[6].token).toBe("developer-token");
+      expect(toolCalls[7].token).toBe("developer-token");
       expect(toolCalls.map((call) => call.token)).toEqual([
         undefined,
         undefined,
@@ -923,14 +1078,19 @@ describe("standalone cold-start evaluator", () => {
         "developer-token",
         "supervisor-token",
         "supervisor-token",
+        "supervisor-token",
+        "developer-token",
         "developer-token",
         "developer-token",
         "developer-token",
         "developer-token",
         "supervisor-token",
         "supervisor-token",
+        "supervisor-token",
         "developer-token",
         "developer-token",
+        "developer-token",
+        "supervisor-token",
         "supervisor-token",
         "supervisor-token",
       ]);
@@ -947,7 +1107,7 @@ describe("standalone cold-start evaluator", () => {
       expect(source).toMatch(/directTool\(developerReviewSubmitted, tools,/);
       for (const request of requests) {
         expect(request.contentType).toBe("application/json");
-        expect(request.accept).toBe("application/json, text/event-stream");
+        expect(request.accept).toBe("application/json");
       }
 
       const firstTaskPath = String(firstConfirm.task_path);

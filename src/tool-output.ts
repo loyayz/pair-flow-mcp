@@ -98,6 +98,11 @@ export const TOOL_OUTPUT_SCHEMAS = {
     round: z.number().int().optional(),
     warning: z.string().optional(),
   }),
+  claim_turn: actionableToolOutputSchema({
+    turn: z.string(),
+    phase: phaseSchema,
+    round: z.number().int(),
+  }),
   submit: actionableToolOutputSchema({
     next_turn: z.string(),
   }),

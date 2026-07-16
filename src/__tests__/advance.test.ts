@@ -12,9 +12,11 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 });
 
 import { advance } from "../tools/advance.js";
+import { claimTurn } from "../tools/claim-turn.js";
 import { whoAmI } from "../tools/who-am-i.js";
 import { instructionOf } from "./instruction-assertions.js";
 import { buildGuidance } from "../tip.js";
+import { getWorkflowVersion, waitForWorkflowChange } from "../workflow-events.js";
 
 const TEST_WORKFLOW_ID = "20260710000002";
 
@@ -23,6 +25,7 @@ function setupSummaryWorkflow(): RequestHandlerExtra<ServerRequest, ServerNotifi
   bindWorkflow(token, TEST_WORKFLOW_ID);
   setState(TEST_WORKFLOW_ID, {
     ...defaultState(),
+    turn_claimed_at: "2026-07-15T00:00:00.000Z",
     workflow_id: TEST_WORKFLOW_ID,
     phase: "summary",
     round: 3,
@@ -57,6 +60,7 @@ function setupAdvanceWorkflow(
   bindWorkflow(token, TEST_WORKFLOW_ID);
   setState(TEST_WORKFLOW_ID, {
     ...defaultState(),
+    turn_claimed_at: "2026-07-15T00:00:00.000Z",
     workflow_id: TEST_WORKFLOW_ID,
     phase,
     round: phase === "idle" ? 1 : 3,
@@ -78,6 +82,54 @@ function setupAdvanceWorkflow(
 }
 
 describe("advance turn assignment timestamps", () => {
+  it("requires the idle supervisor to claim the assigned turn before advancing", async () => {
+    const extra = setupAdvanceWorkflow("idle");
+    const state = getState(TEST_WORKFLOW_ID)!;
+    state.turn_claimed_at = null;
+    const before = structuredClone(state);
+    const versionBefore = getWorkflowVersion(TEST_WORKFLOW_ID);
+
+    const rejected = await advance({}, extra);
+    const rejectedPayload = JSON.parse((rejected.content[0] as { text: string }).text);
+
+    expect(rejectedPayload.ok).toBe(false);
+    expect(rejectedPayload.tip).toContain("claim_turn");
+    expect(getState(TEST_WORKFLOW_ID)).toEqual(before);
+    expect(getWorkflowVersion(TEST_WORKFLOW_ID)).toBe(versionBefore);
+
+    const claimed = await claimTurn(extra);
+    expect(JSON.parse((claimed.content[0] as { text: string }).text).ok).toBe(true);
+
+    const advanced = await advance({}, extra);
+    expect(JSON.parse((advanced.content[0] as { text: string }).text)).toMatchObject({
+      ok: true,
+      new_phase: "requirements",
+    });
+  });
+
+  it("requires the supervisor to claim a convergence-ready turn before advancing", async () => {
+    const extra = setupAdvanceWorkflow("requirements");
+    const state = getState(TEST_WORKFLOW_ID)!;
+    state.turn_claimed_at = null;
+    const before = structuredClone(state);
+    const versionBefore = getWorkflowVersion(TEST_WORKFLOW_ID);
+
+    const rejected = await advance({}, extra);
+    const rejectedPayload = JSON.parse((rejected.content[0] as { text: string }).text);
+
+    expect(rejectedPayload.ok).toBe(false);
+    expect(rejectedPayload.tip).toContain("claim_turn");
+    expect(getState(TEST_WORKFLOW_ID)).toEqual(before);
+    expect(getWorkflowVersion(TEST_WORKFLOW_ID)).toBe(versionBefore);
+
+    await claimTurn(extra);
+    const advanced = await advance({}, extra);
+    expect(JSON.parse((advanced.content[0] as { text: string }).text)).toMatchObject({
+      ok: true,
+      new_phase: "planning",
+    });
+  });
+
   it.each([
     { taskType: "requirements" as const, target: "进入汇总阶段", newPhase: "summary" },
     { taskType: "development" as const, target: "进入实施计划阶段", newPhase: "planning" },
@@ -113,12 +165,30 @@ describe("advance turn assignment timestamps", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-11T01:00:00.000Z"));
 
-    const result = await advance({}, setupAdvanceWorkflow("idle"));
+    const extra = setupAdvanceWorkflow("idle");
+    getState(TEST_WORKFLOW_ID)!.wait_warning_cycle = {
+      kind: "turn",
+      generation: 6,
+      next_report_at: "2026-07-11T00:30:00.000Z",
+      reported_at: "2026-07-11T00:31:00.000Z",
+      reported_to: "alice",
+    };
+    const versionBefore = getWorkflowVersion(TEST_WORKFLOW_ID);
+
+    const result = await advance({}, extra);
     const payload = JSON.parse((result.content[0] as { text: string }).text);
 
     expect(getState(TEST_WORKFLOW_ID)!.turn).toBe("bob");
     expect(getState(TEST_WORKFLOW_ID)!.turn_switched_at).toBe("2026-07-11T01:00:00.000Z");
     expect(getState(TEST_WORKFLOW_ID)!.turn_claimed_at).toBeNull();
+    expect(getState(TEST_WORKFLOW_ID)!.wait_warning_cycle).toEqual({
+      kind: "turn",
+      generation: 7,
+      next_report_at: "2026-07-11T01:30:00.000Z",
+      reported_at: null,
+      reported_to: null,
+    });
+    expect(getWorkflowVersion(TEST_WORKFLOW_ID)).toBeGreaterThan(versionBefore);
     expect(instructionOf(payload)).toMatchObject({
       next_action: "wait_for_turn",
       allowed_tools: ["wait_for_turn"],
@@ -134,23 +204,57 @@ describe("advance turn assignment timestamps", () => {
     });
   });
 
-  it("marks the new turn claimed when advance assigns it to the caller", async () => {
+  it("leaves the new turn assigned when advance gives it to the caller", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-11T02:00:00.000Z"));
 
-    await advance({}, setupAdvanceWorkflow("requirements"));
+    const extra = setupAdvanceWorkflow("requirements");
+    getState(TEST_WORKFLOW_ID)!.wait_warning_cycle = {
+      kind: "turn",
+      generation: 8,
+      next_report_at: "2026-07-11T01:30:00.000Z",
+      reported_at: null,
+      reported_to: null,
+    };
+
+    await advance({}, extra);
 
     expect(getState(TEST_WORKFLOW_ID)!.phase).toBe("planning");
     expect(getState(TEST_WORKFLOW_ID)!.turn).toBe("alice");
     expect(getState(TEST_WORKFLOW_ID)!.turn_switched_at).toBe("2026-07-11T02:00:00.000Z");
-    expect(getState(TEST_WORKFLOW_ID)!.turn_claimed_at).toBe("2026-07-11T02:00:00.000Z");
+    expect(getState(TEST_WORKFLOW_ID)!.turn_claimed_at).toBeNull();
+    expect(getState(TEST_WORKFLOW_ID)!.wait_warning_cycle).toEqual({
+      kind: "turn",
+      generation: 9,
+      next_report_at: "2026-07-11T02:30:00.000Z",
+      reported_at: null,
+      reported_to: null,
+    });
   });
 });
 
 describe("advance summary completion", () => {
+  it("requires a recovered assigned summary turn to be claimed before termination", async () => {
+    const extra = setupSummaryWorkflow();
+    const state = getState(TEST_WORKFLOW_ID)!;
+    state.turn_claimed_at = null;
+    const before = structuredClone(state);
+    const versionBefore = getWorkflowVersion(TEST_WORKFLOW_ID);
+
+    const rejected = await advance({}, extra);
+    const rejectedPayload = JSON.parse((rejected.content[0] as { text: string }).text);
+
+    expect(rejectedPayload.ok).toBe(false);
+    expect(rejectedPayload.tip).toContain("claim_turn");
+    expect(unlinkMock).not.toHaveBeenCalled();
+    expect(getState(TEST_WORKFLOW_ID)).toEqual(before);
+    expect(getWorkflowVersion(TEST_WORKFLOW_ID)).toBe(versionBefore);
+  });
+
   it("keeps the workflow in summary when pid deletion fails", async () => {
     const extra = setupSummaryWorkflow();
     unlinkMock.mockRejectedValueOnce(Object.assign(new Error("access denied"), { code: "EACCES" }));
+    const versionBefore = getWorkflowVersion(TEST_WORKFLOW_ID);
 
     const result = await advance({}, extra);
     const payload = JSON.parse((result.content[0] as { text: string }).text);
@@ -158,13 +262,21 @@ describe("advance summary completion", () => {
     expect(payload.ok).toBe(false);
     expect(payload.tip).toContain("failed to delete pid file");
     expect(getState(TEST_WORKFLOW_ID)!.phase).toBe("summary");
+    expect(getWorkflowVersion(TEST_WORKFLOW_ID)).toBe(versionBefore);
   });
 
   it("finishes the workflow when the pid file is already absent", async () => {
     const extra = setupSummaryWorkflow();
     unlinkMock.mockRejectedValueOnce(Object.assign(new Error("not found"), { code: "ENOENT" }));
+    const abortController = new AbortController();
+    const change = waitForWorkflowChange(
+      TEST_WORKFLOW_ID,
+      getWorkflowVersion(TEST_WORKFLOW_ID),
+      abortController.signal,
+    );
 
     const result = await advance({}, extra);
+    await change;
     const payload = JSON.parse((result.content[0] as { text: string }).text);
     const identityResult = await whoAmI(extra);
     const identityPayload = JSON.parse((identityResult.content[0] as { text: string }).text);

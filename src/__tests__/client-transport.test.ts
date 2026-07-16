@@ -1,8 +1,10 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { spawn, type ChildProcess } from "node:child_process";
 import { execSync } from "node:child_process";
+import { rm, writeFile } from "node:fs/promises";
 import { get, request as httpRequest } from "node:http";
 import { networkInterfaces } from "node:os";
+import { resolve } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { createClientTransport } from "../client-transport.js";
@@ -10,13 +12,38 @@ import { createClientTransport } from "../client-transport.js";
 const PORT = 3197;
 const MAX_REQUEST_BODY_BYTES = 1024 * 1024;
 let server: ChildProcess;
+let diagnosticRequestId = 0;
 
 async function startServer() {
   server = spawn(process.execPath, ["--import", "tsx/esm", "src/index.ts", "--port", String(PORT)], {
     env: { ...process.env, PORT: "ignored" },
-    stdio: "pipe",
+    stdio: ["ignore", "pipe", "pipe", "ipc"],
   });
   await new Promise((r) => setTimeout(r, 2000));
+}
+
+function getServerWorkflowWaiterCount(workflowId: string): Promise<number> {
+  return new Promise((resolveCount, reject) => {
+    const requestId = ++diagnosticRequestId;
+    const timeout = setTimeout(() => {
+      server.off("message", onMessage);
+      reject(new Error("timed out waiting for workflow waiter diagnostic"));
+    }, 250);
+    const onMessage = (message: unknown) => {
+      if (!message || typeof message !== "object") return;
+      const response = message as Record<string, unknown>;
+      if (response.type !== "pairflow:workflow-waiter-count" || response.requestId !== requestId) return;
+      clearTimeout(timeout);
+      server.off("message", onMessage);
+      resolveCount(response.count as number);
+    };
+    server.on("message", onMessage);
+    server.send?.({
+      type: "pairflow:get-workflow-waiter-count",
+      requestId,
+      workflowId,
+    });
+  });
 }
 
 async function stopServer() {
@@ -77,7 +104,8 @@ function requestStatus(method: string, path: string): Promise<number | undefined
 function postMcp(
   chunks: Buffer[],
   headers: Record<string, string | number> = {},
-): Promise<{ status: number | undefined; body: string }> {
+  timeoutMs = 1000,
+): Promise<{ status: number | undefined; contentType: string | undefined; body: string }> {
   return new Promise((resolve, reject) => {
     const request = httpRequest({
       host: "127.0.0.1",
@@ -93,13 +121,33 @@ function postMcp(
       let body = "";
       response.setEncoding("utf-8");
       response.on("data", (chunk) => { body += chunk; });
-      response.on("end", () => resolve({ status: response.statusCode, body }));
+      response.on("end", () => resolve({
+        status: response.statusCode,
+        contentType: response.headers["content-type"],
+        body,
+      }));
     });
-    request.setTimeout(1000, () => request.destroy(new Error("request timed out")));
+    request.setTimeout(timeoutMs, () => request.destroy(new Error("request timed out")));
     request.on("error", reject);
     for (const chunk of chunks) request.write(chunk);
     request.end();
   });
+}
+
+function postJsonRpc(
+  payload: Record<string, unknown>,
+  headers: Record<string, string | number> = {},
+  timeoutMs = 1000,
+) {
+  return postMcp([Buffer.from(JSON.stringify(payload))], headers, timeoutMs);
+}
+
+function expectSingleJsonResponse(response: Awaited<ReturnType<typeof postJsonRpc>>) {
+  expect(response.status).toBe(200);
+  expect(response.body).not.toMatch(/^(?:event|data):/m);
+  expect(response.contentType).toContain("application/json");
+  expect(response.contentType).not.toContain("text/event-stream");
+  return JSON.parse(response.body) as Record<string, any>;
 }
 
 describe("Client transport with identity injection", () => {
@@ -123,10 +171,11 @@ describe("Client transport with identity injection", () => {
   it("exposes the instruction protocol through runtime discovery", async () => {
     const health = await requestHealthPayload();
     expect(health.server).toEqual({ name: "pair-flow", version: "0.1.0" });
-    expect(health.protocol.version).toBe("1.0");
+    expect(health.protocol.version).toBe("1.1");
     expect(health.protocol.capabilities).toEqual([
       "instruction_v1",
       "structured_tool_output_v1",
+      "json_response_v1",
     ]);
 
     const client = new Client({ name: "discovery-test", version: "1" }, {});
@@ -138,6 +187,7 @@ describe("Client transport with identity injection", () => {
     const tools = await client.listTools();
     expect(tools.tools.map((tool) => tool.name).sort()).toEqual([
       "advance",
+      "claim_turn",
       "confirm_task",
       "get_state",
       "ping",
@@ -148,6 +198,102 @@ describe("Client transport with identity injection", () => {
     ]);
     for (const tool of tools.tools) expect(tool.outputSchema?.type).toBe("object");
     await client.close();
+  });
+
+  it("returns tools/list as one directly parseable JSON-RPC response", async () => {
+    const response = await postJsonRpc({ jsonrpc: "2.0", id: 601, method: "tools/list", params: {} });
+    const envelope = expectSingleJsonResponse(response);
+
+    expect(envelope).toMatchObject({ jsonrpc: "2.0", id: 601 });
+    expect(envelope.result.tools).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        name: "wait_for_turn",
+        description: expect.stringContaining("事件"),
+      }),
+    ]));
+  });
+
+  it("returns a business rejection as one directly parseable JSON-RPC response", async () => {
+    const response = await postJsonRpc({
+      jsonrpc: "2.0",
+      id: 602,
+      method: "tools/call",
+      params: { name: "advance", arguments: {} },
+    });
+    const envelope = expectSingleJsonResponse(response);
+
+    expect(envelope).toMatchObject({
+      jsonrpc: "2.0",
+      id: 602,
+      result: { structuredContent: { ok: false } },
+    });
+  });
+
+  it("keeps a raw wait_for_turn pending until an event and then returns one JSON envelope", async () => {
+    const taskPath = resolve(".pairflow-json-response-task.md");
+    const anonymousClient = new Client({ name: "json-wait-register", version: "1" }, {});
+    const supervisorClient = new Client({ name: "json-wait-supervisor", version: "1" }, {});
+    const developerClient = new Client({ name: "json-wait-developer", version: "1" }, {});
+    await writeFile(taskPath, "# JSON response transport test\n", "utf-8");
+
+    try {
+      await anonymousClient.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${PORT}/mcp`)));
+      const supervisor = await call(anonymousClient, "register", { identity: "json-wait-supervisor" });
+      const developer = await call(anonymousClient, "register", { identity: "json-wait-developer" });
+      await anonymousClient.close();
+
+      await supervisorClient.connect(createClientTransport(`http://127.0.0.1:${PORT}/mcp`, supervisor.token));
+      await developerClient.connect(createClientTransport(`http://127.0.0.1:${PORT}/mcp`, developer.token));
+      const confirmation = {
+        task_path: taskPath,
+        task_type: "development",
+        work_dir: process.cwd(),
+      };
+      const supervisorConfirmation = await call(supervisorClient, "confirm_task", {
+        ...confirmation,
+        is_supervisor: true,
+        is_developer: false,
+      });
+
+      let settled = false;
+      const pendingWait = postJsonRpc({
+        jsonrpc: "2.0",
+        id: 603,
+        method: "tools/call",
+        params: { name: "wait_for_turn", arguments: {} },
+      }, { "x-ai-identity": supervisor.token }, 5000).finally(() => { settled = true; });
+      await vi.waitFor(async () => {
+        expect(await getServerWorkflowWaiterCount(supervisorConfirmation.workflow_id)).toBeGreaterThan(0);
+      }, { timeout: 2000, interval: 10 });
+      expect(settled).toBe(false);
+
+      await call(developerClient, "confirm_task", {
+        ...confirmation,
+        is_supervisor: false,
+        is_developer: true,
+      });
+      const envelope = expectSingleJsonResponse(await pendingWait);
+
+      expect(envelope).toMatchObject({
+        jsonrpc: "2.0",
+        id: 603,
+        result: {
+          structuredContent: {
+            ok: true,
+            turn: "json-wait-supervisor",
+            instruction: { next_action: "claim_turn", reason_code: "TURN_ASSIGNED" },
+          },
+        },
+      });
+    } finally {
+      await Promise.allSettled([
+        anonymousClient.close(),
+        supervisorClient.close(),
+        developerClient.close(),
+      ]);
+      await rm(taskPath, { force: true });
+      await rm(`${taskPath}.pid`, { force: true });
+    }
   });
 
   it("does not treat MCP path prefixes as the MCP endpoint", async () => {

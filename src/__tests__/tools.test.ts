@@ -28,7 +28,8 @@ function mcpRequest(name: string, args: Record<string, unknown> = {}, headers: R
       res.on("end", () => {
         try {
           const match = data.match(/data:\s*(\{.*\})/);
-          resolve(match ? JSON.parse(JSON.parse(match[1]).result.content[0].text) : JSON.parse(data));
+          const envelope = match ? JSON.parse(match[1]) : JSON.parse(data);
+          resolve(JSON.parse(envelope.result.content[0].text));
         } catch { resolve({ raw: data.slice(0, 100) }); }
       });
     });
@@ -37,7 +38,7 @@ function mcpRequest(name: string, args: Record<string, unknown> = {}, headers: R
   });
 }
 
-function mcpListTools(): Promise<Array<{ name: string; inputSchema?: { required?: string[] } }>> {
+function mcpListTools(): Promise<Array<{ name: string; inputSchema?: { required?: string[]; properties?: Record<string, unknown> } }>> {
   return new Promise((resolve, reject) => {
     const body = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} });
     const req = http.request({
@@ -109,6 +110,8 @@ async function setup() {
   workflowId = c1.workflow_id as string;
   const c2 = await mcpRequest("confirm_task", { task_path: TEST_TASK, task_type: "development", is_supervisor: false, is_developer: true, work_dir: TEST_WORK_DIR }, { "x-ai-identity": codebuddyToken });
   if (!c2.ok) throw new Error(`confirm_task(codebuddy) failed: ${JSON.stringify(c2)}`);
+  const claim = await mcpRequest("claim_turn", {}, { "x-ai-identity": claudeToken });
+  if (!claim.ok) throw new Error(`Initial claim failed: ${JSON.stringify(claim)}`);
   const adv = await mcpRequest("advance", {}, { "x-ai-identity": claudeToken });
   if (!adv.ok) throw new Error(`Advance failed: ${JSON.stringify(adv)}`);
 }
@@ -188,6 +191,7 @@ describe("Register", () => {
       ["advance", {}],
       ["get_state", {}],
       ["wait_for_turn", {}],
+      ["claim_turn", {}],
       ["submit", { file_path: TEST_TASK, git_commit_hash: "abc1234" }],
     ];
 
@@ -206,6 +210,7 @@ describe("Register", () => {
     const tools = await mcpListTools();
     const registerTool = tools.find((tool) => tool.name === "register");
     const confirmTaskTool = tools.find((tool) => tool.name === "confirm_task");
+    const claimTurnTool = tools.find((tool) => tool.name === "claim_turn");
 
     expect(registerTool?.inputSchema?.required ?? []).toContain("identity");
     expect(confirmTaskTool?.inputSchema?.required ?? []).toContain("task_path");
@@ -213,6 +218,9 @@ describe("Register", () => {
     expect(confirmTaskTool?.inputSchema?.required ?? []).toContain("is_supervisor");
     expect(confirmTaskTool?.inputSchema?.required ?? []).toContain("is_developer");
     expect(confirmTaskTool?.inputSchema?.required ?? []).toContain("work_dir");
+    expect(claimTurnTool).toBeDefined();
+    expect(claimTurnTool?.inputSchema?.required ?? []).toEqual([]);
+    expect(claimTurnTool?.inputSchema?.properties ?? {}).toEqual({});
   });
 });
 
@@ -928,17 +936,20 @@ describe("Confirm task", () => {
       is_developer: false,
       work_dir: TEST_WORK_DIR,
     }, { "x-ai-identity": r2.token as string });
+    await mcpRequest("claim_turn", {}, { "x-ai-identity": r1.token as string });
     const started = await mcpRequest("advance", {}, { "x-ai-identity": r1.token as string });
     const wfId = c1.workflow_id as string;
     const devFile = resolve(TEST_HANDOFF, wfId, "requirements", "r1_req-dev.md");
     await mkdir(dirname(devFile), { recursive: true });
     await writeFile(devFile, "# req-dev requirements", "utf-8");
+    await mcpRequest("claim_turn", {}, { "x-ai-identity": r2.token as string });
     const s1 = await mcpRequest("submit", {
       file_path: devFile,
       git_commit_hash: "a1b2c3d",
     }, { "x-ai-identity": r2.token as string });
     const supFile = resolve(TEST_HANDOFF, wfId, "requirements", "r2_req-sup.md");
     await writeFile(supFile, "# req-sup review", "utf-8");
+    await mcpRequest("claim_turn", {}, { "x-ai-identity": r1.token as string });
     const s2 = await mcpRequest("submit", {
       file_path: supFile,
       git_commit_hash: "d4e5f6a",
@@ -946,24 +957,29 @@ describe("Confirm task", () => {
     const blockedAdvance = await mcpRequest("advance", {}, { "x-ai-identity": r1.token as string });
     const devConfirmFile = resolve(TEST_HANDOFF, wfId, "requirements", "r3_req-dev.md");
     await writeFile(devConfirmFile, "# req-dev final confirmation", "utf-8");
+    await mcpRequest("claim_turn", {}, { "x-ai-identity": r2.token as string });
     const s3 = await mcpRequest("submit", {
       file_path: devConfirmFile,
       git_commit_hash: "f1e2d3c",
     }, { "x-ai-identity": r2.token as string });
+    await mcpRequest("claim_turn", {}, { "x-ai-identity": r1.token as string });
     const advanced = await mcpRequest("advance", {}, { "x-ai-identity": r1.token as string });
     const summarySupFile = resolve(TEST_HANDOFF, wfId, "summary", "r1_req-sup.md");
     await mkdir(dirname(summarySupFile), { recursive: true });
     await writeFile(summarySupFile, "# req-sup summary", "utf-8");
+    await mcpRequest("claim_turn", {}, { "x-ai-identity": r1.token as string });
     const summary1 = await mcpRequest("submit", {
       file_path: summarySupFile,
       git_commit_hash: "abcdef1",
     }, { "x-ai-identity": r1.token as string });
     const summaryDevFile = resolve(TEST_HANDOFF, wfId, "summary", "r2_req-dev.md");
     await writeFile(summaryDevFile, "# req-dev summary review", "utf-8");
+    await mcpRequest("claim_turn", {}, { "x-ai-identity": r2.token as string });
     const summary2 = await mcpRequest("submit", {
       file_path: summaryDevFile,
       git_commit_hash: "abcdef2",
     }, { "x-ai-identity": r2.token as string });
+    await mcpRequest("claim_turn", {}, { "x-ai-identity": r1.token as string });
     const finished = await mcpRequest("advance", {}, { "x-ai-identity": r1.token as string });
     const finalState = await mcpRequest("get_state", {}, { "x-ai-identity": r1.token as string });
 
@@ -1012,7 +1028,24 @@ describe("Wait for turn + submit", () => {
   it("wait_for_turn returns immediately for current turn holder", async () => {
     const r = await mcpRequest("wait_for_turn", {}, { "x-ai-identity": codebuddyToken });
     expect(r.turn).toBe("codebuddy");
-    expect(r.tip).toContain(resolve(TEST_HANDOFF, workflowId, "requirements", "r1_codebuddy.md").replace(/\\/g, "/"));
+    expect(instructionOf(r)).toMatchObject({
+      next_action: "claim_turn",
+      allowed_tools: ["claim_turn"],
+      reason_code: "TURN_ASSIGNED",
+    });
+    expect(instructionOf(r)).not.toHaveProperty("required_output");
+    expect(instructionOf(r).allowed_tools).not.toContain("submit");
+    expect(instructionOf(r).allowed_tools).not.toContain("advance");
+  });
+  it("claim_turn accepts no arguments and returns the holder's full action", async () => {
+    const r = await mcpRequest("claim_turn", {}, { "x-ai-identity": codebuddyToken });
+
+    expect(r).toMatchObject({ ok: true, turn: "codebuddy", phase: "requirements", round: 1 });
+    expect(instructionOf(r)).toMatchObject({
+      next_action: "produce_and_submit",
+      allowed_tools: ["submit"],
+      reason_code: "TURN_READY",
+    });
   });
   it("rejects role overwrite that would create duplicate supervisors", async () => {
     const r = await mcpRequest("confirm_task", {

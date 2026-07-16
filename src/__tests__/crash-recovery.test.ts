@@ -87,6 +87,26 @@ describe("Handoff reconstruction", () => {
     expect(recovered!.workflow_id).toBe(wfId);
   });
 
+  it("does not carry an archived warning cycle into recovered process state", async () => {
+    const wfId = "20260622000026";
+    const wfDir = join(TEST_ROOT, HANDOFF_DIR, wfId, "requirements");
+    await mkdir(wfDir, { recursive: true });
+    await writeFile(join(wfDir, "r1_alice.meta.json"), validMeta());
+    const initial = defaultState();
+    initial.wait_warning_cycle = {
+      kind: "turn",
+      generation: 9,
+      next_report_at: "2026-06-22T00:30:00.000Z",
+      reported_at: "2026-06-22T00:31:00.000Z",
+      reported_to: "alice",
+    };
+
+    const recovered = await reconstructFromHandoff(initial, wfId, TEST_ROOT, join(TEST_ROOT, "task.md"));
+
+    expect(recovered).not.toBeNull();
+    expect(recovered!.wait_warning_cycle).toBeNull();
+  });
+
   it("preserves coding and review prefixes as identity text outside implementation", async () => {
     const wfId = "20260622000025";
     const requirementsDir = join(TEST_ROOT, HANDOFF_DIR, wfId, "requirements");

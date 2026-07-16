@@ -5,14 +5,30 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { bindWorkflow, registerToken } from "../token-map.js";
-import { defaultState, deleteState, getMutex, getState, setState } from "../state.js";
+import { defaultState, deleteState, getMutex, getState, RECOVERY_REGISTERED_AT, setState } from "../state.js";
 import { getStateTool } from "../tools/get-state.js";
 import { waitForTurn } from "../tools/wait-for-turn.js";
 import { instructionOf } from "./instruction-assertions.js";
 import { TOOL_OUTPUT_SCHEMAS } from "../tool-output.js";
+import { publishWorkflowChange } from "../workflow-events.js";
 
 const TEST_WORKFLOW_ID = "20260710000001";
 const SECOND_WORKFLOW_ID = "20260710000002";
+
+function registeredExtra(token: string, signal: AbortSignal = new AbortController().signal) {
+  return {
+    signal,
+    requestInfo: { headers: { "x-ai-identity": token } },
+  } as unknown as RequestHandlerExtra<ServerRequest, ServerNotification>;
+}
+
+function readPayload(result: Awaited<ReturnType<typeof waitForTurn>>) {
+  return JSON.parse((result.content[0] as { text: string }).text) as Record<string, unknown>;
+}
+
+async function flushAsyncWork(): Promise<void> {
+  for (let index = 0; index < 10; index += 1) await Promise.resolve();
+}
 
 async function callRegisteredToolThroughClient(
   name: "get_state" | "wait_for_turn",
@@ -149,11 +165,16 @@ describe("wait_for_turn cancellation", () => {
     const state = getState(TEST_WORKFLOW_ID)!;
     state.participants.push({ identity: "bob", is_supervisor: false, is_developer: true, registered_at: "now", work_dir: process.cwd() });
     state.turn = "alice";
-    await vi.advanceTimersByTimeAsync(10_000);
+    publishWorkflowChange(TEST_WORKFLOW_ID);
 
     const payload = JSON.parse(((await resultPromise).content[0] as { text: string }).text);
     expect(payload.turn).toBe("alice");
-    expect(payload.tip).toContain("调用 advance 开始工作流");
+    expect(instructionOf(payload)).toMatchObject({
+      next_action: "claim_turn",
+      allowed_tools: ["claim_turn"],
+      reason_code: "TURN_ASSIGNED",
+    });
+    expect(getState(TEST_WORKFLOW_ID)!.turn_claimed_at).toBeNull();
   });
 
   it("returns the same turn-ready instruction as get_state for a shared state fixture", async () => {
@@ -161,6 +182,7 @@ describe("wait_for_turn cancellation", () => {
     bindWorkflow(token, TEST_WORKFLOW_ID);
     setState(TEST_WORKFLOW_ID, {
       ...defaultState(),
+      turn_claimed_at: "2026-07-15T00:00:00.000Z",
       workflow_id: TEST_WORKFLOW_ID,
       phase: "requirements",
       round: 1,
@@ -231,7 +253,7 @@ describe("wait_for_turn cancellation", () => {
     await Promise.resolve();
     const second = await secondOutcome;
     getState(TEST_WORKFLOW_ID)!.turn = "alice";
-    await vi.advanceTimersByTimeAsync(10_000);
+    publishWorkflowChange(TEST_WORKFLOW_ID);
 
     const third = JSON.parse(((await thirdResult).content[0] as { text: string }).text);
     expect(first.type).toBe("rejected");
@@ -268,7 +290,8 @@ describe("wait_for_turn cancellation", () => {
     const secondResult = waitForTurn(extra(secondToken));
     getState(TEST_WORKFLOW_ID)!.turn = "alice";
     getState(SECOND_WORKFLOW_ID)!.turn = "alice";
-    await vi.advanceTimersByTimeAsync(10_000);
+    publishWorkflowChange(TEST_WORKFLOW_ID);
+    publishWorkflowChange(SECOND_WORKFLOW_ID);
 
     const first = JSON.parse(((await firstResult).content[0] as { text: string }).text);
     const second = JSON.parse(((await secondResult).content[0] as { text: string }).text);
@@ -303,12 +326,12 @@ describe("wait_for_turn cancellation", () => {
     await expect(waitForTurn(extra(cancelledToken, cancelled.signal))).rejects.toThrow("request cancelled");
 
     getState(TEST_WORKFLOW_ID)!.turn = "alice";
-    await vi.advanceTimersByTimeAsync(10_000);
+    publishWorkflowChange(TEST_WORKFLOW_ID);
     const payload = JSON.parse(((await activeResult).content[0] as { text: string }).text);
     expect(payload.turn).toBe("alice");
   });
 
-  it("keeps waiting when the turn changes before it can be claimed", async () => {
+  it("returns assigned claim guidance without writing turn_claimed_at", async () => {
     const token = registerToken("alice");
     bindWorkflow(token, TEST_WORKFLOW_ID);
     const state = {
@@ -316,33 +339,29 @@ describe("wait_for_turn cancellation", () => {
       workflow_id: TEST_WORKFLOW_ID,
       phase: "planning" as const,
       turn: "alice",
+      task: { spec_file: "C:/project/task.md", task_type: "development" as const },
       participants: [
-        { identity: "alice", is_supervisor: true, is_developer: false, registered_at: "now" },
-        { identity: "bob", is_supervisor: false, is_developer: true, registered_at: "now" },
+        { identity: "alice", is_supervisor: true, is_developer: false, registered_at: "now", work_dir: "C:/project" },
+        { identity: "bob", is_supervisor: false, is_developer: true, registered_at: "now", work_dir: "C:/project" },
       ],
     };
     setState(TEST_WORKFLOW_ID, state);
-    const release = await getMutex(TEST_WORKFLOW_ID).acquire();
-    const controller = new AbortController();
-    const reason = new Error("request cancelled");
     const extra = {
-      signal: controller.signal,
+      signal: new AbortController().signal,
       requestInfo: { headers: { "x-ai-identity": token } },
     } as unknown as RequestHandlerExtra<ServerRequest, ServerNotification>;
 
-    const outcomePromise = waitForTurn(extra).then(
-      () => ({ type: "resolved" as const }),
-      (error: unknown) => ({ type: "rejected" as const, error }),
-    );
-    setState(TEST_WORKFLOW_ID, { ...state, turn: "bob" });
-    release();
-    controller.abort(reason);
+    const payload = JSON.parse((((await waitForTurn(extra)).content[0]) as { text: string }).text);
 
-    expect(await outcomePromise).toEqual({ type: "rejected", error: reason });
+    expect(instructionOf(payload)).toMatchObject({
+      next_action: "claim_turn",
+      allowed_tools: ["claim_turn"],
+      reason_code: "TURN_ASSIGNED",
+    });
     expect(getState(TEST_WORKFLOW_ID)!.turn_claimed_at).toBeNull();
   });
 
-  it("keeps a persisted claim when cancellation happens after the claim linearization point", async () => {
+  it("returns the full current action only when the holder already claimed", async () => {
     const token = registerToken("alice");
     bindWorkflow(token, TEST_WORKFLOW_ID);
     setState(TEST_WORKFLOW_ID, {
@@ -350,28 +369,26 @@ describe("wait_for_turn cancellation", () => {
       workflow_id: TEST_WORKFLOW_ID,
       phase: "planning",
       turn: "alice",
+      turn_claimed_at: "2026-07-15T00:00:00.000Z",
+      task: { spec_file: "C:/project/task.md", task_type: "development" },
       participants: [
-        { identity: "alice", is_supervisor: true, is_developer: false, registered_at: "now" },
-        { identity: "bob", is_supervisor: false, is_developer: true, registered_at: "now" },
+        { identity: "alice", is_supervisor: true, is_developer: false, registered_at: "now", work_dir: "C:/project" },
+        { identity: "bob", is_supervisor: false, is_developer: true, registered_at: "now", work_dir: "C:/project" },
       ],
     });
-    const release = await getMutex(TEST_WORKFLOW_ID).acquire();
-    const controller = new AbortController();
-    const reason = new Error("request cancelled after claim");
     const extra = {
-      signal: controller.signal,
+      signal: new AbortController().signal,
       requestInfo: { headers: { "x-ai-identity": token } },
     } as unknown as RequestHandlerExtra<ServerRequest, ServerNotification>;
 
-    const outcomePromise = waitForTurn(extra).then(
-      () => ({ type: "resolved" as const }),
-      (error: unknown) => ({ type: "rejected" as const, error }),
-    );
-    release();
-    queueMicrotask(() => controller.abort(reason));
+    const payload = JSON.parse((((await waitForTurn(extra)).content[0]) as { text: string }).text);
 
-    expect(await outcomePromise).toEqual({ type: "rejected", error: reason });
-    expect(getState(TEST_WORKFLOW_ID)!.turn_claimed_at).not.toBeNull();
+    expect(instructionOf(payload)).toMatchObject({
+      next_action: "produce_and_submit",
+      allowed_tools: ["submit"],
+      reason_code: "TURN_READY",
+    });
+    expect(getState(TEST_WORKFLOW_ID)!.turn_claimed_at).toBe("2026-07-15T00:00:00.000Z");
   });
 
   it("stops immediately without changing workflow state", async () => {
@@ -410,7 +427,7 @@ describe("wait_for_turn cancellation", () => {
 
     if (!settledImmediately) {
       getState(TEST_WORKFLOW_ID)!.turn = "alice";
-      await vi.advanceTimersByTimeAsync(10_000);
+      publishWorkflowChange(TEST_WORKFLOW_ID);
       await outcomePromise;
     }
 
@@ -440,7 +457,6 @@ describe("wait_for_turn cancellation", () => {
 
     const resultPromise = waitForTurn(extra);
     deleteState(TEST_WORKFLOW_ID);
-    await vi.advanceTimersByTimeAsync(10_000);
     const payload = JSON.parse(((await resultPromise).content[0] as { text: string }).text);
 
     expect(payload.ok).toBe(true);
@@ -476,7 +492,6 @@ describe("wait_for_turn cancellation", () => {
 
     const resultPromise = waitForTurn(extra);
     deleteState(TEST_WORKFLOW_ID);
-    await vi.advanceTimersByTimeAsync(10_000);
     const payload = JSON.parse(((await resultPromise).content[0] as { text: string }).text);
 
     expect(payload.ok).toBe(false);
@@ -568,6 +583,13 @@ describe("wait_for_turn cancellation", () => {
       participants: [
         { identity: "alice", is_supervisor: true, is_developer: false, registered_at: "2026-07-11T01:00:00.000Z", work_dir: process.cwd() },
       ],
+      wait_warning_cycle: {
+        kind: "roster",
+        generation: 1,
+        next_report_at: "2026-07-11T01:30:00.000Z",
+        reported_at: null,
+        reported_to: null,
+      },
     });
     const extra = {
       signal: new AbortController().signal,
@@ -603,6 +625,13 @@ describe("wait_for_turn cancellation", () => {
       turn: "bob",
       turn_switched_at: "2026-07-11T01:00:00.000Z",
       turn_claimed_at: null,
+      wait_warning_cycle: {
+        kind: "turn",
+        generation: 1,
+        next_report_at: "2026-07-11T01:30:00.000Z",
+        reported_at: null,
+        reported_to: null,
+      },
       participants: [
         { identity: "alice", is_supervisor: true, is_developer: false, registered_at: "now" },
         { identity: "bob", is_supervisor: false, is_developer: true, registered_at: "now" },
@@ -633,5 +662,323 @@ describe("wait_for_turn cancellation", () => {
       holds_turn: false,
       can_advance: false,
     });
+  });
+});
+
+describe("wait_for_turn event deadlines and repeating warning acknowledgment", () => {
+  function setupWaiting(
+    identity = "alice",
+    workflowId = TEST_WORKFLOW_ID,
+    options: { roster?: boolean; reportedTo?: string | null; deadline?: string } = {},
+  ) {
+    const token = registerToken(identity);
+    bindWorkflow(token, workflowId);
+    const roster = options.roster ?? false;
+    setState(workflowId, {
+      ...defaultState(),
+      workflow_id: workflowId,
+      phase: roster ? "idle" : "planning",
+      turn: roster ? "idle" : "bob",
+      turn_switched_at: roster ? null : "2026-07-15T00:00:00.000Z",
+      turn_claimed_at: null,
+      wait_warning_cycle: {
+        kind: roster ? "roster" : "turn",
+        generation: 7,
+        next_report_at: options.deadline ?? "2026-07-15T00:30:00.000Z",
+        reported_at: options.reportedTo == null ? null : "2026-07-15T00:30:00.000Z",
+        reported_to: options.reportedTo ?? null,
+      },
+      participants: roster
+        ? [{ identity, is_supervisor: true, is_developer: false, registered_at: "2026-07-15T00:00:00.000Z", work_dir: process.cwd() }]
+        : [
+            { identity: "alice", is_supervisor: true, is_developer: false, registered_at: "2026-07-15T00:00:00.000Z", work_dir: process.cwd() },
+            { identity: "bob", is_supervisor: false, is_developer: true, registered_at: "2026-07-15T00:00:00.000Z", work_dir: process.cwd() },
+          ],
+    });
+    return { token, extra: registeredExtra(token) };
+  }
+
+  it("uses one request-owned deadline timer and reports at the exact boundary", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-15T00:29:59.000Z"));
+    const { extra } = setupWaiting("alice", TEST_WORKFLOW_ID, { roster: true });
+
+    let settled = false;
+    const resultPromise = waitForTurn(extra).then((result) => {
+      settled = true;
+      return result;
+    });
+    await flushAsyncWork();
+
+    expect(settled).toBe(false);
+    expect(vi.getTimerCount()).toBe(2); // one warning deadline + one absolute request timeout
+    await vi.advanceTimersByTimeAsync(999);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+
+    const payload = readPayload(await resultPromise);
+    expect(instructionOf(payload)).toMatchObject({
+      next_action: "report_user",
+      allowed_tools: [],
+      reason_code: "PARTICIPANT_CONFIRMATION_STALE",
+      decision: {
+        criterion: "user_wants_to_continue_waiting",
+        when_true: "wait_for_turn",
+        when_false: "stop",
+      },
+    });
+    expect(getState(TEST_WORKFLOW_ID)!.wait_warning_cycle).toEqual({
+      kind: "roster",
+      generation: 7,
+      next_report_at: "2026-07-15T00:30:00.000Z",
+      reported_at: "2026-07-15T00:30:00.000Z",
+      reported_to: "alice",
+    });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("measures a recovered roster warning from the current cycle when participant 1 reconfirms first", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-15T00:30:00.000Z"));
+    const token = registerToken("alice");
+    bindWorkflow(token, TEST_WORKFLOW_ID);
+    setState(TEST_WORKFLOW_ID, {
+      ...defaultState(),
+      workflow_id: TEST_WORKFLOW_ID,
+      participants: [
+        { identity: "bob", is_supervisor: false, is_developer: true, registered_at: RECOVERY_REGISTERED_AT, work_dir: process.cwd() },
+        { identity: "alice", is_supervisor: true, is_developer: false, registered_at: "2026-07-15T00:00:00.000Z", work_dir: process.cwd() },
+      ],
+      wait_warning_cycle: {
+        kind: "roster",
+        generation: 4,
+        next_report_at: "2026-07-15T00:30:00.000Z",
+        reported_at: null,
+        reported_to: null,
+      },
+    });
+
+    const payload = readPayload(await waitForTurn(registeredExtra(token)));
+
+    expect(payload.warning).toBe("另一位参与者已超过 30 分钟未完成 confirm_task");
+    expect(payload.tip).toContain("30 分钟");
+    expect(payload.tip).not.toContain("29734590");
+    expect(instructionOf(payload).reason_code).toBe("PARTICIPANT_CONFIRMATION_STALE");
+  });
+
+  it("reports an unclaimed-turn warning once and does not self-ack in that invocation", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-15T00:30:00.000Z"));
+    const { extra } = setupWaiting();
+
+    const payload = readPayload(await waitForTurn(extra));
+
+    expect(instructionOf(payload)).toMatchObject({
+      next_action: "report_user",
+      allowed_tools: [],
+      reason_code: "TURN_UNCLAIMED_STALE",
+    });
+    expect(getState(TEST_WORKFLOW_ID)!.wait_warning_cycle).toMatchObject({
+      generation: 7,
+      next_report_at: "2026-07-15T00:30:00.000Z",
+      reported_at: "2026-07-15T00:30:00.000Z",
+      reported_to: "alice",
+    });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("allows only one concurrent waiter to report a warning generation", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-15T00:30:00.000Z"));
+    const { extra: aliceExtra } = setupWaiting();
+    getState(TEST_WORKFLOW_ID)!.turn = "carol";
+    const bobToken = registerToken("bob");
+    bindWorkflow(bobToken, TEST_WORKFLOW_ID);
+    const bobController = new AbortController();
+
+    const alice = waitForTurn(aliceExtra);
+    const bob = waitForTurn(registeredExtra(bobToken, bobController.signal));
+    await flushAsyncWork();
+
+    const alicePayload = readPayload(await alice);
+    expect(instructionOf(alicePayload).reason_code).toBe("TURN_UNCLAIMED_STALE");
+    expect(getState(TEST_WORKFLOW_ID)!.wait_warning_cycle?.reported_to).toBe("alice");
+    bobController.abort(new Error("stop remaining waiter"));
+    await expect(bob).rejects.toThrow("stop remaining waiter");
+    expect(getState(TEST_WORKFLOW_ID)!.wait_warning_cycle?.reported_to).toBe("alice");
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("does not acknowledge another identity's report or schedule another warning deadline", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-15T00:31:00.000Z"));
+    setupWaiting("alice", TEST_WORKFLOW_ID, { reportedTo: "alice" });
+    getState(TEST_WORKFLOW_ID)!.turn = "alice";
+    const bobToken = registerToken("bob");
+    bindWorkflow(bobToken, TEST_WORKFLOW_ID);
+    const controller = new AbortController();
+
+    const wait = waitForTurn(registeredExtra(bobToken, controller.signal));
+    await flushAsyncWork();
+
+    expect(getState(TEST_WORKFLOW_ID)!.wait_warning_cycle).toMatchObject({
+      generation: 7,
+      next_report_at: "2026-07-15T00:30:00.000Z",
+      reported_at: "2026-07-15T00:30:00.000Z",
+      reported_to: "alice",
+    });
+    expect(vi.getTimerCount()).toBe(1); // absolute request timeout only
+    controller.abort(new Error("stop"));
+    await expect(wait).rejects.toThrow("stop");
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("acknowledges only on the reported identity's later invocation and preserves generation", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-15T00:31:00.000Z"));
+    const { token } = setupWaiting("alice", TEST_WORKFLOW_ID, { reportedTo: "alice" });
+    const controller = new AbortController();
+
+    const wait = waitForTurn(registeredExtra(token, controller.signal));
+    await flushAsyncWork();
+
+    expect(getState(TEST_WORKFLOW_ID)!.wait_warning_cycle).toEqual({
+      kind: "turn",
+      generation: 7,
+      next_report_at: "2026-07-15T01:01:00.000Z",
+      reported_at: null,
+      reported_to: null,
+    });
+    expect(vi.getTimerCount()).toBe(2);
+    controller.abort(new Error("stop after ack"));
+    await expect(wait).rejects.toThrow("stop after ack");
+    expect(getState(TEST_WORKFLOW_ID)!.wait_warning_cycle?.next_report_at).toBe("2026-07-15T01:01:00.000Z");
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("leaves a report unacknowledged when cancellation wins before the mutex write", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-15T00:31:00.000Z"));
+    const { token } = setupWaiting("alice", TEST_WORKFLOW_ID, { reportedTo: "alice" });
+    const release = await getMutex(TEST_WORKFLOW_ID).acquire();
+    const controller = new AbortController();
+    const wait = waitForTurn(registeredExtra(token, controller.signal));
+
+    controller.abort(new Error("cancel before ack"));
+    release();
+
+    await expect(wait).rejects.toThrow("cancel before ack");
+    expect(getState(TEST_WORKFLOW_ID)!.wait_warning_cycle).toMatchObject({
+      reported_at: "2026-07-15T00:30:00.000Z",
+      reported_to: "alice",
+      next_report_at: "2026-07-15T00:30:00.000Z",
+    });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("never rolls back acknowledgment when cancellation happens after its mutex write", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-15T00:31:00.000Z"));
+    const { token } = setupWaiting("alice", TEST_WORKFLOW_ID, { reportedTo: "alice" });
+    const controller = new AbortController();
+    const wait = waitForTurn(registeredExtra(token, controller.signal));
+    await flushAsyncWork();
+    expect(getState(TEST_WORKFLOW_ID)!.wait_warning_cycle?.reported_at).toBeNull();
+
+    controller.abort(new Error("cancel after ack"));
+
+    await expect(wait).rejects.toThrow("cancel after ack");
+    expect(getState(TEST_WORKFLOW_ID)!.wait_warning_cycle).toMatchObject({
+      generation: 7,
+      next_report_at: "2026-07-15T01:01:00.000Z",
+      reported_at: null,
+      reported_to: null,
+    });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("uses an absolute 600-second timeout and does not reset workflow or warning state", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-15T00:31:00.000Z"));
+    const { extra } = setupWaiting("alice", TEST_WORKFLOW_ID, { reportedTo: "bob" });
+    const before = structuredClone(getState(TEST_WORKFLOW_ID)!);
+    let settled = false;
+    const wait = waitForTurn(extra).then((result) => {
+      settled = true;
+      return result;
+    });
+
+    await vi.advanceTimersByTimeAsync(599_999);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(instructionOf(readPayload(await wait)).reason_code).toBe("WAIT_TIMEOUT");
+    expect(getState(TEST_WORKFLOW_ID)).toEqual(before);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("times out from invocation even while acknowledgment is queued on the mutex", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-15T00:31:00.000Z"));
+    const { token } = setupWaiting("alice", TEST_WORKFLOW_ID, { reportedTo: "alice" });
+    const before = structuredClone(getState(TEST_WORKFLOW_ID)!.wait_warning_cycle);
+    const release = await getMutex(TEST_WORKFLOW_ID).acquire();
+    let settled = false;
+    const wait = waitForTurn(registeredExtra(token)).then((result) => {
+      settled = true;
+      return result;
+    });
+
+    await vi.advanceTimersByTimeAsync(600_000);
+    await flushAsyncWork();
+    const settledAtDeadline = settled;
+    release();
+
+    expect(settledAtDeadline).toBe(true);
+    expect(instructionOf(readPayload(await wait)).reason_code).toBe("WAIT_TIMEOUT");
+    expect(getState(TEST_WORKFLOW_ID)!.wait_warning_cycle).toEqual(before);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("keeps the invocation deadline while a post-event decision is queued on the mutex", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-15T00:31:00.000Z"));
+    const { extra } = setupWaiting("alice", TEST_WORKFLOW_ID, { reportedTo: "bob" });
+    let settled = false;
+    const wait = waitForTurn(extra).then((result) => {
+      settled = true;
+      return result;
+    });
+    await flushAsyncWork();
+    const release = await getMutex(TEST_WORKFLOW_ID).acquire();
+    publishWorkflowChange(TEST_WORKFLOW_ID);
+    await flushAsyncWork();
+
+    await vi.advanceTimersByTimeAsync(600_000);
+    await flushAsyncWork();
+    const settledAtDeadline = settled;
+    release();
+
+    expect(settledAtDeadline).toBe(true);
+    expect(instructionOf(readPayload(await wait)).reason_code).toBe("WAIT_TIMEOUT");
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("cleans event and timeout resources after an event-driven assigned result", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-15T00:00:00.000Z"));
+    const { extra } = setupWaiting("alice", TEST_WORKFLOW_ID, { deadline: "2026-07-15T00:30:00.000Z" });
+    const wait = waitForTurn(extra);
+    await flushAsyncWork();
+    expect(vi.getTimerCount()).toBe(2);
+
+    const state = getState(TEST_WORKFLOW_ID)!;
+    state.turn = "alice";
+    state.turn_claimed_at = null;
+    publishWorkflowChange(TEST_WORKFLOW_ID);
+
+    expect(instructionOf(readPayload(await wait)).reason_code).toBe("TURN_ASSIGNED");
+    expect(state.turn_claimed_at).toBeNull();
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

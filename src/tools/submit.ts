@@ -4,7 +4,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
 import { parseSession } from "../identity.js";
-import { getState, setState, getMutex, hasCompleteParticipantRoster, hasRecoveryPlaceholderParticipant, haveAllParticipantsSubmittedCurrentPhase, isCurrentHolder, getOtherIdentity, type PairFlowState } from "../state.js";
+import { assignTurn, getState, setState, getMutex, hasCompleteParticipantRoster, hasRecoveryPlaceholderParticipant, haveAllParticipantsSubmittedCurrentPhase, isCurrentHolder, getOtherIdentity, type PairFlowState } from "../state.js";
 
 import { err, ok } from "../response.js";
 import { identityLabel, phaseLabel, workflowInstructionContext } from "../tip.js";
@@ -12,6 +12,7 @@ import { guidance, type Guidance } from "../instruction.js";
 import { atomicWriteText } from "../atomic-write.js";
 import { archiveRoot, workflowArchivePath, workflowWorkDir } from "../archive-path.js";
 import { findSymbolicLinkInPath } from "../path-safety.js";
+import { publishWorkflowChange } from "../workflow-events.js";
 const SAFE_SEGMENT = /^[a-zA-Z0-9_-]{1,64}$/;
 
 export async function submit(
@@ -65,6 +66,9 @@ export async function submit(
       );
     }
     if (!isCurrentHolder(state, identity)) return err(`not your turn — current turn: ${state.turn}`);
+    if (state.turn_claimed_at === null) {
+      return err("current turn is assigned but not claimed — call claim_turn first");
+    }
 
     // IMPLEMENTATION responsibility check
     if (state.phase === "implementation" && state.sub_phase !== "coding" && state.sub_phase !== "review") {
@@ -114,7 +118,6 @@ export async function submit(
       return err("git_commit_hash unchanged since last submission — no new work detected");
     }
 
-    const originalTurn = state.turn;
     const originalSubPhase = state.sub_phase;
 
     const now = new Date().toISOString();
@@ -138,12 +141,7 @@ export async function submit(
 
     nextState.round += 1;
     const other = getOtherIdentity(nextState, identity);
-    if (other) nextState.turn = other;
-
-    if (nextState.turn !== originalTurn) {
-      nextState.turn_switched_at = now;
-      nextState.turn_claimed_at = null;
-    }
+    if (other) assignTurn(nextState, other, now);
 
     try {
       await writeMetaJson(expectedFilePath, commitHash, originalSubPhase, nextState.task, now);
@@ -152,6 +150,7 @@ export async function submit(
     }
 
     setState(workflowId, nextState);
+    publishWorkflowChange(workflowId);
 
     return ok(
       { ok: true, next_turn: nextState.turn },

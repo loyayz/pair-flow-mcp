@@ -31,6 +31,7 @@ export type TemplateKey =
   | "state.idle.supervisor"
   | "state.idle.other"
   | "state.wait.other"
+  | "state.turn-assigned"
   | "state.unknown"
   | "requirements.r1"
   | "requirements.r2"
@@ -95,6 +96,7 @@ const TEMPLATE_SPECS: Record<TemplateKey, TemplateSpec> = {
   "state.idle.supervisor":       { file: "state/idle-supervisor.md",                allowed: ["identity_label"],                    required: ["identity_label"] },
   "state.idle.other":            { file: "state/idle-other.md",                     allowed: ["identity_label"],                    required: ["identity_label"] },
   "state.wait.other":            { file: "state/wait-other.md",                     allowed: ["identity_label", "turn", "round", "phase_label"], required: ["identity_label", "turn", "round", "phase_label"] },
+  "state.turn-assigned":         { file: "state/turn-assigned.md",                  allowed: ["identity_label", "round", "phase_label"], required: ["identity_label", "round", "phase_label"] },
   "state.unknown":               { file: "state/unknown.md",                        allowed: ["phase", "sub_phase", "round"],       required: ["phase", "sub_phase", "round"] },
   "requirements.r1":             { file: "requirements/r1.md",                      allowed: ["task_path", "file_path", "identity_label", "round", "phase_label"], required: ["task_path", "file_path", "identity_label", "round", "phase_label"] },
   "requirements.r2":             { file: "requirements/r2.md",                      allowed: ["task_path", "prev_file", "prev_commit", "file_path", "identity_label", "round", "phase_label"], required: ["task_path", "prev_file", "prev_commit", "file_path", "identity_label", "round", "phase_label"] },

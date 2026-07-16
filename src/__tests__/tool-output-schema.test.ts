@@ -1,10 +1,11 @@
+import { toJsonSchemaCompat } from "@modelcontextprotocol/sdk/server/zod-json-schema-compat.js";
 import { describe, expect, it } from "vitest";
-import { PROTOCOL_HELP } from "../instruction-protocol.js";
+import { INSTRUCTION_PROTOCOL_VERSION, PROTOCOL_HELP } from "../instruction-protocol.js";
 import { TOOL_OUTPUT_SCHEMAS } from "../tool-output.js";
 
 const REMINDER = "质量优先，完整完成任务目标。";
 const instruction = {
-  protocol_version: "1.0" as const,
+  protocol_version: INSTRUCTION_PROTOCOL_VERSION,
   protocol_help: PROTOCOL_HELP,
   next_action: "wait_for_turn" as const,
   allowed_tools: ["wait_for_turn" as const],
@@ -34,10 +35,20 @@ const actionableToolNames = [
   "advance",
   "get_state",
   "wait_for_turn",
+  "claim_turn",
   "submit",
 ] as const;
 
 describe("tool output schemas", () => {
+  it("projects claim_turn as a top-level object output schema", () => {
+    const publicSchema = toJsonSchemaCompat(TOOL_OUTPUT_SCHEMAS.claim_turn, {
+      strictUnions: true,
+      pipeStrategy: "output",
+    });
+
+    expect(publicSchema.type).toBe("object");
+  });
+
   it("defines a successful schema for every registered tool", () => {
     const payloads = {
       ping: { ok: true, uptime: 12.5, reminder: REMINDER },
@@ -84,6 +95,13 @@ describe("tool output schemas", () => {
         warning: "still waiting",
         ...guidance,
       },
+      claim_turn: {
+        ok: true,
+        turn: "claude",
+        phase: "requirements",
+        round: 1,
+        ...guidance,
+      },
       submit: { ok: true, next_turn: "codex", ...guidance },
     } as const;
 
@@ -108,6 +126,7 @@ describe("tool output schemas", () => {
       advance: { ok: true, new_phase: "planning", turn: "claude", reminder: REMINDER, tip: "act" },
       get_state: { ok: true, reminder: REMINDER, tip: "act" },
       wait_for_turn: { ok: true, turn: "claude", phase: "requirements", reminder: REMINDER, tip: "act" },
+      claim_turn: { ok: true, turn: "claude", phase: "requirements", round: 1, reminder: REMINDER, tip: "act" },
       submit: { ok: true, next_turn: "codex", reminder: REMINDER, tip: "act" },
     } as const;
 
@@ -149,6 +168,7 @@ describe("tool output schemas", () => {
       advance: { ...rejection, new_phase: "planning" },
       get_state: { ...rejection, workflow_id: "workflow-1" },
       wait_for_turn: { ...rejection, turn: "claude" },
+      claim_turn: { ...rejection, turn: "claude" },
       submit: { ...rejection, next_turn: "codex" },
     } as const;
 

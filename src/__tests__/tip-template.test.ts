@@ -58,6 +58,7 @@ function writeAllTemplates(root: string) {
   writeTemplate(root, "state/idle-supervisor.md", "[行动]\n调用 advance 开始工作流\n\n[当前]\n你是 {{identity_label}}。\n");
   writeTemplate(root, "state/idle-other.md", "[行动]\n等待监督者调用 advance\n\n[当前]\n你是 {{identity_label}}。\n");
   writeTemplate(root, "state/wait-other.md", "[行动]\n等待 {{turn}} 完成当前轮次。调用 wait_for_turn...\n\n[当前]\n你是 {{identity_label}}。当前是第 {{round}} 轮{{phase_label}}，轮到 {{turn}} 了。\n");
+  writeTemplate(root, "state/turn-assigned.md", "[行动]\n调用 claim_turn 领取当前 turn\n\n[当前]\n你是 {{identity_label}}。当前是第 {{round}} 轮{{phase_label}}，turn 已分配给你但尚未领取。\n");
   writeTemplate(root, "state/unknown.md", "[行动]\n未知的阶段/子阶段组合: phase={{phase}}, sub_phase={{sub_phase}}, round={{round}}\n");
   // requirements
   writeTemplate(root, "requirements/r1.md", "[行动]\n读取 {{task_path}} 并深度分析...\n\n[产出]\n完成后 git commit，调用 submit，file_path = {{file_path}}\n\n[当前]\n你是 {{identity_label}}。当前是第 {{round}} 轮{{phase_label}}，轮到你了。\n");
@@ -214,6 +215,18 @@ describe("tip-template engine", () => {
       const result = renderTip("state.idle.other", { identity_label: "claude（developer）" });
       expect(result).toContain("[行动] 等待监督者调用 advance");
       expect(result).toContain("[当前] 你是 claude（developer）。");
+      expect(result).not.toContain("[产出]");
+    });
+
+    it("renders assigned-turn guidance without production or submission details", () => {
+      const result = renderTip("state.turn-assigned" as TemplateKey, {
+        identity_label: "claude（developer）",
+        round: "1",
+        phase_label: "需求分析",
+      });
+
+      expect(result).toContain("调用 claim_turn");
+      expect(result).not.toContain("submit");
       expect(result).not.toContain("[产出]");
     });
   });

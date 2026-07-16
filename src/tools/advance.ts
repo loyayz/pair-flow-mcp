@@ -4,12 +4,13 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
 import { parseSession } from "../identity.js";
-import { deleteState, getState, setState, getMutex, hasCompleteParticipantRoster, hasRecoveryPlaceholderParticipant, haveAllParticipantsSubmittedCurrentPhase, isSupervisor, getOtherIdentity, initRequirementsPhase, initPlanningPhase, initImplementationPhase, initSummaryPhase } from "../state.js";
+import { assignTurn, deleteState, getState, setState, getMutex, hasCompleteParticipantRoster, hasRecoveryPlaceholderParticipant, haveAllParticipantsSubmittedCurrentPhase, isSupervisor, getOtherIdentity, initRequirementsPhase, initPlanningPhase, initImplementationPhase, initSummaryPhase, type PairFlowState, type WaitWarningCycle } from "../state.js";
 
 import { err, ok } from "../response.js";
 import { workflowArchivePath, workflowWorkDir } from "../archive-path.js";
 import { unbindWorkflow } from "../token-map.js";
 import { guidance } from "../instruction.js";
+import { publishWorkflowChange } from "../workflow-events.js";
 
 export async function advance(
   args: Record<string, unknown>,
@@ -37,11 +38,14 @@ export async function advance(
     const currentPhase = state.phase;
     const bothSubmitted = haveAllParticipantsSubmittedCurrentPhase(state);
 
-    if (state.turn !== "idle" && state.turn !== identity) {
+    if (state.turn !== identity) {
       if (currentPhase !== "idle" && bothSubmitted) {
         return err(`turn 尚未回到监督者 — 当前 turn: ${state.turn}。当前 turn 持有者需要继续处理或确认并 submit 后，监督者才能 advance`);
       }
       return err(`not your turn — current turn: ${state.turn}. Wait for the other participant to finish before advancing`);
+    }
+    if (state.turn_claimed_at === null) {
+      return err("current turn is assigned but not claimed — call claim_turn first");
     }
 
     // 非 idle 阶段：双方至少各 submit 一次才能 advance（§6 收敛）
@@ -55,8 +59,9 @@ export async function advance(
       }
       const nonSupervisor = getOtherIdentity(state, identity);
       if (!nonSupervisor) return err("no other participant registered");
-      const next = markTurnAssigned(initRequirementsPhase(state, nonSupervisor, state.task), identity);
+      const next = markTurnAssigned(initRequirementsPhase(state, nonSupervisor, state.task), state.wait_warning_cycle);
       setState(workflowId, next);
+      publishWorkflowChange(workflowId);
 
       const reqFile = workflowArchivePath(next, next.workflow_id!, "requirements", `r1_${nonSupervisor}.md`).replace(/\\/g, "/");
       return ok({ ok: true, new_phase: "requirements", turn: nonSupervisor }, guidance("advance.requirements.other", { identity, turn: nonSupervisor, file_path: reqFile }, {
@@ -76,8 +81,9 @@ export async function advance(
 
     if (currentPhase === "requirements") {
       if (state.task?.task_type === "requirements") {
-        const next = markTurnAssigned(initSummaryPhase(state, identity), identity);
+        const next = markTurnAssigned(initSummaryPhase(state, identity), state.wait_warning_cycle);
         setState(workflowId, next);
+        publishWorkflowChange(workflowId);
 
         const summaryFile = workflowArchivePath(next, next.workflow_id!, "summary", `r1_${identity}.md`).replace(/\\/g, "/");
         return ok({ ok: true, new_phase: "summary", turn: identity }, guidance("advance.summary.self", { identity, file_path: summaryFile }, {
@@ -96,8 +102,9 @@ export async function advance(
       }
       const reviewer = state.participants.find((p) => !p.is_developer);
       if (!reviewer) return err("no reviewer (is_developer=false) registered");
-      const next = markTurnAssigned(initPlanningPhase(state, reviewer.identity), identity);
+      const next = markTurnAssigned(initPlanningPhase(state, reviewer.identity), state.wait_warning_cycle);
       setState(workflowId, next);
+      publishWorkflowChange(workflowId);
 
       const planIsSelf = reviewer.identity === identity;
       const planFile = workflowArchivePath(next, next.workflow_id!, "planning", `r1_${reviewer.identity}.md`).replace(/\\/g, "/");
@@ -134,8 +141,9 @@ export async function advance(
     if (currentPhase === "planning") {
       const developer = state.participants.find((p) => p.is_developer);
       if (!developer) return err("no developer (is_developer=true) registered");
-      const next = markTurnAssigned(initImplementationPhase(state, developer.identity), identity);
+      const next = markTurnAssigned(initImplementationPhase(state, developer.identity), state.wait_warning_cycle);
       setState(workflowId, next);
+      publishWorkflowChange(workflowId);
 
       const implIsSelf = developer.identity === identity;
       const implFile = workflowArchivePath(next, next.workflow_id!, "implementation", `r1_coding_${developer.identity}.md`).replace(/\\/g, "/");
@@ -172,8 +180,9 @@ export async function advance(
     }
 
     if (currentPhase === "implementation") {
-      const next = markTurnAssigned(initSummaryPhase(state, identity), identity);
+      const next = markTurnAssigned(initSummaryPhase(state, identity), state.wait_warning_cycle);
       setState(workflowId, next);
+      publishWorkflowChange(workflowId);
 
       const summaryFile = workflowArchivePath(next, next.workflow_id!, "summary", `r1_${identity}.md`).replace(/\\/g, "/");
       return ok({ ok: true, new_phase: "summary", turn: identity }, guidance("advance.summary.self", { identity, file_path: summaryFile }, {
@@ -218,12 +227,10 @@ export async function advance(
   });
 }
 
-function markTurnAssigned<T extends { turn: string; turn_switched_at: string | null; turn_claimed_at: string | null }>(
-  state: T,
-  callerIdentity: string,
-): T {
+function markTurnAssigned(
+  state: PairFlowState,
+  previousCycle: WaitWarningCycle | null,
+): PairFlowState {
   const assignedAt = new Date().toISOString();
-  state.turn_switched_at = assignedAt;
-  state.turn_claimed_at = state.turn === callerIdentity ? assignedAt : null;
-  return state;
+  return assignTurn(state, state.turn, assignedAt, previousCycle);
 }

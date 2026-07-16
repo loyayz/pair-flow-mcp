@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { mkdirSync, writeFileSync, rmSync, readFileSync, cpSync } from "node:fs";
 import { resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { defaultState } from "../state.js";
+import { defaultState, initPlanningPhase } from "../state.js";
 import type { PairFlowState } from "../state.js";
 import type {
   InstructionAction,
@@ -27,6 +27,7 @@ import {
 function fixture(overrides: Partial<PairFlowState> = {}): PairFlowState {
   const base = defaultState();
   base.workflow_id = "20260701000001";
+  base.turn_claimed_at = "2026-07-15T00:00:00.000Z";
   base.task = { spec_file: "C:/repo/task.md", task_type: "development" };
   base.participants = [
     { identity: "sup", is_supervisor: true, is_developer: false, registered_at: new Date().toISOString(), work_dir: "C:/repo" },
@@ -70,6 +71,7 @@ const REASON_MATRIX = {
   ROSTER_INCOMPLETE: [{ action: "wait_for_turn", tools: ["wait_for_turn"] }],
   CONFIRMED_NEEDS_TURN_CLAIM: [{ action: "wait_for_turn", tools: ["wait_for_turn"] }],
   WAITING_FOR_TURN: [{ action: "wait_for_turn", tools: ["wait_for_turn"] }],
+  TURN_ASSIGNED: [{ action: "claim_turn", tools: ["claim_turn"] }],
   TURN_READY: [
     { action: "produce_and_submit", tools: ["submit"] },
     { action: "advance", tools: ["advance"] },
@@ -84,6 +86,24 @@ const REASON_MATRIX = {
   UNSUPPORTED_WORKFLOW_STATE: [{ action: "report_user", tools: [] }],
   REQUEST_REJECTED: [{ action: "fix_request", tools: [] }],
 } satisfies Record<InstructionReasonCode, Array<{ action: InstructionAction; tools: PairFlowTool[] }>>;
+
+describe("persisted wait warning cycle", () => {
+  it("initializes and phase-resets the warning cycle to null", () => {
+    const initial = defaultState();
+    expect(initial.wait_warning_cycle).toBeNull();
+
+    const state = fixture({
+      wait_warning_cycle: {
+        kind: "turn",
+        generation: 3,
+        next_report_at: "2026-07-15T10:30:00.000Z",
+        reported_at: "2026-07-15T10:31:00.000Z",
+        reported_to: "sup",
+      },
+    });
+    expect(initPlanningPhase(state, "sup").wait_warning_cycle).toBeNull();
+  });
+});
 
 describe("instruction scenarios", () => {
   it("covers every closed reason code with its allowed action and direct-tool outcomes", () => {
@@ -100,8 +120,59 @@ describe("instruction scenarios", () => {
     }
   });
 
+  it("limits an assigned holder to the no-argument claim_turn action", () => {
+    const state = fixture({
+      phase: "requirements",
+      round: 1,
+      turn: "dev",
+      turn_claimed_at: null,
+    });
+
+    const g = buildAuditedGuidance(state, "dev");
+
+    expect(g.instruction).toMatchObject({
+      next_action: "claim_turn",
+      allowed_tools: ["claim_turn"],
+      reason_code: "TURN_ASSIGNED",
+      context: {
+        workflow_id: state.workflow_id,
+        phase: "requirements",
+        round: 1,
+        turn: "dev",
+        holds_turn: true,
+        can_advance: false,
+      },
+    });
+    expect(g.instruction.required_output).toBeUndefined();
+    expect(g.instruction.references).toBeUndefined();
+    expect(g.instruction.decision).toBeUndefined();
+    expect(g.tip).toContain("claim_turn");
+    expect(g.tip).not.toContain("submit");
+    expect(g.tip).not.toContain("advance");
+    expect(g.tip).not.toContain("C:/repo/task.md");
+    expect(g.tip).not.toContain("/handoff/");
+  });
+
+  it("restores the holder's full current action only after the turn is claimed", () => {
+    const state = fixture({
+      phase: "requirements",
+      round: 1,
+      turn: "dev",
+      turn_claimed_at: "2026-07-15T01:02:03.000Z",
+    });
+
+    const g = buildAuditedGuidance(state, "dev");
+
+    expect(g.instruction.next_action).toBe("produce_and_submit");
+    expect(g.instruction.allowed_tools).toEqual(["submit"]);
+    expect(g.instruction.reason_code).toBe("TURN_READY");
+    expect(g.instruction.required_output).toBeDefined();
+    expect(g.instruction.references).toBeDefined();
+    expect(g.tip).toContain("submit");
+  });
+
   it("idle supervisor with complete roster gets advance", () => {
-    const state = fixture({ phase: "idle", turn: "sup" });
+    const state = fixture({ phase: "idle", turn: "sup", turn_claimed_at: "2026-07-15T01:02:03.000Z" });
     const g = buildAuditedGuidance(state, "sup");
 
     expect(g.instruction.next_action).toBe("advance");

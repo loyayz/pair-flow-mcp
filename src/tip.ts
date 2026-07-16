@@ -546,6 +546,21 @@ export function buildGuidance(state: PairFlowState, identity: string): Guidance 
     };
   }
 
+  if (holdsTurn && state.turn_claimed_at === null) {
+    return {
+      tip: renderTip("state.turn-assigned", {
+        identity_label: identityLabel(state, identity),
+        round: String(state.round),
+        phase_label: phaseLabel(safe(state.phase), state.sub_phase),
+      }),
+      instruction: withInstructionProtocol(
+        instruction("claim_turn", "TURN_ASSIGNED", state, identity, {
+          allowedTools: ["claim_turn"],
+        }),
+      ),
+    };
+  }
+
   const selection = selectGuidance(state, identity);
   return {
     tip: renderTip(selection.key, selection.variables),

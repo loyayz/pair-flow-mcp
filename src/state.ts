@@ -1,4 +1,5 @@
 import { Mutex } from "async-mutex";
+import { publishWorkflowChange } from "./workflow-events.js";
 
 // ── Types (§5.1 in-memory state schema) ──
 
@@ -26,6 +27,14 @@ export interface Task {
   task_type?: "requirements" | "development";
 }
 
+export interface WaitWarningCycle {
+  kind: "roster" | "turn";
+  generation: number;
+  next_report_at: string;
+  reported_at: string | null;
+  reported_to: string | null;
+}
+
 export interface PairFlowState {
   workflow_id: string | null;
   phase: Phase;
@@ -34,12 +43,14 @@ export interface PairFlowState {
   turn: string;
   turn_switched_at: string | null;
   turn_claimed_at: string | null;
+  wait_warning_cycle: WaitWarningCycle | null;
   task: Task | null;
   participants: Participant[];
   last_submission_by_participant: Record<string, LastSubmission>;
 }
 
 export const RECOVERY_REGISTERED_AT = "1970-01-01T00:00:00.000Z";
+export const WAIT_WARNING_INTERVAL_MS = 30 * 60 * 1000;
 
 // ── In-memory state store ──
 
@@ -55,6 +66,7 @@ export function setState(workflowId: string, state: PairFlowState): void {
 }
 
 export function deleteState(workflowId: string): void {
+  publishWorkflowChange(workflowId, { terminated: true });
   states.delete(workflowId);
   mutexes.delete(workflowId);
 }
@@ -83,10 +95,39 @@ export function defaultState(): PairFlowState {
     turn: "idle",
     turn_switched_at: null,
     turn_claimed_at: null,
+    wait_warning_cycle: null,
     task: null,
     participants: [],
     last_submission_by_participant: {},
   };
+}
+
+export function replaceWaitWarningCycle(
+  state: PairFlowState,
+  kind: WaitWarningCycle["kind"],
+  startedAt: string,
+  previousCycle: WaitWarningCycle | null = state.wait_warning_cycle,
+): PairFlowState {
+  state.wait_warning_cycle = {
+    kind,
+    generation: (previousCycle?.generation ?? 0) + 1,
+    next_report_at: new Date(Date.parse(startedAt) + WAIT_WARNING_INTERVAL_MS).toISOString(),
+    reported_at: null,
+    reported_to: null,
+  };
+  return state;
+}
+
+export function assignTurn(
+  state: PairFlowState,
+  turn: string,
+  assignedAt: string,
+  previousCycle: WaitWarningCycle | null = state.wait_warning_cycle,
+): PairFlowState {
+  state.turn = turn;
+  state.turn_switched_at = assignedAt;
+  state.turn_claimed_at = null;
+  return replaceWaitWarningCycle(state, "turn", assignedAt, previousCycle);
 }
 
 // ── Phase initialization ──
@@ -101,6 +142,7 @@ function resetPhaseBase(state: PairFlowState): PairFlowState {
     round: 1,
     turn_switched_at: null,
     turn_claimed_at: null,
+    wait_warning_cycle: null,
     last_submission_by_participant: lsp,
   };
 }

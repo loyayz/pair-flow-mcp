@@ -1,6 +1,6 @@
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { describe, expect, it } from "vitest";
-import { guidance } from "../instruction.js";
+import { guidance, withInstructionProtocol } from "../instruction.js";
 import type { InstructionInput } from "../instruction.js";
 import { INSTRUCTION_PROTOCOL_VERSION, PROTOCOL_HELP } from "../instruction-protocol.js";
 import { err, ok } from "../response.js";
@@ -33,6 +33,23 @@ const turnReadyInstruction: InstructionInput = {
 };
 
 describe("instruction contract", () => {
+  it.each([
+    "PARTICIPANT_CONFIRMATION_STALE",
+    "TURN_UNCLAIMED_STALE",
+  ] as const)("adds the fixed user continuation decision for %s", (reasonCode) => {
+    const instruction = withInstructionProtocol({
+      next_action: "report_user",
+      allowed_tools: [],
+      reason_code: reasonCode,
+    });
+
+    expect(instruction.decision).toEqual({
+      criterion: "user_wants_to_continue_waiting",
+      when_true: "wait_for_turn",
+      when_false: "stop",
+    });
+  });
+
   it("outputs tip and instruction together from a guidance", () => {
     const g = guidance("requirements.r1", {
       task_path: "C:/repo/task.md",
@@ -168,12 +185,13 @@ describe("instruction contract", () => {
 });
 
 describe("instruction type closedness", () => {
-  it("InstructionAction is a closed union of 8 values", () => {
+  it("InstructionAction is a closed union of 9 values", () => {
     const actions: Set<string> = new Set();
     // Compile-time check: exhaustive array assignment
     const all: import("../instruction.js").InstructionAction[] = [
       "confirm_task",
       "wait_for_turn",
+      "claim_turn",
       "produce_and_submit",
       "decide_convergence",
       "advance",
@@ -182,23 +200,24 @@ describe("instruction type closedness", () => {
       "stop",
     ];
     for (const a of all) actions.add(a);
-    expect(actions.size).toBe(8);
+    expect(actions.size).toBe(9);
   });
 
-  it("PairFlowTool is a closed union of 5 values", () => {
+  it("PairFlowTool is a closed union of 6 values", () => {
     const tools: Set<string> = new Set();
     const all: import("../instruction.js").PairFlowTool[] = [
       "confirm_task",
       "wait_for_turn",
+      "claim_turn",
       "submit",
       "advance",
       "get_state",
     ];
     for (const t of all) tools.add(t);
-    expect(tools.size).toBe(5);
+    expect(tools.size).toBe(6);
   });
 
-  it("InstructionReasonCode is a closed union of 15 values", () => {
+  it("InstructionReasonCode is a closed union of 16 values", () => {
     const codes: Set<string> = new Set();
     const all: import("../instruction.js").InstructionReasonCode[] = [
       "REGISTERED_NEEDS_CONFIRMATION",
@@ -206,6 +225,7 @@ describe("instruction type closedness", () => {
       "ROSTER_INCOMPLETE",
       "CONFIRMED_NEEDS_TURN_CLAIM",
       "WAITING_FOR_TURN",
+      "TURN_ASSIGNED",
       "TURN_READY",
       "PHASE_READY_FOR_CONVERGENCE_DECISION",
       "WAIT_TIMEOUT",
@@ -218,6 +238,6 @@ describe("instruction type closedness", () => {
       "REQUEST_REJECTED",
     ];
     for (const c of all) codes.add(c);
-    expect(codes.size).toBe(15);
+    expect(codes.size).toBe(16);
   });
 });

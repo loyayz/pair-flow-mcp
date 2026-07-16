@@ -85,6 +85,7 @@ export async function reconstructFromHandoff(
   const recoveredState: PairFlowState = {
     ...state,
     workflow_id: wfId,
+    wait_warning_cycle: null,
     task: { spec_file: resolve(taskPath) },
     participants: [],
     last_submission_by_participant: {},

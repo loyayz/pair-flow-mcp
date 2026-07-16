@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
@@ -8,6 +8,8 @@ import type { ServerNotification, ServerRequest } from "@modelcontextprotocol/sd
 import { submit } from "../tools/submit.js";
 import { bindWorkflow, registerToken } from "../token-map.js";
 import { defaultState, deleteState, getState, setState } from "../state.js";
+import { getWorkflowVersion } from "../workflow-events.js";
+import { claimTurn } from "../tools/claim-turn.js";
 
 const WORKFLOW_ID = "20260711000002";
 const WORK_DIR = join(tmpdir(), `pairflow-submit-round-${randomUUID()}`);
@@ -50,11 +52,34 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.useRealTimers();
   deleteState(WORKFLOW_ID);
   await rm(WORK_DIR, { recursive: true, force: true });
 });
 
 describe("submit commit ordering", () => {
+  it("requires the assigned holder to claim before a normal submission", async () => {
+    const state = getState(WORKFLOW_ID)!;
+    state.turn_claimed_at = null;
+    const before = structuredClone(state);
+    const versionBefore = getWorkflowVersion(WORKFLOW_ID);
+
+    const rejected = await payload({ file_path: FILE_PATH, git_commit_hash: "abcdef9" });
+
+    expect(rejected.ok).toBe(false);
+    expect(rejected.tip).toContain("claim_turn");
+    expect(getState(WORKFLOW_ID)).toEqual(before);
+    expect(getWorkflowVersion(WORKFLOW_ID)).toBe(versionBefore);
+    await expect(readFile(FILE_PATH.replace(/\.md$/, ".meta.json"), "utf-8"))
+      .rejects.toMatchObject({ code: "ENOENT" });
+
+    const claimed = await claimTurn(requestExtra());
+    expect(JSON.parse((claimed.content[0] as { text: string }).text).ok).toBe(true);
+
+    const submitted = await payload({ file_path: FILE_PATH, git_commit_hash: "abcdef9" });
+    expect(submitted.ok).toBe(true);
+  });
+
   it("returns an exact immediate retry idempotently without advancing or rewriting meta", async () => {
     const replayFile = join(WORK_DIR, "handoff", WORKFLOW_ID, "requirements", "r1_alice.md");
     const metaFile = replayFile.replace(/\.md$/, ".meta.json");
@@ -63,20 +88,42 @@ describe("submit commit ordering", () => {
     const state = getState(WORKFLOW_ID)!;
     state.round = 2;
     state.turn = "bob";
+    state.turn_switched_at = "2026-07-11T00:20:00.000Z";
+    state.turn_claimed_at = null;
+    state.wait_warning_cycle = {
+      kind: "turn",
+      generation: 5,
+      next_report_at: "2026-07-11T00:50:00.000Z",
+      reported_at: null,
+      reported_to: null,
+    };
     state.last_submission_by_participant = {
       alice: { round: 1, sub_phase: null, commit_hash: "abc1234", submitted_at: "2026-07-11T00:20:00.000Z", file_path: replayFile },
       bob: { round: null, sub_phase: null, commit_hash: null, submitted_at: null, file_path: null },
     };
 
+    const versionBefore = getWorkflowVersion(WORKFLOW_ID);
     const result = await payload({ file_path: replayFile, git_commit_hash: "ABC1234" });
 
     expect(result.ok).toBe(true);
     expect(result.next_turn).toBe("bob");
-    expect(getState(WORKFLOW_ID)).toMatchObject({ round: 2, turn: "bob" });
+    expect(getState(WORKFLOW_ID)).toMatchObject({
+      round: 2,
+      turn: "bob",
+      turn_switched_at: "2026-07-11T00:20:00.000Z",
+      turn_claimed_at: null,
+      wait_warning_cycle: {
+        kind: "turn",
+        generation: 5,
+        next_report_at: "2026-07-11T00:50:00.000Z",
+      },
+    });
+    expect(getWorkflowVersion(WORKFLOW_ID)).toBe(versionBefore);
     expect(await readFile(metaFile, "utf-8")).toBe("sentinel");
   });
 
   it("compares git_commit_hash with the highest-round submission", async () => {
+    getState(WORKFLOW_ID)!.turn_claimed_at = "2026-07-11T00:30:00.000Z";
     const sameCaseInsensitiveHash = await payload({
       file_path: FILE_PATH,
       git_commit_hash: "DEF5678",
@@ -103,6 +150,7 @@ describe("submit commit ordering", () => {
   });
 
   it("rejects zero-byte output without advancing workflow state", async () => {
+    getState(WORKFLOW_ID)!.turn_claimed_at = "2026-07-11T00:30:00.000Z";
     await writeFile(FILE_PATH, "", "utf-8");
 
     const result = await payload({ file_path: FILE_PATH, git_commit_hash: "fedcba9" });
@@ -114,6 +162,19 @@ describe("submit commit ordering", () => {
   });
 
   it("normalizes commit hashes and uses one submission timestamp", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-11T01:00:00.000Z"));
+    const stateBefore = getState(WORKFLOW_ID)!;
+    stateBefore.turn_claimed_at = "2026-07-11T00:40:00.000Z";
+    stateBefore.wait_warning_cycle = {
+      kind: "turn",
+      generation: 2,
+      next_report_at: "2026-07-11T00:50:00.000Z",
+      reported_at: "2026-07-11T00:51:00.000Z",
+      reported_to: "alice",
+    };
+    const versionBefore = getWorkflowVersion(WORKFLOW_ID);
+
     const result = await payload({ file_path: FILE_PATH, git_commit_hash: "ABCDEF9" });
     const state = getState(WORKFLOW_ID)!;
     const meta = JSON.parse(await readFile(FILE_PATH.replace(/\.md$/, ".meta.json"), "utf-8"));
@@ -123,6 +184,15 @@ describe("submit commit ordering", () => {
     expect(meta.commit_hash).toBe("abcdef9");
     expect(meta.submitted_at).toBe(state.last_submission_by_participant.alice.submitted_at);
     expect(state.turn_switched_at).toBe(meta.submitted_at);
+    expect(state.turn_claimed_at).toBeNull();
+    expect(state.wait_warning_cycle).toEqual({
+      kind: "turn",
+      generation: 3,
+      next_report_at: "2026-07-11T01:30:00.000Z",
+      reported_at: null,
+      reported_to: null,
+    });
+    expect(getWorkflowVersion(WORKFLOW_ID)).toBeGreaterThan(versionBefore);
   });
 
   it("rejects an invalid implementation sub_phase", async () => {
@@ -130,6 +200,7 @@ describe("submit commit ordering", () => {
     await mkdir(dirname(implementationPath), { recursive: true });
     await writeFile(implementationPath, "# implementation", "utf-8");
     const state = getState(WORKFLOW_ID)!;
+    state.turn_claimed_at = "2026-07-11T00:30:00.000Z";
     state.phase = "implementation";
     state.sub_phase = null;
 
@@ -151,6 +222,7 @@ describe("submit commit ordering", () => {
   });
 
   it("rejects symbolic links at the expected handoff path", async ({ skip }) => {
+    getState(WORKFLOW_ID)!.turn_claimed_at = "2026-07-11T00:30:00.000Z";
     const targetPath = process.platform === "win32"
       ? join(WORK_DIR, "outside-directory")
       : join(WORK_DIR, "outside.md");
@@ -179,6 +251,7 @@ describe("submit commit ordering", () => {
   });
 
   it("rejects symbolic links in parent archive directories", async ({ skip }) => {
+    getState(WORKFLOW_ID)!.turn_claimed_at = "2026-07-11T00:30:00.000Z";
     const phaseDirectory = dirname(FILE_PATH);
     const outsidePhaseDirectory = join(WORK_DIR, "outside-phase");
     await rm(phaseDirectory, { recursive: true, force: true });

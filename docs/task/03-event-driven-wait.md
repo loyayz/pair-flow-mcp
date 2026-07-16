@@ -1,6 +1,6 @@
 # 事件驱动的行动权等待与 JSON 响应
 
-**状态**：待处理
+**状态**：已完成
 
 `wait_for_turn` 当前通过固定间隔检查工作流状态，并由 Streamable HTTP transport 返回 SSE 格式。需要改为由进程内状态变化事件直接唤醒请求，同时让整个无状态 `/mcp` endpoint 返回普通 JSON-RPC JSON 响应。
 
@@ -96,6 +96,13 @@
 - 无 waiter 时丢弃通知不得丢失行动权或终止事实，后续请求必须能从状态恢复。
 - JSON response mode 不改变 MCP JSON-RPC envelope、structuredContent/content 双通道或业务 output schema。
 - PairFlow 的任何组件均不得为了等待或唤醒而执行外部命令。
+
+## 实现证据
+
+- workflow coordinator 已实现递增版本、登记后复查、变更发布和终止后延迟清理；`wait_for_turn` 由事件、warning deadline、600 秒请求上限及取消信号驱动，不再使用固定轮询。
+- latest-wins、取消、超时、warning 确认和 workflow 删除路径都会释放 waiter、timer 与 listener；状态变化后始终重新读取 live workflow truth。
+- 无状态 Streamable HTTP transport 已启用 JSON response mode，普通调用与延迟 `wait_for_turn` 均返回 `application/json` JSON-RPC response，不使用 SSE framing。
+- 相关自动化覆盖 `workflow-events.test.ts`、`wait-for-turn.test.ts`、`client-transport.test.ts`、`http-server-policy.test.ts`、`transport-lifecycle.test.ts` 与 `cold-start-eval.test.ts`；assigned 状态绕过 `claim_turn` 直接调用 mutation 的回归也已覆盖；2026-07-16 fresh 全量验证为 30 个文件、378/378 tests 通过。
 
 ## 验收标准
 

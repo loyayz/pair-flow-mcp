@@ -7,6 +7,7 @@ import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/proto
 import type { ServerNotification, ServerRequest } from "@modelcontextprotocol/sdk/types.js";
 import { bindWorkflow, registerToken } from "../token-map.js";
 import { defaultState, deleteState, getState, setState } from "../state.js";
+import { getWorkflowVersion } from "../workflow-events.js";
 
 const atomicWriteTextMock = vi.hoisted(() => vi.fn());
 
@@ -27,6 +28,7 @@ beforeEach(async () => {
   bindWorkflow(token, WORKFLOW_ID);
   setState(WORKFLOW_ID, {
     ...defaultState(),
+    turn_claimed_at: "2026-07-11T00:00:00.000Z",
     workflow_id: WORKFLOW_ID,
     phase: "requirements",
     turn: "alice",
@@ -51,6 +53,7 @@ describe("submit atomicity", () => {
   it("does not mutate workflow state when meta writing fails", async () => {
     atomicWriteTextMock.mockRejectedValueOnce(Object.assign(new Error("write failed"), { code: "EACCES" }));
     const stateBefore = structuredClone(getState(WORKFLOW_ID));
+    const versionBefore = getWorkflowVersion(WORKFLOW_ID);
     const extra = {
       signal: new AbortController().signal,
       requestInfo: { headers: { "x-ai-identity": token } },
@@ -66,5 +69,6 @@ describe("submit atomicity", () => {
     expect(payload.tip).toContain("failed to write meta.json");
     expect(payload.tip).toContain("EACCES");
     expect(getState(WORKFLOW_ID)).toEqual(stateBefore);
+    expect(getWorkflowVersion(WORKFLOW_ID)).toBe(versionBefore);
   });
 });

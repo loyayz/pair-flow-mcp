@@ -1,6 +1,6 @@
 # 行动权分配、领取与重复提醒
 
-**状态**：待处理
+**状态**：已完成
 
 PairFlow 需要明确区分行动权已经分配但尚未领取，以及参与者已经通过完整行动指引取得执行权。现有未就位和未领取告警在用户明确选择继续等待后会立即重复出现，需要形成简单、可预测且可由零背景 AI 正确执行的提醒闭环。
 
@@ -80,6 +80,12 @@ instruction protocol 在 1.x 内以加法兼容方式升级为 `1.1`，新增 `c
 - 旧 generation 的状态不得抑制新 roster 或新 turn 的 warning。
 - warning 已报告但尚未确认时，不得再次返回同一周期的相同 warning。
 - claim 成功后，即使响应随后因客户端取消而未被消费，也不回滚已持久化的 claim。
+
+## 实现证据
+
+- `claim_turn` 已作为唯一 assigned → claimed 转换实现；新 turn 保持 `turn_claimed_at === null`，首次领取写入时间，重复领取保持幂等。
+- roster 与未领取 turn 的 30 分钟 warning generation、单次报告、同身份隐式确认、重复周期、恢复重置和取消线性化已纳入事件等待实现。
+- 相关自动化覆盖 `claim-turn.test.ts`、`wait-for-turn.test.ts`、`confirm-task-lifecycle.test.ts`、`advance.test.ts`、`submit-round-order.test.ts` 与 `crash-recovery.test.ts`；assigned 状态绕过 `claim_turn` 直接调用 mutation 的回归也已覆盖；2026-07-16 fresh 全量验证为 30 个文件、378/378 tests 通过。
 
 ## 验收标准
 

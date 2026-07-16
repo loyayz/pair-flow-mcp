@@ -10,6 +10,13 @@ function resetState() {
   deleteState(TEST_WF);
 }
 
+function claimedState(): PairFlowState {
+  return {
+    ...defaultState(),
+    turn_claimed_at: "2026-07-15T00:00:00.000Z",
+  };
+}
+
 describe("State management", () => {
   beforeEach(resetState);
   afterEach(resetState);
@@ -88,7 +95,7 @@ describe("Tip guidance", () => {
   it("places workflow artifacts under work_dir/handoff", () => {
     const workDir = resolve("target-project");
     const state: PairFlowState = {
-      ...defaultState(),
+      ...claimedState(),
       workflow_id: TEST_WF,
       phase: "requirements",
       round: 1,
@@ -108,7 +115,7 @@ describe("Tip guidance", () => {
 
   it("includes the task document in first-round requirements guidance", () => {
     const state: PairFlowState = {
-      ...defaultState(),
+      ...claimedState(),
       workflow_id: TEST_WF,
       phase: "requirements",
       round: 1,
@@ -125,7 +132,7 @@ describe("Tip guidance", () => {
 
   it("points implementation review to the reviewer's planning document", () => {
     const state: PairFlowState = {
-      ...defaultState(),
+      ...claimedState(),
       workflow_id: TEST_WF,
       phase: "implementation",
       sub_phase: "review",
@@ -150,7 +157,7 @@ describe("Tip guidance", () => {
 
   it("keeps pointing later planning rounds to the reviewer's round-one plan", () => {
     const state: PairFlowState = {
-      ...defaultState(),
+      ...claimedState(),
       workflow_id: TEST_WF,
       phase: "planning",
       round: 4,
@@ -174,7 +181,7 @@ describe("Tip guidance", () => {
 
   it("includes the previous review artifact in later coding guidance", () => {
     const state: PairFlowState = {
-      ...defaultState(),
+      ...claimedState(),
       workflow_id: TEST_WF,
       phase: "implementation",
       sub_phase: "coding",
@@ -196,7 +203,7 @@ describe("Tip guidance", () => {
 
   it("points first-round summary guidance to the task and workflow archive", () => {
     const state: PairFlowState = {
-      ...defaultState(),
+      ...claimedState(),
       workflow_id: TEST_WF,
       phase: "summary",
       round: 1,
@@ -216,7 +223,7 @@ describe("Tip guidance", () => {
 
   it("does not give submission instructions to a participant without the turn", () => {
     const state: PairFlowState = {
-      ...defaultState(),
+      ...claimedState(),
       workflow_id: TEST_WF,
       phase: "implementation",
       sub_phase: "review",
@@ -239,7 +246,7 @@ describe("Tip guidance", () => {
 
   it("does not tell supervisor to advance before both participants submitted", () => {
     const state: PairFlowState = {
-      ...defaultState(),
+      ...claimedState(),
       workflow_id: TEST_WF,
       phase: "planning",
       round: 2,
@@ -264,7 +271,7 @@ describe("Tip guidance", () => {
   it("keeps submission instructions out of the action section", () => {
     const workDir = resolve("project");
     const state: PairFlowState = {
-      ...defaultState(),
+      ...claimedState(),
       workflow_id: TEST_WF,
       phase: "planning",
       round: 3,

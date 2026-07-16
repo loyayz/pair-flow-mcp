@@ -12,6 +12,7 @@ import { getStateTool } from "./tools/get-state.js";
 import { submit } from "./tools/submit.js";
 import { waitForTurn } from "./tools/wait-for-turn.js";
 import { confirmTask } from "./tools/confirm-task.js";
+import { claimTurn } from "./tools/claim-turn.js";
 import { HTTP_SERVER_OPTIONS } from "./http-server-policy.js";
 import { describeListenError, parseServerArgs, SERVER_HELP } from "./server-config.js";
 import { runWithTransportCleanup } from "./transport-lifecycle.js";
@@ -22,6 +23,8 @@ import {
   createHealthPayload,
 } from "./instruction-protocol.js";
 import { TOOL_OUTPUT_SCHEMAS } from "./tool-output.js";
+import { getWorkflowWaiterCount } from "./workflow-events.js";
+import { sendDiagnosticReply } from "./diagnostic-ipc.js";
 
 const cliConfig = (() => {
   try {
@@ -61,7 +64,12 @@ function createServerWithTools() {
 
   mcp.registerTool("advance", { description: "推进到下一阶段。仅监督者可用。", inputSchema: {}, outputSchema: TOOL_OUTPUT_SCHEMAS.advance }, advance);
   mcp.registerTool("get_state", { description: "返回当前执行指引（tip）。需要有效注册 token。", outputSchema: TOOL_OUTPUT_SCHEMAS.get_state }, getStateTool);
-  mcp.registerTool("wait_for_turn", { description: "长轮询等待 turn 切换到调用方。10s 间隔，600s 超时。turn=自己时返回。", outputSchema: TOOL_OUTPUT_SCHEMAS.wait_for_turn }, waitForTurn);
+  mcp.registerTool("wait_for_turn", { description: "通过进程内 workflow 变化事件等待 roster、turn、提醒或工作流终止。单次请求最长 600s；事件触发后返回当前行动指引。", outputSchema: TOOL_OUTPUT_SCHEMAS.wait_for_turn }, waitForTurn);
+  mcp.registerTool(
+    "claim_turn",
+    { description: "领取当前已分配给调用方的 turn，并取得完整行动指引。", inputSchema: {}, outputSchema: TOOL_OUTPUT_SCHEMAS.claim_turn },
+    (_args, extra) => claimTurn(extra),
+  );
   mcp.registerTool(
     "submit",
     {
@@ -141,6 +149,7 @@ const httpServer = createServer(HTTP_SERVER_OPTIONS, async (req: IncomingMessage
       if (parsed === INVALID_JSON) return;
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: undefined, // stateless
+        enableJsonResponse: true,
       });
       const mcp = createServerWithTools();
       await runWithTransportCleanup(transport, async () => {
@@ -174,6 +183,20 @@ httpServer.on("error", (error: NodeJS.ErrnoException) => {
 httpServer.listen(PORT, HOST, () => {
   console.log(`[pair-flow] HTTP MCP Server listening on http://${HOST}:${PORT}/mcp`);
   console.log(`[pair-flow] Health check: http://${HOST}:${PORT}/health`);
+});
+
+process.on("message", (message: unknown) => {
+  if (!message || typeof message !== "object") return;
+  const request = message as Record<string, unknown>;
+  if (request.type !== "pairflow:get-workflow-waiter-count"
+    || typeof request.requestId !== "number"
+    || typeof request.workflowId !== "string") return;
+  sendDiagnosticReply(process, {
+    type: "pairflow:workflow-waiter-count",
+    requestId: request.requestId,
+    workflowId: request.workflowId,
+    count: getWorkflowWaiterCount(request.workflowId),
+  });
 });
 
 process.on("SIGTERM", () => { process.exit(0); });

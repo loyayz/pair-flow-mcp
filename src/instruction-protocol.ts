@@ -18,7 +18,7 @@ export function loadServerInfo(moduleUrl: string | URL = import.meta.url): {
 }
 
 export const SERVER_INFO = loadServerInfo();
-export const INSTRUCTION_PROTOCOL_VERSION = "1.0" as const;
+export const INSTRUCTION_PROTOCOL_VERSION = "1.1" as const;
 export const PROTOCOL_HELP = {
   method: "GET",
   path: "/health",
@@ -29,6 +29,7 @@ export const PROTOCOL_HELP = {
 export const instructionActionSchema = z.enum([
   "confirm_task",
   "wait_for_turn",
+  "claim_turn",
   "produce_and_submit",
   "decide_convergence",
   "advance",
@@ -39,6 +40,7 @@ export const instructionActionSchema = z.enum([
 export const pairFlowToolSchema = z.enum([
   "confirm_task",
   "wait_for_turn",
+  "claim_turn",
   "submit",
   "advance",
   "get_state",
@@ -49,6 +51,7 @@ export const instructionReasonCodeSchema = z.enum([
   "ROSTER_INCOMPLETE",
   "CONFIRMED_NEEDS_TURN_CLAIM",
   "WAITING_FOR_TURN",
+  "TURN_ASSIGNED",
   "TURN_READY",
   "PHASE_READY_FOR_CONVERGENCE_DECISION",
   "WAIT_TIMEOUT",
@@ -107,11 +110,18 @@ export const instructionContextSchema = z.object({
   can_advance: z.boolean().optional(),
 }).strict();
 
-export const instructionDecisionSchema = z.object({
-  criterion: z.literal("phase_goal_met"),
-  when_true: z.literal("advance"),
-  when_false: z.literal("produce_and_submit"),
-}).strict();
+export const instructionDecisionSchema = z.discriminatedUnion("criterion", [
+  z.object({
+    criterion: z.literal("phase_goal_met"),
+    when_true: z.literal("advance"),
+    when_false: z.literal("produce_and_submit"),
+  }).strict(),
+  z.object({
+    criterion: z.literal("user_wants_to_continue_waiting"),
+    when_true: z.literal("wait_for_turn"),
+    when_false: z.literal("stop"),
+  }).strict(),
+]);
 
 const instructionCoreSchema = z.object({
   next_action: instructionActionSchema,
@@ -137,8 +147,18 @@ function enforceInstructionCatalogRelationships(
   if ((instruction.required_output !== undefined) !== requiresOutput) {
     addIssue(["required_output"], "required_output must be present exactly for produce_and_submit or decide_convergence");
   }
-  if ((instruction.decision !== undefined) !== (instruction.next_action === "decide_convergence")) {
-    addIssue(["decision"], "decision must be present exactly for decide_convergence");
+  const isConvergence = instruction.next_action === "decide_convergence";
+  const isStaleReason = instruction.reason_code === "PARTICIPANT_CONFIRMATION_STALE"
+    || instruction.reason_code === "TURN_UNCLAIMED_STALE";
+  if (isStaleReason && instruction.next_action !== "report_user") {
+    addIssue(["next_action"], "stale warning reasons require the report_user action");
+  }
+  if ((instruction.decision !== undefined) !== (isConvergence || isStaleReason)) {
+    addIssue(["decision"], "decision must be present exactly for decide_convergence or a stale warning");
+  } else if (isConvergence && instruction.decision?.criterion !== "phase_goal_met") {
+    addIssue(["decision", "criterion"], "decide_convergence requires the phase_goal_met decision");
+  } else if (isStaleReason && instruction.decision?.criterion !== "user_wants_to_continue_waiting") {
+    addIssue(["decision", "criterion"], "stale warnings require the user_wants_to_continue_waiting decision");
   }
   if (instruction.references !== undefined && instruction.references.length === 0) {
     addIssue(["references"], "references must be omitted or non-empty");
@@ -180,6 +200,7 @@ function enforceInstructionCatalogRelationships(
   if (
     (instruction.next_action === "produce_and_submit"
       || instruction.next_action === "decide_convergence"
+      || instruction.next_action === "claim_turn"
       || instruction.next_action === "advance")
     && workflow.holds_turn !== true
   ) {
@@ -240,6 +261,13 @@ const actions = {
     procedure: [
       "Call wait_for_turn even when context.holds_turn is true if the returned instruction selects this action.",
       "On WAIT_TIMEOUT, call wait_for_turn again.",
+    ],
+  },
+  claim_turn: {
+    meaning: "Claim the currently assigned turn and receive its complete actionable instruction.",
+    procedure: [
+      "Call the no-argument claim_turn tool.",
+      "Use the complete instruction returned by claim_turn as the authority for the current turn.",
     ],
   },
   produce_and_submit: {
@@ -304,6 +332,10 @@ const reasonCodes = {
   WAITING_FOR_TURN: {
     meaning: "The other participant owns the current turn.",
     actions: ["wait_for_turn"], automatic: true, report_user: false,
+  },
+  TURN_ASSIGNED: {
+    meaning: "This participant is assigned the turn and must claim it before acting.",
+    actions: ["claim_turn"], automatic: true, report_user: false,
   },
   TURN_READY: {
     meaning: "This participant owns the turn and can perform the instructed current action.",
@@ -374,8 +406,8 @@ const fields = {
   "references[].file_path": "The POSIX-style path of a referenced artifact.",
   "references[].required": "When true, the referenced input must be read during this turn.",
   "references[].commit": "The lowercase commit hash associated with the referenced artifact when available.",
-  decision: "A content convergence decision made by the participant; the server does not make this judgment.",
-  "decision.criterion": "The content criterion the participant must evaluate.",
+  decision: "A convergence or wait-continuation decision made by the participant or user; the server does not make this judgment.",
+  "decision.criterion": "The criterion the participant or user must evaluate.",
   "decision.when_true": "The legal action when the decision criterion is satisfied.",
   "decision.when_false": "The legal action when the decision criterion is not satisfied.",
 } as const;
@@ -383,7 +415,7 @@ const fields = {
 export const INSTRUCTION_PROTOCOL = Object.freeze({
   name: "pairflow-instruction",
   version: INSTRUCTION_PROTOCOL_VERSION,
-  capabilities: ["instruction_v1", "structured_tool_output_v1"] as const,
+  capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1"] as const,
   authority: {
     instruction: "Actions, workflow state, permissions, paths and decision branches",
     tip: "Natural-language thinking, content and quality guidance; do not derive workflow control from tip",

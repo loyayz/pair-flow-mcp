@@ -5,7 +5,7 @@ import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/proto
 import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
 import { Mutex } from "async-mutex";
 import { parseSession } from "../identity.js";
-import { getState, setState, getAllStates, getMutex, defaultState, formatWorkflowId, hasCompleteParticipantRoster, isRecoveryPlaceholderParticipant, type Participant } from "../state.js";
+import { assignTurn, getState, setState, getAllStates, getMutex, defaultState, formatWorkflowId, hasCompleteParticipantRoster, isRecoveryPlaceholderParticipant, replaceWaitWarningCycle, type Participant } from "../state.js";
 import { reconstructFromHandoff } from "../crash-recovery.js";
 import { err, ok } from "../response.js";
 import { guidance } from "../instruction.js";
@@ -13,6 +13,7 @@ import { bindWorkflow } from "../token-map.js";
 import { atomicWriteText } from "../atomic-write.js";
 import { findSymbolicLinkInPath } from "../path-safety.js";
 import { workflowInstructionContext } from "../tip.js";
+import { publishWorkflowChange } from "../workflow-events.js";
 const taskPathMutexes = new Map<string, Mutex>();
 const tokenMutexes = new Map<string, Mutex>();
 const recoveryMutexes = new Map<string, Mutex>();
@@ -103,13 +104,10 @@ function reconcileRecoveredTurn(state: ReturnType<typeof defaultState>): void {
   if (next) state.turn = next.identity;
 }
 
-function assignIdleSupervisorTurn(state: ReturnType<typeof defaultState>, callerIdentity: string): void {
+function assignIdleSupervisorTurn(state: ReturnType<typeof defaultState>, assignedAt: string): void {
   const supervisor = state.participants.find((participant) => participant.is_supervisor);
   if (!supervisor || state.turn === supervisor.identity) return;
-  const assignedAt = new Date().toISOString();
-  state.turn = supervisor.identity;
-  state.turn_switched_at = assignedAt;
-  state.turn_claimed_at = supervisor.identity === callerIdentity ? assignedAt : null;
+  assignTurn(state, supervisor.identity, assignedAt);
 }
 
 function validateParticipantCombination(
@@ -343,17 +341,20 @@ export async function confirmTask(
     const state = defaultState();
     state.workflow_id = wfId;
     state.task = { spec_file: resolvedTaskPath, task_type: taskType as "requirements" | "development" };
+    const registeredAt = new Date().toISOString();
     // 将当前调用者加入 participants
     state.participants.push({
       identity,
       is_supervisor: supervisor,
       is_developer: developer,
-      registered_at: new Date().toISOString(),
+      registered_at: registeredAt,
       work_dir: resolvedWorkDir,
     });
+    replaceWaitWarningCycle(state, "roster", registeredAt);
     const pidError = await writePidFile(resolvedTaskPath, wfId);
     if (pidError) return err(pidError);
     setState(wfId, state);
+    publishWorkflowChange(wfId);
     isFirst = true;
   } else {
     wfId = existing;
@@ -396,11 +397,19 @@ export async function confirmTask(
         myParticipant.registered_at = confirmedAt;
         myParticipant.work_dir = resolvedWorkDir;
         if (state.phase === "idle") {
-          if (state.participants.length >= 2) assignIdleSupervisorTurn(state, identity);
+          if (state.participants.length >= 2) assignIdleSupervisorTurn(state, confirmedAt);
         } else if (recoveringParticipant) {
           reconcileRecoveredTurn(state);
         }
+        if (recoveringParticipant) {
+          if (hasCompleteParticipantRoster(state)) {
+            if (state.phase !== "idle") replaceWaitWarningCycle(state, "turn", confirmedAt);
+          } else {
+            replaceWaitWarningCycle(state, "roster", confirmedAt);
+          }
+        }
         setState(wfId, state);
+        publishWorkflowChange(wfId);
         const raw = extra.requestInfo?.headers?.["x-ai-identity"] as string;
         if (raw) bindWorkflow(raw.trim(), wfId);
 
@@ -458,11 +467,17 @@ export async function confirmTask(
       state.participants.push(newParticipant);
       // idle 阶段双方就位后，turn 切给监督者——使其 wait_for_turn 立即返回
       if (state.phase === "idle") {
-        assignIdleSupervisorTurn(state, identity);
+        assignIdleSupervisorTurn(state, newParticipant.registered_at);
       } else {
         reconcileRecoveredTurn(state);
+        replaceWaitWarningCycle(
+          state,
+          hasCompleteParticipantRoster(state) ? "turn" : "roster",
+          newParticipant.registered_at,
+        );
       }
       setState(wfId, state);
+      publishWorkflowChange(wfId);
       return null;
     });
     if (existingResult) return existingResult;

@@ -19,7 +19,11 @@ export function expectProtocolInstruction(instruction: PairFlowInstruction): Pai
   expect(Object.hasOwn(instruction, "required_output")).toBe(
     instruction.next_action === "produce_and_submit" || instruction.next_action === "decide_convergence",
   );
-  expect(Object.hasOwn(instruction, "decision")).toBe(instruction.next_action === "decide_convergence");
+  const isStaleWarning = instruction.reason_code === "PARTICIPANT_CONFIRMATION_STALE"
+    || instruction.reason_code === "TURN_UNCLAIMED_STALE";
+  expect(Object.hasOwn(instruction, "decision")).toBe(
+    instruction.next_action === "decide_convergence" || isStaleWarning,
+  );
   if (instruction.context) {
     expect(Object.hasOwn(instruction.context, "sub_phase")).toBe(
       instruction.context.phase === "implementation",

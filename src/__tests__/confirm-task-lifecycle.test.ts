@@ -15,6 +15,7 @@ import {
   type PairFlowState,
 } from "../state.js";
 import { registerToken, resolveSession } from "../token-map.js";
+import { getWorkflowVersion } from "../workflow-events.js";
 import { instructionOf } from "./instruction-assertions.js";
 
 const WORKFLOW_ID = "20260711000002";
@@ -75,11 +76,43 @@ afterEach(async () => {
 });
 
 describe("confirm_task participant lifecycle", () => {
+  it("starts the initial roster warning cycle from the first participant registration", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-11T02:00:00.000Z"));
+    const token = registerToken("alice");
+
+    const result = await confirm(token);
+    const workflowId = result.workflow_id as string;
+    try {
+      const state = getState(workflowId);
+      expect(result.ok).toBe(true);
+      expect(state?.participants[0].registered_at).toBe("2026-07-11T02:00:00.000Z");
+      expect(state?.wait_warning_cycle).toEqual({
+        kind: "roster",
+        generation: 1,
+        next_report_at: "2026-07-11T02:30:00.000Z",
+        reported_at: null,
+        reported_to: null,
+      });
+    } finally {
+      if (workflowId) deleteState(workflowId);
+    }
+  });
+
   it("starts an unclaimed timer when the second participant assigns idle turn to the other supervisor", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-11T03:00:00.000Z"));
-    setState(WORKFLOW_ID, participantState());
+    const state = participantState();
+    state.wait_warning_cycle = {
+      kind: "roster",
+      generation: 4,
+      next_report_at: "2026-07-11T02:30:00.000Z",
+      reported_at: "2026-07-11T02:31:00.000Z",
+      reported_to: "alice",
+    };
+    setState(WORKFLOW_ID, state);
     const token = registerToken("bob");
+    const versionBefore = getWorkflowVersion(WORKFLOW_ID);
 
     const result = responsePayload(await confirmTask({
       task_path: TASK_PATH,
@@ -107,12 +140,21 @@ describe("confirm_task participant lifecycle", () => {
       turn: "alice",
       turn_switched_at: "2026-07-11T03:00:00.000Z",
       turn_claimed_at: null,
+      wait_warning_cycle: {
+        kind: "turn",
+        generation: 5,
+        next_report_at: "2026-07-11T03:30:00.000Z",
+        reported_at: null,
+        reported_to: null,
+      },
     });
+    expect(getWorkflowVersion(WORKFLOW_ID)).toBeGreaterThan(versionBefore);
   });
 
   it("rejects responsibility changes after the workflow leaves idle", async () => {
     setState(WORKFLOW_ID, participantState("requirements"));
     const token = registerToken("alice");
+    const versionBefore = getWorkflowVersion(WORKFLOW_ID);
 
     const result = await confirm(token, { is_supervisor: false, is_developer: true });
 
@@ -129,10 +171,22 @@ describe("confirm_task participant lifecycle", () => {
       registered_at: "2026-07-11T00:00:00.000Z",
       work_dir: WORK_DIR,
     });
+    expect(getWorkflowVersion(WORKFLOW_ID)).toBe(versionBefore);
   });
 
   it("keeps active same-role confirmation idempotent while binding another token", async () => {
-    setState(WORKFLOW_ID, participantState("requirements"));
+    const state = participantState("requirements");
+    state.turn = "alice";
+    state.turn_switched_at = "2026-07-11T00:05:00.000Z";
+    state.turn_claimed_at = null;
+    state.wait_warning_cycle = {
+      kind: "roster",
+      generation: 3,
+      next_report_at: "2026-07-11T00:30:00.000Z",
+      reported_at: null,
+      reported_to: null,
+    };
+    setState(WORKFLOW_ID, state);
     const token = registerToken("alice");
 
     const result = await confirm(token);
@@ -141,6 +195,71 @@ describe("confirm_task participant lifecycle", () => {
     expect(result.recovered).toBe(false);
     expect(resolveSession(token)?.workflowId).toBe(WORKFLOW_ID);
     expect(getState(WORKFLOW_ID)?.participants[0].registered_at).toBe("2026-07-11T00:00:00.000Z");
+    expect(getState(WORKFLOW_ID)).toMatchObject({
+      turn_switched_at: "2026-07-11T00:05:00.000Z",
+      turn_claimed_at: null,
+      wait_warning_cycle: {
+        kind: "roster",
+        generation: 3,
+        next_report_at: "2026-07-11T00:30:00.000Z",
+      },
+    });
+  });
+
+  it("starts fresh roster and turn cycles while recovered participants reconfirm", async () => {
+    vi.useFakeTimers();
+    const state = participantState("requirements", RECOVERY_REGISTERED_AT);
+    state.participants.push({
+      identity: "bob",
+      is_supervisor: false,
+      is_developer: false,
+      registered_at: RECOVERY_REGISTERED_AT,
+    });
+    state.turn = "bob";
+    state.turn_switched_at = "2026-07-10T23:00:00.000Z";
+    state.turn_claimed_at = null;
+    state.last_submission_by_participant = {
+      alice: { round: 1, sub_phase: null, commit_hash: "abc1234", submitted_at: "2026-07-10T23:00:00.000Z", file_path: "alice.md" },
+      bob: { round: null, sub_phase: null, commit_hash: null, submitted_at: null, file_path: null },
+    };
+    setState(WORKFLOW_ID, state);
+
+    vi.setSystemTime(new Date("2026-07-11T04:00:00.000Z"));
+    const aliceToken = registerToken("alice");
+    const aliceResult = await confirm(aliceToken);
+
+    expect(aliceResult.ok).toBe(true);
+    expect(getState(WORKFLOW_ID)?.wait_warning_cycle).toEqual({
+      kind: "roster",
+      generation: 1,
+      next_report_at: "2026-07-11T04:30:00.000Z",
+      reported_at: null,
+      reported_to: null,
+    });
+
+    vi.setSystemTime(new Date("2026-07-11T04:10:00.000Z"));
+    const bobToken = registerToken("bob");
+    const bobResult = responsePayload(await confirmTask({
+      task_path: TASK_PATH,
+      task_type: "development",
+      is_supervisor: false,
+      is_developer: true,
+      work_dir: WORK_DIR,
+    }, requestExtra(bobToken)));
+
+    expect(bobResult.ok).toBe(true);
+    expect(getState(WORKFLOW_ID)).toMatchObject({
+      turn: "bob",
+      turn_switched_at: "2026-07-10T23:00:00.000Z",
+      turn_claimed_at: null,
+      wait_warning_cycle: {
+        kind: "turn",
+        generation: 2,
+        next_report_at: "2026-07-11T04:40:00.000Z",
+        reported_at: null,
+        reported_to: null,
+      },
+    });
   });
 
   it("allows a participant to correct responsibilities while idle", async () => {

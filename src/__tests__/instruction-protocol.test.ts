@@ -9,9 +9,12 @@ import {
   MCP_SERVER_INSTRUCTIONS,
   PROTOCOL_HELP,
   SERVER_INFO,
+  createHealthPayload,
   instructionActionSchema,
+  instructionDecisionSchema,
   instructionInputSchema,
   instructionReasonCodeSchema,
+  pairFlowToolSchema,
   pairFlowInstructionSchema,
 } from "../instruction-protocol.js";
 
@@ -30,13 +33,60 @@ function expectEnglishText(value: string): void {
 
 describe("instruction protocol catalog", () => {
   it("declares the fixed version and health help location", () => {
-    expect(INSTRUCTION_PROTOCOL_VERSION).toBe("1.0");
+    expect(INSTRUCTION_PROTOCOL_VERSION).toBe("1.1");
     expect(PROTOCOL_HELP).toEqual({
       method: "GET",
       path: "/health",
       section: "protocol",
       purpose: "Re-read the instruction protocol when any field or value is unclear",
     });
+  });
+
+  it("publishes claim_turn and JSON response support from the runtime catalog", () => {
+    expect(instructionActionSchema.options).toContain("claim_turn");
+    expect(pairFlowToolSchema.options).toContain("claim_turn");
+    expect(instructionReasonCodeSchema.options).toContain("TURN_ASSIGNED");
+    expect(INSTRUCTION_PROTOCOL.actions.claim_turn).toEqual({
+      meaning: "Claim the currently assigned turn and receive its complete actionable instruction.",
+      procedure: [
+        "Call the no-argument claim_turn tool.",
+        "Use the complete instruction returned by claim_turn as the authority for the current turn.",
+      ],
+    });
+    expect(INSTRUCTION_PROTOCOL.reason_codes.TURN_ASSIGNED).toEqual({
+      meaning: "This participant is assigned the turn and must claim it before acting.",
+      actions: ["claim_turn"],
+      automatic: true,
+      report_user: false,
+    });
+    expect(INSTRUCTION_PROTOCOL.capabilities).toContain("json_response_v1");
+    expect(createHealthPayload(12).protocol).toBe(INSTRUCTION_PROTOCOL);
+  });
+
+  it("models convergence and stale-warning decisions as a closed discriminated union", () => {
+    expect(instructionDecisionSchema.parse({
+      criterion: "phase_goal_met",
+      when_true: "advance",
+      when_false: "produce_and_submit",
+    })).toEqual({
+      criterion: "phase_goal_met",
+      when_true: "advance",
+      when_false: "produce_and_submit",
+    });
+    expect(instructionDecisionSchema.parse({
+      criterion: "user_wants_to_continue_waiting",
+      when_true: "wait_for_turn",
+      when_false: "stop",
+    })).toEqual({
+      criterion: "user_wants_to_continue_waiting",
+      when_true: "wait_for_turn",
+      when_false: "stop",
+    });
+    expect(instructionDecisionSchema.safeParse({
+      criterion: "user_wants_to_continue_waiting",
+      when_true: "advance",
+      when_false: "stop",
+    }).success).toBe(false);
   });
 
   it("reads the runtime server version from the root package", async () => {
@@ -282,9 +332,25 @@ describe("instruction protocol catalog", () => {
       ...input,
       context: { ...input.context, phase: "implementation" as const, sub_phase: "coding" as const },
     };
+    const warningDecision = {
+      criterion: "user_wants_to_continue_waiting" as const,
+      when_true: "wait_for_turn" as const,
+      when_false: "stop" as const,
+    };
+    const staleWarning = {
+      next_action: "report_user" as const,
+      allowed_tools: [],
+      reason_code: "PARTICIPANT_CONFIRMATION_STALE" as const,
+      decision: warningDecision,
+    };
 
     expect(instructionInputSchema.safeParse(input).success).toBe(true);
     expect(pairFlowInstructionSchema.safeParse(full).success).toBe(true);
+    expect(instructionInputSchema.safeParse(staleWarning).success).toBe(true);
+    expect(instructionInputSchema.safeParse({
+      ...staleWarning,
+      reason_code: "TURN_UNCLAIMED_STALE",
+    }).success).toBe(true);
 
     const inputMutants: unknown[] = [
       { ...input, required_output: undefined },
@@ -301,6 +367,22 @@ describe("instruction protocol catalog", () => {
       { ...input, references: [{ ...input.references[0], commit: "ABC1234" }] },
       { ...input, context: { ...input.context, workflow_id: undefined } },
       { ...input, context: { ...input.context, holds_turn: false } },
+      { ...staleWarning, decision: undefined },
+      { ...staleWarning, decision: convergence.decision },
+      {
+        ...staleWarning,
+        next_action: "wait_for_turn",
+        allowed_tools: ["wait_for_turn"],
+        decision: undefined,
+      },
+      {
+        ...staleWarning,
+        next_action: "wait_for_turn",
+        allowed_tools: ["wait_for_turn"],
+      },
+      { ...staleWarning, reason_code: "UNSUPPORTED_WORKFLOW_STATE" },
+      { ...waiting, decision: warningDecision },
+      { ...convergence, decision: warningDecision },
     ];
 
     for (const mutant of inputMutants) {

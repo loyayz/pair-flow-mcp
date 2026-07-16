@@ -155,38 +155,25 @@ function isJsonRpcResponse(value: unknown): value is JsonRpcResponse {
     && (Object.hasOwn(record, "result") || Object.hasOwn(record, "error"));
 }
 
-function parseJsonValues(text: string): unknown[] {
-  const parsed = JSON.parse(text) as unknown;
-  return Array.isArray(parsed) ? parsed : [parsed];
-}
-
-function parseSseValues(text: string): unknown[] {
-  const values: unknown[] = [];
-  for (const event of text.split(/\r?\n\r?\n/)) {
-    const data = event
-      .split(/\r?\n/)
-      .filter((line) => line.startsWith("data:"))
-      .map((line) => line.slice(5).trimStart())
-      .join("\n")
-      .trim();
-    if (data === "" || data === "[DONE]") continue;
-    values.push(...parseJsonValues(data));
-  }
-  return values;
-}
-
 export function parseMcpResponse(
   body: string,
   contentType: string,
   requestId: string | number,
 ): JsonRpcResponse {
-  const values = contentType.toLowerCase().includes("text/event-stream")
-    ? parseSseValues(body)
-    : parseJsonValues(body);
-  const response = values.find(
-    (value): value is JsonRpcResponse => isJsonRpcResponse(value) && value.id === requestId,
-  );
-  if (!response) throw new Error(`MCP response did not contain JSON-RPC id ${requestId}`);
+  if (!contentType.toLowerCase().includes("application/json")) {
+    throw new Error(`MCP response must use application/json; received ${contentType || "<missing>"}`);
+  }
+  let response: unknown;
+  try {
+    response = JSON.parse(body) as unknown;
+  } catch (error) {
+    throw new Error(
+      `MCP response body is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (!isJsonRpcResponse(response) || response.id !== requestId) {
+    throw new Error(`MCP response must be one JSON-RPC response envelope for id ${requestId}`);
+  }
   return response;
 }
 
@@ -196,19 +183,18 @@ export async function mcpRequest(
   params?: Record<string, unknown>,
   options: McpRequestOptions = {},
 ): Promise<unknown> {
-  const isNotification = method.startsWith("notifications/");
   const requestId = options.requestId ?? nextRequestId++;
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    Accept: "application/json, text/event-stream",
+    Accept: "application/json",
   };
   if (options.token) headers["X-AI-Identity"] = options.token;
 
   const request: Record<string, unknown> = {
     jsonrpc: "2.0",
     method,
+    id: requestId,
   };
-  if (!isNotification) request.id = requestId;
   if (params !== undefined) request.params = params;
 
   const response = await fetch(mcpUrl, {
@@ -216,15 +202,17 @@ export async function mcpRequest(
     headers,
     body: JSON.stringify(request),
   });
+  const contentType = response.headers.get("content-type") ?? "";
+  if (!contentType.toLowerCase().includes("application/json")) {
+    throw new Error(`MCP response must use application/json; received ${contentType || "<missing>"}`);
+  }
   if (!response.ok) {
     const detail = await response.text();
     throw new Error(`MCP ${method} failed with HTTP ${response.status}${detail ? `: ${detail}` : ""}`);
   }
-  if (isNotification) return undefined;
-
   const envelope = parseMcpResponse(
     await response.text(),
-    response.headers.get("content-type") ?? "application/json",
+    contentType,
     requestId,
   );
   if (envelope.error !== undefined) {
@@ -239,10 +227,6 @@ export async function initialize(mcpUrl: string): Promise<unknown> {
     capabilities: {},
     clientInfo: { name: "pairflow-instruction-cold-start-eval", version: "1.0" },
   });
-}
-
-export async function notifyInitialized(mcpUrl: string): Promise<void> {
-  await mcpRequest(mcpUrl, "notifications/initialized");
 }
 
 export async function listTools(mcpUrl: string): Promise<unknown> {
@@ -323,13 +307,18 @@ function requireTool(tools: Map<string, ToolDescription>, name: string): ToolDes
 
 function requireInputFields(tool: ToolDescription, fields: string[]): void {
   const schema = asRecord(tool.inputSchema, `${tool.name} inputSchema`);
-  const properties = asRecord(schema.properties ?? {}, `${tool.name} inputSchema.properties`);
-  if (fields.length === 0) return;
-  const required = schema.required;
-  if (!Array.isArray(required)) throw new Error(`${tool.name} input schema must define required fields`);
+  const properties = asRecord(schema.properties, `${tool.name} inputSchema.properties`);
   for (const field of fields) {
     if (!Object.hasOwn(properties, field)) throw new Error(`${tool.name} input schema does not define ${field}`);
-    if (!required.includes(field)) throw new Error(`${tool.name} input schema does not require ${field}`);
+  }
+  const required = schema.required;
+  if (
+    !Array.isArray(required)
+    || required.length !== fields.length
+    || new Set(required).size !== required.length
+    || required.some((field) => typeof field !== "string" || !fields.includes(field))
+  ) {
+    throw new Error(`${tool.name} input schema required must exactly equal ${JSON.stringify(fields)}`);
   }
 }
 
@@ -345,7 +334,7 @@ function preflightRuntime(
   const protocol = protocolDocument(health);
   const capabilities = protocol.capabilities;
   if (!Array.isArray(capabilities)) throw new Error("health protocol.capabilities must be an array");
-  for (const capability of ["instruction_v1", "structured_tool_output_v1"]) {
+  for (const capability of ["instruction_v1", "structured_tool_output_v1", "json_response_v1"]) {
     if (!capabilities.includes(capability)) {
       throw new Error(`health protocol is missing required capability ${capability}`);
     }
@@ -356,6 +345,7 @@ function preflightRuntime(
     register: ["identity"],
     confirm_task: ["task_path", "task_type", "is_supervisor", "is_developer", "work_dir"],
     wait_for_turn: [],
+    claim_turn: [],
     get_state: [],
     advance: [],
     submit: ["file_path", "git_commit_hash"],
@@ -363,8 +353,19 @@ function preflightRuntime(
   for (const [name, fields] of Object.entries(expectedInputs)) {
     const tool = requireTool(tools, name);
     requireInputFields(tool, fields);
-    requireObjectOutputSchema(tool);
   }
+  const confirmTaskProperties = asRecord(
+    asRecord(requireTool(tools, "confirm_task").inputSchema, "confirm_task inputSchema").properties,
+    "confirm_task inputSchema.properties",
+  );
+  const taskTypeValues = asRecord(
+    confirmTaskProperties.task_type,
+    "confirm_task task_type schema",
+  ).enum;
+  if (!Array.isArray(taskTypeValues) || !taskTypeValues.includes("requirements")) {
+    throw new Error("confirm_task input schema does not offer the requirements task type");
+  }
+  for (const tool of tools.values()) requireObjectOutputSchema(tool);
   return tools;
 }
 
@@ -566,9 +567,11 @@ function syntheticCases(
     "health protocol.unknown_value_policy",
   ));
   const waitTimeoutReason = protocolReason(protocol, "WAIT_TIMEOUT");
-  const staleReason = protocolReason(protocol, "PARTICIPANT_CONFIRMATION_STALE");
+  const staleConfirmationReason = protocolReason(protocol, "PARTICIPANT_CONFIRMATION_STALE");
+  const staleTurnReason = protocolReason(protocol, "TURN_UNCLAIMED_STALE");
   const waitTimeoutAction = reasonAction(actions, waitTimeoutReason);
-  const staleAction = reasonAction(actions, staleReason);
+  const staleConfirmationAction = reasonAction(actions, staleConfirmationReason);
+  const staleTurnAction = reasonAction(actions, staleTurnReason);
   const minimalSyntheticEnvelope = (payload: Record<string, unknown>): Record<string, unknown> => ({
     ok: cloneJson(payload.ok),
     ...(payload.reminder === undefined ? {} : { reminder: cloneJson(payload.reminder) }),
@@ -586,6 +589,13 @@ function syntheticCases(
     instruction.next_action = nextAction;
     instruction.allowed_tools = observedAllowedTools(nextAction, reason, realPayloads, tools);
     instruction.reason_code = reason.code;
+    if (reason.definition.report_user === true) {
+      instruction.decision = {
+        criterion: "user_wants_to_continue_waiting",
+        when_true: "wait_for_turn",
+        when_false: "stop",
+      };
+    }
     return response;
   };
   const unknownVersion = cloneJson(baseWait);
@@ -600,7 +610,8 @@ function syntheticCases(
   const prompt = `This is synthetic input for testing consumer understanding, not observed runtime behavior. Interpret it using runtime discovery information only. Runtime unknown-value policy: ${JSON.stringify(unknownValuePolicy)}.`;
   return [
     { id: "temporal-wait-timeout", provenance: "synthetic_temporal", prompt, response: temporal(waitTimeoutReason, waitTimeoutAction) },
-    { id: "temporal-stale-confirmation", provenance: "synthetic_temporal", prompt, response: temporal(staleReason, staleAction) },
+    { id: "temporal-stale-confirmation", provenance: "synthetic_temporal", prompt, response: temporal(staleConfirmationReason, staleConfirmationAction) },
+    { id: "temporal-stale-unclaimed-turn", provenance: "synthetic_temporal", prompt, response: temporal(staleTurnReason, staleTurnAction) },
     { id: "adversarial-unknown-version", provenance: "synthetic_adversarial", prompt, response: unknownVersion },
     { id: "adversarial-unknown-enum", provenance: "synthetic_adversarial", prompt, response: unknownEnum },
     { id: "adversarial-tip-conflict", provenance: "synthetic_adversarial", prompt, response: conflict },
@@ -706,15 +717,6 @@ async function collectCases(
 
   const confirmToolName = directTool(registeredSupervisor, tools, "real-register-participants");
   const confirmTool = requireTool(tools, confirmToolName);
-  requireInputFields(confirmTool, ["task_path", "task_type", "is_supervisor", "is_developer", "work_dir"]);
-  const taskTypeSchema = asRecord(
-    asRecord(confirmTool.inputSchema, "confirm_task inputSchema").properties,
-    "confirm_task properties",
-  ).task_type;
-  const taskTypeValues = asRecord(taskTypeSchema, "confirm_task task_type schema").enum;
-  if (!Array.isArray(taskTypeValues) || !taskTypeValues.includes("requirements")) {
-    throw new Error("confirm_task input schema does not offer the requirements task type");
-  }
   const commonConfirmation = {
     task_path: resolve(taskPath),
     task_type: "requirements",
@@ -735,23 +737,35 @@ async function collectCases(
   }, developerToken), confirmTool.name);
   cases.push(runtimeCase("real-confirm-developer", "Interpret the second task confirmation after both participants join.", confirmedDeveloper));
 
-  const supervisorIdleWait = toolPayload(
+  const supervisorIdleAssigned = toolPayload(
     await callTool(mcpUrl, directTool(confirmedSupervisor, tools, "real-confirm-supervisor"), {}, supervisorToken),
     "wait_for_turn",
   );
-  cases.push(runtimeCase("real-supervisor-idle-turn", "Interpret the Supervisor response while holding the IDLE turn.", supervisorIdleWait));
+  cases.push(runtimeCase("real-supervisor-idle-assigned", "Interpret the response when the IDLE turn is assigned to the Supervisor.", supervisorIdleAssigned));
+
+  const supervisorIdleTurn = toolPayload(
+    await callTool(mcpUrl, directTool(supervisorIdleAssigned, tools, "real-supervisor-idle-assigned"), {}, supervisorToken),
+    "claim_turn",
+  );
+  cases.push(runtimeCase("real-supervisor-idle-turn", "Interpret the Supervisor response after claiming the IDLE turn.", supervisorIdleTurn));
 
   const requirementsTransition = toolPayload(
-    await callTool(mcpUrl, directTool(supervisorIdleWait, tools, "real-supervisor-idle-turn"), {}, supervisorToken),
+    await callTool(mcpUrl, directTool(supervisorIdleTurn, tools, "real-supervisor-idle-turn"), {}, supervisorToken),
     "advance",
   );
   cases.push(runtimeCase("real-requirements-transition", "Interpret the response after the Supervisor advances from IDLE.", requirementsTransition));
 
-  const developerProduction = toolPayload(
+  const developerAssigned = toolPayload(
     await callTool(mcpUrl, directTool(requirementsTransition, tools, "real-requirements-transition"), {}, developerToken),
     "wait_for_turn",
   );
-  cases.push(runtimeCase("real-developer-production-r1", "Interpret the first production turn returned to the other participant.", developerProduction));
+  cases.push(runtimeCase("real-developer-assigned-r1", "Interpret the first production turn assignment returned to the other participant.", developerAssigned));
+
+  const developerProduction = toolPayload(
+    await callTool(mcpUrl, directTool(developerAssigned, tools, "real-developer-assigned-r1"), {}, developerToken),
+    "claim_turn",
+  );
+  cases.push(runtimeCase("real-developer-production-r1", "Interpret the first production turn after it is claimed.", developerProduction));
 
   const getStateTool = requireTool(tools, "get_state");
   const developerSameState = toolPayload(await callTool(mcpUrl, getStateTool.name, {}, developerToken), getStateTool.name);
@@ -793,25 +807,40 @@ async function collectCases(
   };
 
   const developerSubmitted = await submitProduction("real-developer-submit-r1", "Interpret the response after submitting the exact runtime-returned artifact.", developerProduction, developerToken);
-  const supervisorProduction = toolPayload(
+  const supervisorAssigned = toolPayload(
     await callTool(mcpUrl, directTool(developerSubmitted, tools, "real-developer-submit-r1"), {}, supervisorToken),
     "wait_for_turn",
   );
-  cases.push(runtimeCase("real-supervisor-production-r1", "Interpret the Supervisor production turn.", supervisorProduction));
+  cases.push(runtimeCase("real-supervisor-assigned-r1", "Interpret the Supervisor production turn assignment.", supervisorAssigned));
+  const supervisorProduction = toolPayload(
+    await callTool(mcpUrl, directTool(supervisorAssigned, tools, "real-supervisor-assigned-r1"), {}, supervisorToken),
+    "claim_turn",
+  );
+  cases.push(runtimeCase("real-supervisor-production-r1", "Interpret the Supervisor production turn after it is claimed.", supervisorProduction));
   const supervisorSubmitted = await submitProduction("real-supervisor-submit-r1", "Interpret the response after the Supervisor submits the returned artifact.", supervisorProduction, supervisorToken);
 
-  const developerReview = toolPayload(
+  const developerReviewAssigned = toolPayload(
     await callTool(mcpUrl, directTool(supervisorSubmitted, tools, "real-supervisor-submit-r1"), {}, developerToken),
     "wait_for_turn",
   );
-  cases.push(runtimeCase("real-developer-production-r2", "Interpret the other participant's next production turn.", developerReview));
+  cases.push(runtimeCase("real-developer-assigned-r2", "Interpret the other participant's next production turn assignment.", developerReviewAssigned));
+  const developerReview = toolPayload(
+    await callTool(mcpUrl, directTool(developerReviewAssigned, tools, "real-developer-assigned-r2"), {}, developerToken),
+    "claim_turn",
+  );
+  cases.push(runtimeCase("real-developer-production-r2", "Interpret the other participant's next production turn after it is claimed.", developerReview));
   const developerReviewSubmitted = await submitProduction("real-developer-submit-r2", "Interpret the response that returns the turn to the Supervisor.", developerReview, developerToken);
 
-  const convergence = toolPayload(
+  const convergenceAssigned = toolPayload(
     await callTool(mcpUrl, directTool(developerReviewSubmitted, tools, "real-developer-submit-r2"), {}, supervisorToken),
     "wait_for_turn",
   );
-  cases.push(runtimeCase("real-supervisor-convergence", "Interpret the Supervisor convergence decision response.", convergence));
+  cases.push(runtimeCase("real-supervisor-assigned-convergence", "Interpret the Supervisor convergence turn assignment.", convergenceAssigned));
+  const convergence = toolPayload(
+    await callTool(mcpUrl, directTool(convergenceAssigned, tools, "real-supervisor-assigned-convergence"), {}, supervisorToken),
+    "claim_turn",
+  );
+  cases.push(runtimeCase("real-supervisor-convergence", "Interpret the Supervisor convergence decision after the turn is claimed.", convergence));
   const convergenceInstruction = instructionFrom(convergence);
   const decision = asRecord(convergenceInstruction.decision, "convergence decision");
   const advanceToolName = asString(decision.when_true, "convergence decision.when_true");
@@ -823,16 +852,21 @@ async function collectCases(
     registeredDeveloper,
     confirmedSupervisor,
     confirmedDeveloper,
-    supervisorIdleWait,
+    supervisorIdleAssigned,
+    supervisorIdleTurn,
     requirementsTransition,
+    developerAssigned,
     developerProduction,
     developerSameState,
     rejection,
     developerSubmitted,
+    supervisorAssigned,
     supervisorProduction,
     supervisorSubmitted,
+    developerReviewAssigned,
     developerReview,
     developerReviewSubmitted,
+    convergenceAssigned,
     convergence,
     summaryTransition,
   ];
@@ -850,7 +884,7 @@ async function collectCases(
         tools,
         observedPayloads,
         confirmedDeveloper,
-        supervisorIdleWait,
+        supervisorIdleTurn,
       ),
     ],
   };
@@ -864,7 +898,6 @@ async function main(): Promise<void> {
 
   const health = await fetchHealth(config.healthUrl);
   const initialization = await initialize(config.mcpUrl) as Record<string, unknown> | undefined;
-  await notifyInitialized(config.mcpUrl);
   const tools = await listTools(config.mcpUrl);
   const evaluationDirectory = resolve(scriptDirectory, "..");
   const collectedRun = await collectCases(evaluationDirectory, config.mcpUrl, health, tools);
