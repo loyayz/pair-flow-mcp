@@ -10,7 +10,7 @@ import { getStateTool } from "../tools/get-state.js";
 import { waitForTurn } from "../tools/wait-for-turn.js";
 import { instructionOf } from "./instruction-assertions.js";
 import { TOOL_OUTPUT_SCHEMAS } from "../tool-output.js";
-import { publishWorkflowChange } from "../workflow-events.js";
+import { getWorkflowWaiterCount, publishWorkflowChange } from "../workflow-events.js";
 
 const TEST_WORKFLOW_ID = "20260710000001";
 const SECOND_WORKFLOW_ID = "20260710000002";
@@ -456,19 +456,86 @@ describe("wait_for_turn cancellation", () => {
     } as unknown as RequestHandlerExtra<ServerRequest, ServerNotification>;
 
     const resultPromise = waitForTurn(extra);
-    deleteState(TEST_WORKFLOW_ID);
+    await flushAsyncWork();
+    deleteState(TEST_WORKFLOW_ID, {
+      manifest_path: "C:/project/handoff/20260710000001/delivery-manifest.json",
+      archive_root: "C:/project/handoff/20260710000001",
+      final_summary: {
+        round: 1,
+        submitted_by: "bob",
+        commit_hash: "abc1234",
+        file_path: "C:/project/handoff/20260710000001/summary/r1_bob.md",
+      },
+    });
     const payload = JSON.parse(((await resultPromise).content[0] as { text: string }).text);
 
     expect(payload.ok).toBe(true);
     expect(payload.turn).toBe("idle");
     expect(payload.phase).toBe("idle");
     expect(payload.round).toBeUndefined();
+    expect(payload).toMatchObject({
+      manifest_path: "C:/project/handoff/20260710000001/delivery-manifest.json",
+      archive_root: "C:/project/handoff/20260710000001",
+      final_summary: { round: 1, submitted_by: "bob" },
+    });
     expect(payload.tip).toContain("已由监督者结束");
     expect(instructionOf(payload)).toMatchObject({
       next_action: "stop",
       allowed_tools: [],
       reason_code: "WORKFLOW_COMPLETED",
     });
+    expect(TOOL_OUTPUT_SCHEMAS.wait_for_turn.safeParse(payload).success).toBe(true);
+  });
+
+  it("delivers completed wait output through the MCP output schema", async () => {
+    const token = registerToken("alice");
+    bindWorkflow(token, TEST_WORKFLOW_ID);
+    setState(TEST_WORKFLOW_ID, {
+      ...defaultState(),
+      workflow_id: TEST_WORKFLOW_ID,
+      phase: "summary",
+      turn: "bob",
+      participants: [
+        { identity: "alice", is_supervisor: false, is_developer: true, registered_at: "now" },
+        { identity: "bob", is_supervisor: true, is_developer: false, registered_at: "now" },
+      ],
+    });
+    const extra = registeredExtra(token);
+    const server = new McpServer({ name: "completed-wait-test", version: "1" });
+    server.registerTool("wait_for_turn", { outputSchema: TOOL_OUTPUT_SCHEMAS.wait_for_turn }, async () => (
+      waitForTurn(extra)
+    ));
+    const client = new Client({ name: "completed-wait-client", version: "1" }, {});
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    try {
+      const resultPromise = client.callTool({ name: "wait_for_turn", arguments: {} });
+      for (let attempts = 0; attempts < 20 && getWorkflowWaiterCount(TEST_WORKFLOW_ID) === 0; attempts += 1) {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+      expect(getWorkflowWaiterCount(TEST_WORKFLOW_ID)).toBe(1);
+      deleteState(TEST_WORKFLOW_ID, {
+        manifest_path: "C:/project/handoff/20260710000001/delivery-manifest.json",
+        archive_root: "C:/project/handoff/20260710000001",
+        final_summary: {
+          round: 1,
+          submitted_by: "bob",
+          commit_hash: "abc1234",
+          file_path: "C:/project/handoff/20260710000001/summary/r1_bob.md",
+        },
+      });
+      const result = await resultPromise;
+      expect(result.isError).not.toBe(true);
+      expect(result.structuredContent).toMatchObject({
+        phase: "idle",
+        turn: "idle",
+        manifest_path: "C:/project/handoff/20260710000001/delivery-manifest.json",
+      });
+    } finally {
+      await client.close();
+      await server.close();
+    }
   });
 
   it("reports an error when a non-summary workflow disappears while waiting", async () => {

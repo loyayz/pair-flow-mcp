@@ -441,16 +441,16 @@ function completedOrMissing(
 ): Extract<WaitDecision, { kind: "return" }> {
   return {
     kind: "return",
-    result: lastSeenPhase === "summary"
+    result: lastSeenPhase === "summary" && completion
       ? ok(
-          { turn: "idle", phase: "idle", ...(completion ?? {}) },
+          { turn: "idle", phase: "idle", ...completion },
           guidance("wait.completed", { identity, workflow_id: workflowId }, {
             next_action: "stop",
             allowed_tools: [],
             reason_code: "WORKFLOW_COMPLETED",
           }),
         )
-      : err("workflow not found"),
+      : err(lastSeenPhase === "summary" ? "workflow completion snapshot is unavailable" : "workflow not found"),
   };
 }
 

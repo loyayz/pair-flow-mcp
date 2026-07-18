@@ -20,6 +20,12 @@ function posix(path: string): string {
   return path.replace(/\\/g, "/");
 }
 
+function sameHostPath(left: string, right: string): boolean {
+  return process.platform === "win32"
+    ? left.toLowerCase() === right.toLowerCase()
+    : left === right;
+}
+
 function reference(submission: ValidatedSubmission): SubmissionReference {
   return {
     round: submission.round,
@@ -91,17 +97,104 @@ async function writeManifest(state: PairFlowState, manifest: DeliveryManifest): 
   return { manifest: parsed, manifest_path: posix(path) };
 }
 
-export async function readDeliveryManifest(workDir: string, workflowId: string): Promise<PersistedManifest | null> {
+export async function readDeliveryManifest(
+  workDir: string,
+  workflowId: string,
+  expectedTaskType?: "requirements" | "development",
+): Promise<PersistedManifest | null> {
   const path = archivePath(workDir, workflowId, "delivery-manifest.json");
   try {
     const stat = await lstat(path);
     if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`delivery manifest must be a regular file: ${posix(path)}`);
+    const linked = await findSymbolicLinkInPath(archivePath(workDir), path);
+    if (linked) throw new Error(`symbolic links are not allowed in delivery manifest path: ${posix(linked)}`);
     const manifest = deliveryManifestSchema.parse(JSON.parse(await readFile(path, "utf-8")));
+    const expectedArchiveRoot = posix(archivePath(workDir, workflowId));
+    if (manifest.workflow_id !== workflowId) {
+      throw new Error(`delivery manifest workflow_id mismatch: "${manifest.workflow_id}" vs "${workflowId}"`);
+    }
+    if (!sameHostPath(manifest.archive_root, expectedArchiveRoot)) {
+      throw new Error(`delivery manifest archive_root mismatch: "${manifest.archive_root}" vs "${expectedArchiveRoot}"`);
+    }
+    if (manifest.status === "in_progress" && expectedTaskType && manifest.task_type !== expectedTaskType) {
+      throw new Error(`delivery manifest task_type mismatch: "${manifest.task_type}" vs "${expectedTaskType}"`);
+    }
+    validateManifestReferencePaths(workDir, workflowId, manifest);
     return { manifest, manifest_path: posix(path) };
   } catch (error) {
     if (error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "ENOENT") return null;
     throw error;
   }
+}
+
+export async function validateInProgressManifestArtifacts(
+  workDir: string,
+  workflowId: string,
+  manifest: DeliveryManifest,
+): Promise<void> {
+  if (manifest.status !== "in_progress") return;
+  validateManifestReferencePaths(workDir, workflowId, manifest);
+  const references = manifestReferenceEntries(manifest);
+
+  const workflowRoot = archivePath(workDir, workflowId);
+  for (const { phase, reference: accepted } of references) {
+    let linked: string | null;
+    try {
+      linked = await findSymbolicLinkInPath(workflowRoot, accepted.file_path);
+    } catch (error) {
+      throw acceptedArtifactError(phase, accepted.file_path, error);
+    }
+    if (linked) throw new Error(`symbolic links are not allowed in accepted ${phase} artifact path: ${posix(linked)}`);
+    try {
+      const stat = await lstat(accepted.file_path);
+      if (!stat.isFile() || stat.isSymbolicLink()) {
+        throw new Error(`accepted ${phase} artifact must be a regular file: ${accepted.file_path}`);
+      }
+      if (stat.size === 0) throw new Error(`accepted ${phase} artifact must be non-empty: ${accepted.file_path}`);
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith(`accepted ${phase} artifact`)) throw error;
+      throw acceptedArtifactError(phase, accepted.file_path, error);
+    }
+  }
+}
+
+type ManifestReferencePhase = "requirements" | "planning" | "implementation" | "summary";
+type ManifestReferenceEntry = { phase: ManifestReferencePhase; reference: SubmissionReference };
+
+function manifestReferenceEntries(manifest: DeliveryManifest): ManifestReferenceEntry[] {
+  const references: ManifestReferenceEntry[] = [];
+  if (manifest.phases.requirements) references.push({ phase: "requirements", reference: manifest.phases.requirements.final_submission });
+  if (manifest.phases.planning) references.push({ phase: "planning", reference: manifest.phases.planning.canonical_plan });
+  if (manifest.phases.implementation) {
+    references.push({ phase: "implementation", reference: manifest.phases.implementation.coding_submission });
+    references.push({ phase: "implementation", reference: manifest.phases.implementation.review_submission });
+  }
+  if (manifest.phases.summary) {
+    references.push({ phase: "summary", reference: manifest.phases.summary.final_summary });
+    if (manifest.phases.summary.review_submission) {
+      references.push({ phase: "summary", reference: manifest.phases.summary.review_submission });
+    }
+  }
+  return references;
+}
+
+function validateManifestReferencePaths(workDir: string, workflowId: string, manifest: DeliveryManifest): void {
+  for (const { phase, reference } of manifestReferenceEntries(manifest)) {
+    const expectedName = phase === "implementation"
+      ? `r${reference.round}_${reference.sub_phase}_${reference.submitted_by}.md`
+      : `r${reference.round}_${reference.submitted_by}.md`;
+    const expectedPath = posix(archivePath(workDir, workflowId, phase, expectedName));
+    if (!sameHostPath(reference.file_path, expectedPath)) {
+      throw new Error(`manifest ${phase} file_path conflicts with its submission reference: ${reference.file_path}`);
+    }
+  }
+}
+
+function acceptedArtifactError(phase: string, path: string, error: unknown): Error {
+  const code = error && typeof error === "object" && "code" in error
+    ? String((error as { code?: unknown }).code)
+    : "UNKNOWN";
+  return new Error(`failed to validate accepted ${phase} artifact: ${posix(path)} (${code})`, { cause: error });
 }
 
 async function baseManifest(state: PairFlowState): Promise<DeliveryManifest> {
@@ -132,12 +225,22 @@ export async function persistPhaseAcceptance(state: PairFlowState, advancedBy: s
 }
 
 export async function persistCompletedManifest(state: PairFlowState, advancedBy: string, completedAt: string): Promise<PersistedManifest> {
-  const accepted = await persistPhaseAcceptance(state, advancedBy, completedAt);
-  const summary = accepted.manifest.phases.summary;
-  if (!summary) throw new Error("completed manifest is missing summary");
+  const workDir = workflowWorkDir(state);
+  if (!workDir || !state.workflow_id) throw new Error("workflow archive is missing");
+  const manifest = await baseManifest(state);
+  if (manifest.status !== "in_progress") throw new Error("workflow manifest is already completed");
+  if (manifest.phases.summary) throw new Error("in-progress manifest cannot contain summary");
+  const summary = phaseRecord(
+    state,
+    await collectValidatedSubmissions(workDir, state.workflow_id),
+    advancedBy,
+    completedAt,
+  );
+  if (summary.phase !== "summary") throw new Error("completed manifest is missing summary");
   return writeManifest(state, deliveryManifestSchema.parse({
-    ...accepted.manifest,
+    ...manifest,
     status: "completed",
+    phases: { ...manifest.phases, summary },
     completed_at: completedAt,
     completed_by: advancedBy,
     final_summary: summary.final_summary,

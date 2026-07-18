@@ -8,7 +8,6 @@ import { Mutex } from "async-mutex";
 import { parseSession } from "../identity.js";
 import { assignTurn, getState, setState, getAllStates, getMutex, defaultState, formatWorkflowId, hasCompleteParticipantRoster, isRecoveryPlaceholderParticipant, replaceWaitWarningCycle, type Participant } from "../state.js";
 import { phaseAfterAccepted, reconstructFromHandoff } from "../crash-recovery.js";
-import { collectValidatedSubmissions } from "../archive-submissions.js";
 import { err, ok } from "../response.js";
 import { guidance } from "../instruction.js";
 import { bindWorkflow } from "../token-map.js";
@@ -16,7 +15,8 @@ import { atomicWriteText } from "../atomic-write.js";
 import { findSymbolicLinkInPath } from "../path-safety.js";
 import { workflowInstructionContext } from "../tip.js";
 import { publishWorkflowChange } from "../workflow-events.js";
-import { readDeliveryManifest } from "../delivery-manifest.js";
+import { readDeliveryManifest, validateInProgressManifestArtifacts } from "../delivery-manifest.js";
+import type { DeliveryManifest, SubmissionReference } from "../delivery-manifest-schema.js";
 const taskPathMutexes = new Map<string, Mutex>();
 const tokenMutexes = new Map<string, Mutex>();
 const recoveryMutexes = new Map<string, Mutex>();
@@ -337,36 +337,57 @@ export async function confirmTask(
           }
           return { existing: false, recovered: false };
         }
+        if (persistedManifest && persistedManifest.manifest.task_type !== taskType) {
+          return {
+            existing: false,
+            recovered: false,
+            error: `delivery manifest task_type mismatch: "${persistedManifest.manifest.task_type}" vs "${taskType}"`,
+          };
+        }
         const defState = defaultState();
         try {
-          const recoveredState = await reconstructFromHandoff(
-            defState,
-            pidWfId,
-            resolvedWorkDir,
-            resolvedTaskPath,
-          );
+          let recoveredState;
+          if (persistedManifest) {
+            const manifest = persistedManifest.manifest;
+            if ((identity === manifest.supervisor) !== supervisor) {
+              return {
+                existing: false,
+                recovered: false,
+                error: identity === manifest.supervisor
+                  ? `recovered supervisor ${identity} must confirm with is_supervisor=true`
+                  : `recovered workflow supervisor is ${manifest.supervisor}; ${identity} cannot confirm as supervisor`,
+              };
+            }
+            await validateInProgressManifestArtifacts(resolvedWorkDir, pidWfId, manifest);
+            const activePhase = activePhaseForManifest(manifest);
+            recoveredState = await reconstructFromHandoff(
+              defState,
+              pidWfId,
+              resolvedWorkDir,
+              resolvedTaskPath,
+              {
+                active_phase: activePhase,
+                task_type: manifest.task_type,
+                accepted_identities: acceptedManifestIdentities(manifest),
+                allow_empty_active_phase: true,
+                reject_active_conflicts: true,
+              },
+            );
+          } else {
+            recoveredState = await reconstructFromHandoff(
+              defState,
+              pidWfId,
+              resolvedWorkDir,
+              resolvedTaskPath,
+              {
+                active_phase: "requirements",
+                reject_later_phase_submissions: true,
+              },
+            );
+          }
           if (!recoveredState) return { existing: false, recovered: false };
           if (persistedManifest) {
             recoveredState.delivery_manifest = persistedManifest.manifest;
-            const accepted = persistedManifest.manifest.phases.implementation
-              ?? persistedManifest.manifest.phases.planning
-              ?? persistedManifest.manifest.phases.requirements;
-            if (accepted) {
-              const nextPhase = phaseAfterAccepted(accepted.phase, persistedManifest.manifest.task_type);
-              const submissions = await collectValidatedSubmissions(resolvedWorkDir, pidWfId);
-              if (nextPhase !== "completed" && !submissions.some((submission) => submission.phase === nextPhase)) {
-                recoveredState.phase = nextPhase;
-                recoveredState.round = 1;
-                recoveredState.sub_phase = nextPhase === "implementation" ? "coding" : null;
-                recoveredState.turn = "idle";
-                recoveredState.turn_switched_at = null;
-                recoveredState.turn_claimed_at = null;
-                recoveredState.last_submission_by_participant = Object.fromEntries(recoveredState.participants.map((participant) => [
-                  participant.identity,
-                  { round: null, sub_phase: null, commit_hash: null, submitted_at: null, file_path: null },
-                ]));
-              }
-            }
           }
           setState(pidWfId, recoveredState);
           return { existing: true, recovered: true };
@@ -580,4 +601,28 @@ export async function confirmTask(
   }, g);
   });
   });
+}
+
+function activePhaseForManifest(manifest: DeliveryManifest): "planning" | "implementation" | "summary" {
+  const accepted = manifest.phases.implementation
+    ?? manifest.phases.planning
+    ?? manifest.phases.requirements;
+  if (!accepted) throw new Error("in-progress delivery manifest has no accepted phase");
+  const active = phaseAfterAccepted(accepted.phase, manifest.task_type);
+  if (active === "completed" || active === "requirements") {
+    throw new Error("in-progress delivery manifest has an invalid accepted phase boundary");
+  }
+  return active;
+}
+
+function acceptedManifestIdentities(manifest: DeliveryManifest): string[] {
+  const identities = new Set<string>([manifest.supervisor]);
+  const add = (reference: SubmissionReference | undefined) => {
+    if (reference) identities.add(reference.submitted_by);
+  };
+  add(manifest.phases.requirements?.final_submission);
+  add(manifest.phases.planning?.canonical_plan);
+  add(manifest.phases.implementation?.coding_submission);
+  add(manifest.phases.implementation?.review_submission);
+  return [...identities];
 }

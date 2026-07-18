@@ -302,6 +302,21 @@ describe("advance summary completion", () => {
     expect(getWorkflowVersion(TEST_WORKFLOW_ID)).toBeGreaterThan(versionBefore);
   });
 
+  it("keeps the live workflow unchanged when the single completed manifest write fails", async () => {
+    const extra = setupSummaryWorkflow();
+    const before = structuredClone(getState(TEST_WORKFLOW_ID));
+    atomicWriteMock.mockRejectedValueOnce(Object.assign(new Error("disk full"), { code: "ENOSPC" }));
+
+    const result = await advance({}, extra);
+    const payload = JSON.parse((result.content[0] as { text: string }).text);
+
+    expect(payload.ok).toBe(false);
+    expect(payload.tip).toContain("disk full");
+    expect(atomicWriteMock).toHaveBeenCalledTimes(1);
+    expect(unlinkMock).not.toHaveBeenCalled();
+    expect(getState(TEST_WORKFLOW_ID)).toEqual(before);
+  });
+
   it("finishes the workflow when the pid file is already absent", async () => {
     const extra = setupSummaryWorkflow();
     unlinkMock.mockRejectedValueOnce(Object.assign(new Error("not found"), { code: "ENOENT" }));
@@ -323,6 +338,13 @@ describe("advance summary completion", () => {
     expect(payload.turn).toBe("idle");
     expect(payload.manifest_path).toContain("delivery-manifest.json");
     expect(payload.final_summary).toMatchObject({ round: 1, submitted_by: "alice" });
+    expect(atomicWriteMock).toHaveBeenCalledTimes(1);
+    const persisted = JSON.parse(atomicWriteMock.mock.calls[0][1] as string);
+    expect(persisted).toMatchObject({
+      status: "completed",
+      phases: { summary: { phase: "summary" } },
+      final_summary: { round: 1, submitted_by: "alice" },
+    });
     expect(payload.tip).toContain("复用当前 token");
     expect(payload.tip).toContain("双方分别调用 confirm_task");
     expect(payload.tip).toContain("服务重启或 token 丢失时先重新 register");

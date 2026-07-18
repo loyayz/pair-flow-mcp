@@ -3,23 +3,73 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { execSync } from "node:child_process";
 import { rm, writeFile } from "node:fs/promises";
 import { get, request as httpRequest } from "node:http";
+import { createServer as createNetServer } from "node:net";
 import { networkInterfaces } from "node:os";
 import { resolve } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { createClientTransport } from "../client-transport.js";
 
-const PORT = 3197;
+let port = 0;
 const MAX_REQUEST_BODY_BYTES = 1024 * 1024;
 let server: ChildProcess;
 let diagnosticRequestId = 0;
 
-async function startServer() {
-  server = spawn(process.execPath, ["--import", "tsx/esm", "src/index.ts", "--port", String(PORT)], {
-    env: { ...process.env, PORT: "ignored" },
-    stdio: ["ignore", "pipe", "pipe", "ipc"],
+async function acquireExclusivePort(): Promise<number> {
+  const listener = createNetServer();
+  await new Promise<void>((resolveListen, rejectListen) => {
+    listener.once("error", rejectListen);
+    listener.listen(0, "127.0.0.1", resolveListen);
   });
-  await new Promise((r) => setTimeout(r, 2000));
+  const address = listener.address();
+  if (!address || typeof address === "string") throw new Error("did not receive a TCP port");
+  await new Promise<void>((resolveClose, rejectClose) => listener.close((error) => error ? rejectClose(error) : resolveClose()));
+  return address.port;
+}
+
+function authenticatedTransport(url: string, token: string): StreamableHTTPClientTransport {
+  return new StreamableHTTPClientTransport(new URL(url), {
+    requestInit: { headers: { "X-AI-Identity": token } },
+  });
+}
+
+async function startServer() {
+  let lastError: Error | undefined;
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
+    port = await acquireExclusivePort();
+    const candidate = spawn(process.execPath, ["--import", "tsx/esm", "src/index.ts", "--port", String(port)], {
+      env: { ...process.env, PORT: "ignored" },
+      stdio: ["ignore", "pipe", "pipe", "ipc"],
+    });
+    let stderr = "";
+    candidate.stderr?.setEncoding("utf-8");
+    candidate.stderr?.on("data", (chunk) => { stderr += chunk; });
+    try {
+      await waitForServerReady(candidate, () => stderr);
+      server = candidate;
+      return;
+    } catch (error) {
+      await terminateServer(candidate);
+      lastError = error instanceof Error ? error : new Error(String(error));
+      if (!/(?:EADDRINUSE|already in use)/i.test(stderr) || attempt === 5) throw lastError;
+    }
+  }
+  throw lastError ?? new Error("failed to start HTTP MCP server");
+}
+
+async function waitForServerReady(candidate: ChildProcess, stderr: () => string): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    if (candidate.exitCode !== null) {
+      throw new Error(`HTTP MCP server exited before becoming ready: ${stderr()}`);
+    }
+    try {
+      await requestHealthPayload();
+      return;
+    } catch {
+      await new Promise((resolveWait) => setTimeout(resolveWait, 50));
+    }
+  }
+  throw new Error(`timed out waiting for HTTP MCP server: ${stderr()}`);
 }
 
 function getServerWorkflowWaiterCount(workflowId: string): Promise<number> {
@@ -47,16 +97,28 @@ function getServerWorkflowWaiterCount(workflowId: string): Promise<number> {
 }
 
 async function stopServer() {
-  if (server?.pid) {
+  await terminateServer(server);
+}
+
+async function terminateServer(target: ChildProcess | undefined): Promise<void> {
+  if (target?.pid) {
     try {
       if (process.platform === "win32") {
-        execSync(`taskkill //F //PID ${server.pid} //T 2>nul`, { stdio: "ignore" });
+        execSync(`taskkill //F //PID ${target.pid} //T 2>nul`, { stdio: "ignore" });
       } else {
-        process.kill(-server.pid, "SIGKILL");
+        target.kill("SIGKILL");
       }
     } catch { /* already dead */ }
   }
-  await new Promise((r) => setTimeout(r, 500));
+  if (target?.exitCode === null) {
+    await new Promise<void>((resolveExit) => {
+      const timer = setTimeout(resolveExit, 500);
+      target.once("exit", () => {
+        clearTimeout(timer);
+        resolveExit();
+      });
+    });
+  }
 }
 
 async function call(client: Client, name: string, args: Record<string, unknown> = {}) {
@@ -68,7 +130,7 @@ async function call(client: Client, name: string, args: Record<string, unknown> 
 
 function requestHealthPayload(): Promise<Record<string, any>> {
   return new Promise((resolve, reject) => {
-    const request = get({ host: "127.0.0.1", port: PORT, path: "/health", timeout: 1000 }, (response) => {
+    const request = get({ host: "127.0.0.1", port, path: "/health", timeout: 1000 }, (response) => {
       let body = "";
       response.setEncoding("utf-8");
       response.on("data", (chunk) => { body += chunk; });
@@ -81,7 +143,7 @@ function requestHealthPayload(): Promise<Record<string, any>> {
 
 function requestHealth(host: string): Promise<number | undefined> {
   return new Promise((resolve, reject) => {
-    const request = get({ host, port: PORT, path: "/health", timeout: 1000 }, (response) => {
+    const request = get({ host, port, path: "/health", timeout: 1000 }, (response) => {
       response.resume();
       resolve(response.statusCode);
     });
@@ -92,7 +154,7 @@ function requestHealth(host: string): Promise<number | undefined> {
 
 function requestStatus(method: string, path: string): Promise<number | undefined> {
   return new Promise((resolve, reject) => {
-    const request = httpRequest({ host: "127.0.0.1", port: PORT, path, method }, (response) => {
+    const request = httpRequest({ host: "127.0.0.1", port, path, method }, (response) => {
       response.resume();
       resolve(response.statusCode);
     });
@@ -109,7 +171,7 @@ function postMcp(
   return new Promise((resolve, reject) => {
     const request = httpRequest({
       host: "127.0.0.1",
-      port: PORT,
+      port,
       path: "/mcp",
       method: "POST",
       headers: {
@@ -150,7 +212,7 @@ function expectSingleJsonResponse(response: Awaited<ReturnType<typeof postJsonRp
   return JSON.parse(response.body) as Record<string, any>;
 }
 
-describe("Client transport with identity injection", () => {
+describe("HTTP MCP server transport", () => {
   beforeAll(startServer, 15000);
   afterAll(stopServer);
 
@@ -180,7 +242,7 @@ describe("Client transport with identity injection", () => {
     ]);
 
     const client = new Client({ name: "discovery-test", version: "1" }, {});
-    await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${PORT}/mcp`)));
+    await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`)));
     expect(client.getServerVersion()).toEqual(health.server);
     expect(client.getInstructions()).toContain("GET /health");
     expect(client.getInstructions()).toContain("do not derive workflow control from tip");
@@ -238,13 +300,13 @@ describe("Client transport with identity injection", () => {
     await writeFile(taskPath, "# JSON response transport test\n", "utf-8");
 
     try {
-      await anonymousClient.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${PORT}/mcp`)));
+      await anonymousClient.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`)));
       const supervisor = await call(anonymousClient, "register", { identity: "json-wait-supervisor" });
       const developer = await call(anonymousClient, "register", { identity: "json-wait-developer" });
       await anonymousClient.close();
 
-      await supervisorClient.connect(createClientTransport(`http://127.0.0.1:${PORT}/mcp`, supervisor.token));
-      await developerClient.connect(createClientTransport(`http://127.0.0.1:${PORT}/mcp`, developer.token));
+      await supervisorClient.connect(authenticatedTransport(`http://127.0.0.1:${port}/mcp`, supervisor.token));
+      await developerClient.connect(authenticatedTransport(`http://127.0.0.1:${port}/mcp`, developer.token));
       const confirmation = {
         task_path: taskPath,
         task_type: "development",
@@ -304,7 +366,7 @@ describe("Client transport with identity injection", () => {
   it("reports how to resolve a port conflict", async () => {
     const competingServer = spawn(
       process.execPath,
-      ["--import", "tsx/esm", "src/index.ts", "--port", String(PORT)],
+      ["--import", "tsx/esm", "src/index.ts", "--port", String(port)],
       { env: { ...process.env, PORT: "ignored" }, stdio: ["ignore", "ignore", "pipe"] },
     );
     let stderr = "";
@@ -316,7 +378,7 @@ describe("Client transport with identity injection", () => {
     });
 
     expect(exitCode).toBe(1);
-    expect(stderr).toContain(`port ${PORT} is already in use`);
+    expect(stderr).toContain(`port ${port} is already in use`);
     expect(stderr).toContain("--port");
   });
 
@@ -391,14 +453,14 @@ describe("Client transport with identity injection", () => {
   });
 
   it("injects the registered token into subsequent requests", async () => {
-    const url = `http://127.0.0.1:${PORT}/mcp`;
+    const url = `http://127.0.0.1:${port}/mcp`;
     const anonymousClient = new Client({ name: "register-test", version: "1" }, {});
     await anonymousClient.connect(new StreamableHTTPClientTransport(new URL(url)));
     const registration = await call(anonymousClient, "register", { identity: "claude" });
     await anonymousClient.close();
 
     const authenticatedClient = new Client({ name: "identity-test", version: "1" }, {});
-    await authenticatedClient.connect(createClientTransport(url, registration.token));
+    await authenticatedClient.connect(authenticatedTransport(url, registration.token));
     const identity = await call(authenticatedClient, "who_am_i");
 
     expect(identity.identity).toBe("claude");
@@ -407,7 +469,7 @@ describe("Client transport with identity injection", () => {
   });
 
   it("who_am_i returns unknown before token registration", async () => {
-    const t = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${PORT}/mcp`));
+    const t = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`));
     const c = new Client({ name: "test2", version: "1" }, {});
     await c.connect(t);
     const r = await call(c, "who_am_i", {});
@@ -418,7 +480,7 @@ describe("Client transport with identity injection", () => {
   });
 
   it("validates successful structured output and preserves business rejections", async () => {
-    const url = `http://127.0.0.1:${PORT}/mcp`;
+    const url = `http://127.0.0.1:${port}/mcp`;
     const anonymousClient = new Client({ name: "output-validation-test", version: "1" }, {});
     await anonymousClient.connect(new StreamableHTTPClientTransport(new URL(url)));
 
@@ -428,7 +490,7 @@ describe("Client transport with identity injection", () => {
     await anonymousClient.close();
 
     const authenticatedClient = new Client({ name: "rejection-test", version: "1" }, {});
-    await authenticatedClient.connect(createClientTransport(url, registration.token));
+    await authenticatedClient.connect(authenticatedTransport(url, registration.token));
     await authenticatedClient.listTools();
     const rejection = await call(authenticatedClient, "advance");
     expect(rejection.ok).toBe(false);

@@ -287,23 +287,24 @@ describe("standalone cold-start evaluator", () => {
   });
 
   it.each([
-    { name: "missing instruction capability", capabilities: ["structured_tool_output_v1", "json_response_v1"], options: {}, error: "missing required capability instruction_v1" },
-    { name: "missing structured output capability", capabilities: ["instruction_v1", "json_response_v1"], options: {}, error: "missing required capability structured_tool_output_v1" },
-    { name: "missing JSON response capability", capabilities: ["instruction_v1", "structured_tool_output_v1"], options: {}, error: "missing required capability json_response_v1" },
-    { name: "missing required claim_turn tool", capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1"], options: { missingTool: "claim_turn" }, error: "does not define claim_turn" },
-    { name: "missing register inputSchema", capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1"], options: { missingInputSchema: "register" }, error: "register inputSchema must be an object" },
-    { name: "missing confirm_task input property", capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1"], options: { missingInputProperty: "task_type" }, error: "does not define task_type" },
-    { name: "optional confirm_task required input", capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1"], options: { missingRequiredInput: "task_type" }, error: "confirm_task input schema required must exactly equal" },
-    { name: "wait_for_turn omits empty required", capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1"], options: { omitRequired: "wait_for_turn" }, error: "wait_for_turn input schema required must exactly equal []" },
-    { name: "claim_turn has non-empty required", capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1"], options: { nonEmptyRequired: "claim_turn" }, error: "claim_turn input schema required must exactly equal []" },
-    { name: "get_state has extra required input", capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1"], options: { extraRequired: "get_state" }, error: "get_state input schema required must exactly equal []" },
-    { name: "register has extra required input", capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1"], options: { extraRequired: "register" }, error: "register input schema required must exactly equal" },
-    { name: "confirm_task has extra required input", capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1"], options: { extraRequired: "confirm_task" }, error: "confirm_task input schema required must exactly equal" },
-    { name: "submit has extra required input", capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1"], options: { extraRequired: "submit" }, error: "submit input schema required must exactly equal" },
-    { name: "submit duplicates a required input", capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1"], options: { duplicateRequired: "submit" }, error: "submit input schema required must exactly equal" },
-    { name: "confirm_task omits requirements task type", capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1"], options: { taskTypeValues: ["development"] }, error: "confirm_task input schema does not offer the requirements task type" },
-    { name: "missing expected outputSchema", capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1"], options: { missingOutputSchema: "submit" }, error: "submit outputSchema must be an object" },
-    { name: "non-object extra-tool outputSchema", capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1"], options: { nonObjectOutputSchema: "ping" }, error: "ping outputSchema must have type object" },
+    { name: "missing instruction capability", capabilities: ["structured_tool_output_v1", "json_response_v1", "delivery_manifest_v1"], options: {}, error: "missing required capability instruction_v1" },
+    { name: "missing structured output capability", capabilities: ["instruction_v1", "json_response_v1", "delivery_manifest_v1"], options: {}, error: "missing required capability structured_tool_output_v1" },
+    { name: "missing JSON response capability", capabilities: ["instruction_v1", "structured_tool_output_v1", "delivery_manifest_v1"], options: {}, error: "missing required capability json_response_v1" },
+    { name: "missing delivery manifest capability", capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1"], options: {}, error: "missing required capability delivery_manifest_v1" },
+    { name: "missing required claim_turn tool", capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1", "delivery_manifest_v1"], options: { missingTool: "claim_turn" }, error: "does not define claim_turn" },
+    { name: "missing register inputSchema", capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1", "delivery_manifest_v1"], options: { missingInputSchema: "register" }, error: "register inputSchema must be an object" },
+    { name: "missing confirm_task input property", capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1", "delivery_manifest_v1"], options: { missingInputProperty: "task_type" }, error: "does not define task_type" },
+    { name: "optional confirm_task required input", capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1", "delivery_manifest_v1"], options: { missingRequiredInput: "task_type" }, error: "confirm_task input schema required must exactly equal" },
+    { name: "wait_for_turn omits empty required", capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1", "delivery_manifest_v1"], options: { omitRequired: "wait_for_turn" }, error: "wait_for_turn input schema required must exactly equal []" },
+    { name: "claim_turn has non-empty required", capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1", "delivery_manifest_v1"], options: { nonEmptyRequired: "claim_turn" }, error: "claim_turn input schema required must exactly equal []" },
+    { name: "get_state has extra required input", capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1", "delivery_manifest_v1"], options: { extraRequired: "get_state" }, error: "get_state input schema required must exactly equal []" },
+    { name: "register has extra required input", capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1", "delivery_manifest_v1"], options: { extraRequired: "register" }, error: "register input schema required must exactly equal" },
+    { name: "confirm_task has extra required input", capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1", "delivery_manifest_v1"], options: { extraRequired: "confirm_task" }, error: "confirm_task input schema required must exactly equal" },
+    { name: "submit has extra required input", capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1", "delivery_manifest_v1"], options: { extraRequired: "submit" }, error: "submit input schema required must exactly equal" },
+    { name: "submit duplicates a required input", capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1", "delivery_manifest_v1"], options: { duplicateRequired: "submit" }, error: "submit input schema required must exactly equal" },
+    { name: "confirm_task omits requirements task type", capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1", "delivery_manifest_v1"], options: { taskTypeValues: ["development"] }, error: "confirm_task input schema does not offer the requirements task type" },
+    { name: "missing expected outputSchema", capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1", "delivery_manifest_v1"], options: { missingOutputSchema: "submit" }, error: "submit outputSchema must be an object" },
+    { name: "non-object extra-tool outputSchema", capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1", "delivery_manifest_v1"], options: { nonObjectOutputSchema: "ping" }, error: "ping outputSchema must have type object" },
   ])("fails preflight before workspace mutation for $name", async ({ capabilities, options, error }) => {
     const server = createServer(async (request, response) => {
       if (request.method === "GET" && request.url === "/health") {
@@ -375,7 +376,7 @@ describe("standalone cold-start evaluator", () => {
         response.writeHead(200, { "Content-Type": "application/json" });
         response.end(JSON.stringify({
           ok: true,
-          protocol: { capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1"] },
+          protocol: { capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1", "delivery_manifest_v1"] },
         }));
         return;
       }
@@ -418,7 +419,7 @@ describe("standalone cold-start evaluator", () => {
         response.writeHead(200, { "Content-Type": "application/json" });
         response.end(JSON.stringify({ ok: true, protocol: {
           version: "1.0",
-          capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1"],
+          capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1", "delivery_manifest_v1"],
           actions: {}, reason_codes: {}, unknown_value_policy: {},
         } }));
         return;
@@ -546,7 +547,7 @@ describe("standalone cold-start evaluator", () => {
           protocol: {
             name: "pairflow-instruction",
             version: "1.0",
-            capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1"],
+            capabilities: ["instruction_v1", "structured_tool_output_v1", "json_response_v1", "delivery_manifest_v1"],
             authority: {
               instruction: "Actions, workflow state, permissions, paths and decision branches",
               tip: "Natural-language thinking, content and quality guidance",
@@ -1107,7 +1108,7 @@ describe("standalone cold-start evaluator", () => {
       expect(source).toMatch(/directTool\(developerReviewSubmitted, tools,/);
       for (const request of requests) {
         expect(request.contentType).toBe("application/json");
-        expect(request.accept).toBe("application/json");
+        expect(request.accept).toBe("application/json, text/event-stream");
       }
 
       const firstTaskPath = String(firstConfirm.task_path);

@@ -24,6 +24,10 @@ const NESTED_WORK_DIR = join(WORK_DIR, "nested");
 const TASK_PATH = join(NESTED_WORK_DIR, "task.md");
 const SECOND_TASK_PATH = join(NESTED_WORK_DIR, "second-task.md");
 
+function posix(path: string): string {
+  return path.replace(/\\/g, "/");
+}
+
 function responsePayload(result: Awaited<ReturnType<typeof confirmTask>>): Record<string, unknown> {
   return JSON.parse((result.content[0] as { text: string }).text);
 }
@@ -76,6 +80,65 @@ afterEach(async () => {
 });
 
 describe("confirm_task participant lifecycle", () => {
+  it("cleans a completed stale pid before applying the new task_type", async () => {
+    const archiveRoot = posix(join(WORK_DIR, "handoff", WORKFLOW_ID));
+    const requirements = {
+      round: 2,
+      submitted_by: "alice",
+      commit_hash: "abc1234",
+      file_path: `${archiveRoot}/requirements/r2_alice.md`,
+    };
+    const finalSummary = {
+      round: 1,
+      submitted_by: "alice",
+      commit_hash: "def5678",
+      file_path: `${archiveRoot}/summary/r1_alice.md`,
+    };
+    const manifest = {
+      manifest_version: 1,
+      status: "completed",
+      workflow_id: WORKFLOW_ID,
+      task_type: "requirements",
+      archive_root: archiveRoot,
+      supervisor: "alice",
+      phases: {
+        requirements: {
+          phase: "requirements",
+          advanced_by: "alice",
+          accepted_at: "2026-07-11T00:00:00.000Z",
+          acceptance_commit: "abc1234",
+          final_submission: requirements,
+        },
+        summary: {
+          phase: "summary",
+          advanced_by: "alice",
+          accepted_at: "2026-07-11T00:10:00.000Z",
+          acceptance_commit: "def5678",
+          final_summary: finalSummary,
+        },
+      },
+      completed_at: "2026-07-11T00:10:00.000Z",
+      completed_by: "alice",
+      final_summary: finalSummary,
+      commit_verification: "caller_declared_unverified",
+    };
+    await mkdir(join(WORK_DIR, "handoff", WORKFLOW_ID), { recursive: true });
+    await writeFile(join(WORK_DIR, "handoff", WORKFLOW_ID, "delivery-manifest.json"), JSON.stringify(manifest), "utf-8");
+    await writeFile(`${TASK_PATH}.pid`, WORKFLOW_ID, "utf-8");
+    const token = registerToken("alice");
+
+    const result = await confirm(token);
+    const newWorkflowId = result.workflow_id as string;
+    try {
+      expect(result).toMatchObject({ ok: true, recovered: false, phase: "idle" });
+      expect(newWorkflowId).not.toBe(WORKFLOW_ID);
+      expect(getState(WORKFLOW_ID)).toBeUndefined();
+      expect(getState(newWorkflowId)?.task?.task_type).toBe("development");
+    } finally {
+      if (newWorkflowId) deleteState(newWorkflowId);
+    }
+  });
+
   it("starts the initial roster warning cycle from the first participant registration", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-11T02:00:00.000Z"));

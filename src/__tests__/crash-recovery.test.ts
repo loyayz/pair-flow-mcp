@@ -486,6 +486,109 @@ describe("Handoff reconstruction", () => {
     const recovered = await reconstructFromHandoff(defaultState(), wfId, TEST_ROOT, join(TEST_ROOT, "task.md"));
     expect(recovered).toBeNull();
   });
+
+  it("recovers only the manifest-selected active phase and ignores accepted-phase meta damage", async () => {
+    const wfId = "20260622000027";
+    const requirementsDir = join(TEST_ROOT, HANDOFF_DIR, wfId, "requirements");
+    await mkdir(requirementsDir, { recursive: true });
+    await fsWriteFile(join(requirementsDir, "r1_alice.meta.json"), "{not-json", "utf-8");
+
+    const recovered = await reconstructFromHandoff(
+      defaultState(),
+      wfId,
+      TEST_ROOT,
+      join(TEST_ROOT, "task.md"),
+      {
+        active_phase: "planning",
+        task_type: "development",
+        accepted_identities: ["alice", "bob"],
+        allow_empty_active_phase: true,
+        reject_active_conflicts: true,
+      },
+    );
+
+    expect(recovered).toMatchObject({ phase: "planning", round: 1, task: { task_type: "development" } });
+    expect(recovered?.participants.map((participant) => participant.identity)).toEqual(["alice", "bob"]);
+  });
+
+  it("starts an empty manifest-selected implementation phase in coding", async () => {
+    const wfId = "20260622000031";
+
+    const recovered = await reconstructFromHandoff(
+      defaultState(),
+      wfId,
+      TEST_ROOT,
+      join(TEST_ROOT, "task.md"),
+      {
+        active_phase: "implementation",
+        task_type: "development",
+        accepted_identities: ["alice", "bob"],
+        allow_empty_active_phase: true,
+        reject_active_conflicts: true,
+      },
+    );
+
+    expect(recovered).toMatchObject({
+      phase: "implementation",
+      sub_phase: "coding",
+      round: 1,
+      task: { task_type: "development" },
+    });
+  });
+
+  it("rejects later-phase submissions when recovering without a manifest", async () => {
+    const wfId = "20260622000028";
+    const planningDir = join(TEST_ROOT, HANDOFF_DIR, wfId, "planning");
+    await mkdir(planningDir, { recursive: true });
+    await writeFile(join(planningDir, "r1_alice.meta.json"), validMeta());
+
+    await expect(reconstructFromHandoff(
+      defaultState(),
+      wfId,
+      TEST_ROOT,
+      join(TEST_ROOT, "task.md"),
+      { active_phase: "requirements", reject_later_phase_submissions: true },
+    )).rejects.toThrow(/planning submissions without a delivery manifest/i);
+  });
+
+  it("recovers requirements submissions when no manifest exists", async () => {
+    const wfId = "20260622000029";
+    const requirementsDir = join(TEST_ROOT, HANDOFF_DIR, wfId, "requirements");
+    await mkdir(requirementsDir, { recursive: true });
+    await writeFile(join(requirementsDir, "r1_alice.meta.json"), validMeta());
+
+    const recovered = await reconstructFromHandoff(
+      defaultState(),
+      wfId,
+      TEST_ROOT,
+      join(TEST_ROOT, "task.md"),
+      { active_phase: "requirements", reject_later_phase_submissions: true },
+    );
+
+    expect(recovered).toMatchObject({ phase: "requirements", round: 2 });
+  });
+
+  it("safe-fails conflicting active submissions behind a manifest boundary", async () => {
+    const wfId = "20260622000030";
+    const planningDir = join(TEST_ROOT, HANDOFF_DIR, wfId, "planning");
+    await mkdir(planningDir, { recursive: true });
+    await writeFile(join(planningDir, "r1_alice.meta.json"), validMeta());
+    await writeFile(join(planningDir, "r1_bob.meta.json"), validMeta({ commit_hash: "def5678" }));
+
+    await expect(reconstructFromHandoff(
+      defaultState(),
+      wfId,
+      TEST_ROOT,
+      join(TEST_ROOT, "task.md"),
+      {
+        active_phase: "planning",
+        task_type: "development",
+        accepted_identities: ["alice", "bob"],
+        allow_empty_active_phase: true,
+        reject_active_conflicts: true,
+      },
+    )).rejects.toThrow(/conflicting round or identity structure/i);
+  });
 });
 
 describe("parseFilename", () => {

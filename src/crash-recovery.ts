@@ -4,7 +4,7 @@ import { RECOVERY_REGISTERED_AT, type PairFlowState, type Phase, type SubPhase, 
 import { archivePath } from "./archive-path.js";
 import { isValidIdentity } from "./identity.js";
 import { findSymbolicLinkInPath } from "./path-safety.js";
-import { collectValidatedSubmissions } from "./archive-submissions.js";
+import { collectValidatedSubmissions, type ValidatedSubmission } from "./archive-submissions.js";
 
 // ── Filename parsing ──
 
@@ -36,10 +36,15 @@ interface SubmissionMeta {
   };
 }
 
-interface RecoveredSubmission extends ParsedFilename {
-  phase: RecoverablePhase;
-  meta: SubmissionMeta;
-  meta_path: string;
+type RecoveredSubmission = ValidatedSubmission;
+
+export interface RecoveryBoundary {
+  active_phase: RecoverablePhase;
+  task_type?: "requirements" | "development";
+  accepted_identities?: readonly string[];
+  allow_empty_active_phase?: boolean;
+  reject_active_conflicts?: boolean;
+  reject_later_phase_submissions?: boolean;
 }
 
 function basename(path: string): string {
@@ -91,6 +96,7 @@ export async function reconstructFromHandoff(
   wfId: string,
   workDir: string,
   taskPath: string,
+  boundary?: RecoveryBoundary,
 ): Promise<PairFlowState | null> {
   const wfDir = archivePath(workDir, wfId);
   const recoveredState: PairFlowState = {
@@ -102,16 +108,32 @@ export async function reconstructFromHandoff(
     last_submission_by_participant: {},
   };
 
-  const submissions = await collectValidatedSubmissions(workDir, wfId);
-  if (submissions.length === 0) return null;
-  if (!hasConsistentStructure(submissions)) return null;
+  const submissions = boundary
+    ? await collectValidatedPhaseSubmissions(workDir, wfId, boundary.active_phase)
+    : await collectValidatedSubmissions(workDir, wfId);
+  if (boundary?.reject_later_phase_submissions) {
+    for (const phase of ["planning", "implementation", "summary"] as const) {
+      if ((await collectValidatedPhaseSubmissions(workDir, wfId, phase)).length > 0) {
+        throw new Error(`recovery archive contains ${phase} submissions without a delivery manifest`);
+      }
+    }
+  }
+  const acceptedIdentities = boundary?.accepted_identities ?? [];
+  if (submissions.length === 0 && acceptedIdentities.length === 0 && !boundary?.allow_empty_active_phase) return null;
+  if (!hasConsistentStructure(submissions)) {
+    if (boundary?.reject_active_conflicts) throw new Error(`active ${boundary.active_phase} submissions have conflicting round or identity structure`);
+    return null;
+  }
 
   // 1. Determine phase from valid submissions only.
-  recoveredState.phase = determinePhase(submissions);
+  recoveredState.phase = boundary?.active_phase ?? determinePhase(submissions);
 
   // 2. Reconstruct participants from valid submissions.
-  const identities = new Set(submissions.map((submission) => submission.identity));
-  if (identities.size > 2) return null; // workflow domain permits exactly two participants
+  const identities = new Set([...acceptedIdentities, ...submissions.map((submission) => submission.identity)]);
+  if (identities.size > 2) {
+    if (boundary?.reject_active_conflicts) throw new Error("recovery archive contains more than two participant identities");
+    return null;
+  }
 
   for (const id of identities) {
     // 职责由 confirm_task 入参覆盖；重建时用默认值
@@ -125,8 +147,12 @@ export async function reconstructFromHandoff(
 
   // 3. Recover immutable task type; current confirm_task supplies the authoritative path.
   const recoveredTaskTypes = new Set(submissions.map((submission) => submission.meta.task.task_type));
-  if (recoveredTaskTypes.size > 1) return null;
-  recoveredState.task!.task_type = recoveredTaskTypes.values().next().value ?? "development";
+  if (boundary?.task_type) recoveredTaskTypes.add(boundary.task_type);
+  if (recoveredTaskTypes.size > 1) {
+    if (boundary?.reject_active_conflicts) throw new Error("active phase submissions conflict with manifest task_type");
+    return null;
+  }
+  recoveredState.task!.task_type = recoveredTaskTypes.values().next().value ?? boundary?.task_type ?? "development";
 
   // 4. Determine round, turn
   const currentPhaseSubmissions = submissions.filter((submission) => submission.phase === recoveredState.phase);
@@ -154,7 +180,7 @@ export async function reconstructFromHandoff(
       ? "review"
       : latestSubmission?.sub_phase === "review"
         ? "coding"
-        : null;
+        : "coding";
   }
 
   // 4b. Recover last_submission_by_participant from validated metadata.
@@ -165,6 +191,100 @@ export async function reconstructFromHandoff(
 
   console.log(`[pair-flow] Reconstructed state from ${wfDir}: phase=${recoveredState.phase}, participants=${recoveredState.participants.length}, round=${recoveredState.round}`);
   return recoveredState;
+}
+
+async function collectValidatedPhaseSubmissions(
+  workDir: string,
+  workflowId: string,
+  phase: RecoverablePhase,
+): Promise<RecoveredSubmission[]> {
+  const root = archivePath(workDir);
+  const phaseDir = archivePath(workDir, workflowId, phase);
+  let linked: string | null;
+  try {
+    linked = await findSymbolicLinkInPath(root, phaseDir);
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") return [];
+    throw recoveryReadError(phaseDir, error);
+  }
+  if (linked) throw new Error(`symbolic links are not allowed in recovery archive: ${toPosix(linked)}`);
+
+  let entries;
+  try {
+    entries = await readdir(phaseDir, { withFileTypes: true });
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") return [];
+    throw recoveryReadError(phaseDir, error);
+  }
+
+  const submissions: RecoveredSubmission[] = [];
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith(".meta.json")) continue;
+    const parsed = parseFilename(entry.name, phase);
+    if (!parsed) continue;
+    const metaPath = join(phaseDir, entry.name);
+    let content: string;
+    try {
+      content = await readFile(metaPath, "utf-8");
+    } catch (error) {
+      throw recoveryReadError(metaPath, error);
+    }
+    let meta: unknown;
+    try {
+      meta = JSON.parse(content);
+    } catch {
+      continue;
+    }
+    if (!isValidSubmissionMeta(meta, phase, parsed)) continue;
+    const filePath = metaPath.replace(/\.meta\.json$/, ".md");
+    try {
+      const artifact = await lstat(filePath);
+      if (!artifact.isFile() || artifact.isSymbolicLink() || artifact.size === 0) continue;
+    } catch {
+      continue;
+    }
+    submissions.push({
+      ...parsed,
+      phase,
+      meta,
+      meta_path: toPosix(metaPath),
+      file_path: toPosix(filePath),
+    });
+  }
+  return submissions;
+}
+
+function isValidSubmissionMeta(
+  value: unknown,
+  phase: RecoverablePhase,
+  parsed: ParsedFilename,
+): value is SubmissionMeta {
+  if (!value || typeof value !== "object") return false;
+  const meta = value as Record<string, unknown>;
+  if (typeof meta.submitted_at !== "string" || Number.isNaN(Date.parse(meta.submitted_at))) return false;
+  if (typeof meta.commit_hash !== "string" || !/^[0-9a-f]{7,40}$/.test(meta.commit_hash)) return false;
+  if (!meta.task || typeof meta.task !== "object") return false;
+  const task = meta.task as Record<string, unknown>;
+  if (typeof task.spec_file !== "string" || !isAbsolute(task.spec_file)) return false;
+  if (task.task_type !== "requirements" && task.task_type !== "development") return false;
+  if (task.task_type === "requirements" && (phase === "planning" || phase === "implementation")) return false;
+  if (phase === "implementation") {
+    const expected = parsed.round % 2 === 1 ? "coding" : "review";
+    return parsed.sub_phase === expected && meta.sub_phase === expected;
+  }
+  return parsed.sub_phase === null && meta.sub_phase === null;
+}
+
+function recoveryReadError(path: string, error: unknown): Error {
+  return new Error(`failed to read recovery archive: ${toPosix(path)} (${errorCode(error) ?? "UNKNOWN"})`, { cause: error });
+}
+
+function errorCode(error: unknown): string | undefined {
+  return error && typeof error === "object" && "code" in error ? String((error as { code?: unknown }).code) : undefined;
+}
+
+function toPosix(path: string): string {
+  return path.replace(/\\/g, "/");
 }
 
 function hasConsistentStructure(submissions: RecoveredSubmission[]): boolean {

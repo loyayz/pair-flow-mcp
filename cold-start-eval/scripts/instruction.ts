@@ -186,7 +186,9 @@ export async function mcpRequest(
   const requestId = options.requestId ?? nextRequestId++;
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    Accept: "application/json",
+    // Streamable HTTP requires clients to advertise both supported response
+    // media types. PairFlow still rejects any actual non-JSON response below.
+    Accept: "application/json, text/event-stream",
   };
   if (options.token) headers["X-AI-Identity"] = options.token;
 
@@ -334,7 +336,7 @@ function preflightRuntime(
   const protocol = protocolDocument(health);
   const capabilities = protocol.capabilities;
   if (!Array.isArray(capabilities)) throw new Error("health protocol.capabilities must be an array");
-  for (const capability of ["instruction_v1", "structured_tool_output_v1", "json_response_v1"]) {
+  for (const capability of ["instruction_v1", "structured_tool_output_v1", "json_response_v1", "delivery_manifest_v1"]) {
     if (!capabilities.includes(capability)) {
       throw new Error(`health protocol is missing required capability ${capability}`);
     }

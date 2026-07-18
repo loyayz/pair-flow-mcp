@@ -42,7 +42,7 @@ function fixture(overrides: Partial<PairFlowState> = {}): PairFlowState {
     supervisor: "sup",
     phases: {
       requirements: { phase: "requirements", advanced_by: "sup", accepted_at: "2026-07-15T00:00:00.000Z", acceptance_commit: "abcdef1", final_submission: { round: 1, submitted_by: "sup", commit_hash: "abcdef1", file_path: "C:/repo/handoff/20260701000001/requirements/r1_sup.md" } },
-      planning: { phase: "planning", advanced_by: "sup", accepted_at: "2026-07-15T00:00:00.000Z", acceptance_commit: "abcdef1", canonical_plan: { round: 1, submitted_by: "sup", commit_hash: "abcdef1", file_path: "C:/repo/handoff/20260701000001/planning/r1_sup.md" } },
+      planning: { phase: "planning", advanced_by: "sup", accepted_at: "2026-07-15T00:00:00.000Z", acceptance_commit: "fedcba9", canonical_plan: { round: 1, submitted_by: "sup", commit_hash: "abcdef1", file_path: "C:/repo/handoff/20260701000001/planning/r1_sup.md" } },
       implementation: { phase: "implementation", advanced_by: "sup", accepted_at: "2026-07-15T00:00:00.000Z", acceptance_commit: "abcdef2", coding_submission: { round: 1, submitted_by: "dev", commit_hash: "abcdef1", file_path: "C:/repo/handoff/20260701000001/implementation/r1_coding_dev.md", sub_phase: "coding" }, review_submission: { round: 2, submitted_by: "sup", commit_hash: "abcdef2", file_path: "C:/repo/handoff/20260701000001/implementation/r2_review_sup.md", sub_phase: "review" } },
     },
     commit_verification: "caller_declared_unverified",
@@ -305,7 +305,12 @@ describe("instruction scenarios", () => {
     expect(g.instruction.next_action).toBe("produce_and_submit");
     expect(g.instruction.context?.sub_phase).toBe("coding");
     expect(g.instruction.references).toBeDefined();
-    expect(g.instruction.references!.some((r) => r.kind === "plan")).toBe(true);
+    expect(g.instruction.references!.find((r) => r.kind === "plan")).toEqual({
+      kind: "plan",
+      file_path: "C:/repo/handoff/20260701000001/planning/r1_sup.md",
+      required: true,
+      commit: "fedcba9",
+    });
     expect(g.instruction.required_output!.file_path).toContain("r1_coding_dev.md");
   });
 
@@ -326,6 +331,34 @@ describe("instruction scenarios", () => {
     expect(prevRef).toBeDefined();
     expect(prevRef!.required).toBe(true);
     expect(prevRef!.commit).toBe("def5678");
+    expect(g.instruction.references!.find((r) => r.kind === "plan")?.commit).toBe("fedcba9");
+  });
+
+  it("keeps the accepted canonical plan reference on later coding and convergence turns", () => {
+    const coding = buildAuditedGuidance(fixture({
+      phase: "implementation", sub_phase: "coding", round: 3, turn: "dev",
+      last_submission_by_participant: {
+        sup: { round: 2, sub_phase: "review", commit_hash: "def5678", submitted_at: new Date().toISOString(), file_path: "C:/repo/handoff/20260701000001/implementation/r2_review_sup.md" },
+        dev: { round: 1, sub_phase: "coding", commit_hash: "abc1234", submitted_at: new Date().toISOString(), file_path: "C:/repo/handoff/20260701000001/implementation/r1_coding_dev.md" },
+      },
+    }), "dev");
+    const convergence = buildAuditedGuidance(fixture({
+      phase: "implementation", sub_phase: "review", round: 4, turn: "sup",
+      last_submission_by_participant: {
+        sup: { round: 4, sub_phase: "review", commit_hash: "def5678", submitted_at: new Date().toISOString(), file_path: "C:/repo/handoff/20260701000001/implementation/r4_review_sup.md" },
+        dev: { round: 3, sub_phase: "coding", commit_hash: "abc1234", submitted_at: new Date().toISOString(), file_path: "C:/repo/handoff/20260701000001/implementation/r3_coding_dev.md" },
+      },
+    }), "sup");
+
+    for (const instruction of [coding.instruction, convergence.instruction]) {
+      expect(instruction.references?.find((reference) => reference.kind === "plan")).toEqual({
+        kind: "plan",
+        file_path: "C:/repo/handoff/20260701000001/planning/r1_sup.md",
+        required: true,
+        commit: "fedcba9",
+      });
+    }
+    expect(convergence.instruction.next_action).toBe("decide_convergence");
   });
 
   it("summary round 1 with archive reference", () => {

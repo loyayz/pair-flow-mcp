@@ -200,6 +200,13 @@ describe("Tip guidance", () => {
         developer: { round: 1, sub_phase: "coding", commit_hash: "abc1234", submitted_at: "2026-07-10T00:00:00.000Z", file_path: "C:/project/handoff/wf/implementation/r1_coding_developer.md" },
         reviewer: { round: 2, sub_phase: "review", commit_hash: "def5678", submitted_at: "2026-07-10T00:01:00.000Z", file_path: "C:/project/handoff/wf/implementation/r2_review_reviewer.md" },
       },
+      delivery_manifest: {
+        manifest_version: 1, status: "in_progress", workflow_id: TEST_WF, task_type: "development", archive_root: `C:/project/handoff/${TEST_WF}`, supervisor: "reviewer",
+        phases: {
+          planning: { phase: "planning", advanced_by: "reviewer", accepted_at: "2026-07-10T00:00:00.000Z", acceptance_commit: "def5678", canonical_plan: { round: 1, submitted_by: "reviewer", commit_hash: "abc1234", file_path: "C:/project/handoff/wf/planning/r1_reviewer.md" } },
+        },
+        commit_verification: "caller_declared_unverified",
+      },
     };
 
     expect(buildTip(state, "developer")).toContain("implementation/r2_review_reviewer.md");

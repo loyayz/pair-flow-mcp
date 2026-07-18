@@ -57,7 +57,8 @@ cp -r skills/pairflow ~/.claude/skills/pairflow
 |------|------|
 | `register` | 声明身份，获取 token |
 | `confirm_task` | 确认任务文档和职责组合，两个 AI 相同规范化绝对 task_path 成对 |
-| `wait_for_turn` | 长轮询等待 turn 到自己（10s 间隔，600s 超时） |
+| `wait_for_turn` | 通过 workflow 变化事件和 deadline 等待；单次最长 600 秒，响应为 JSON |
+| `claim_turn` | 在 turn 分配给自己后显式领取；领取前不能产出或推进 |
 | `submit` | 提交产出（绝对 file_path + git_commit_hash） |
 | `advance` | 监督者推进到下一阶段 |
 | `get_state` | 查看当前状态和行动指引；需要有效注册 token |

@@ -115,8 +115,9 @@ function prevRef(state: PairFlowState, identity: string): InstructionReference |
 }
 
 function planRef(state: PairFlowState): InstructionReference {
-  const plan = state.delivery_manifest?.phases.planning?.canonical_plan;
-  if (!plan) {
+  const planning = state.delivery_manifest?.phases.planning;
+  const plan = planning?.canonical_plan;
+  if (!plan || !planning) {
     if (state.phase !== "planning") throw new Error("accepted planning manifest record is missing");
     const reviewer = state.participants.find((participant) => !participant.is_developer);
     const latest = reviewer ? state.last_submission_by_participant[reviewer.identity] : null;
@@ -126,7 +127,7 @@ function planRef(state: PairFlowState): InstructionReference {
     kind: "plan",
     file_path: plan.file_path,
     required: true,
-    commit: plan.commit_hash,
+    commit: planning.acceptance_commit.toLowerCase(),
   };
 }
 
@@ -465,7 +466,7 @@ function selectGuidance(state: PairFlowState, identity: string): GuidanceSelecti
   }
 
   if (state.phase === "implementation" && state.sub_phase === "coding") {
-    const refs: InstructionReference[] = [];
+    const refs: InstructionReference[] = [planRef(state)];
     const p = prevRef(state, identity);
     if (p) refs.push(p);
     return {

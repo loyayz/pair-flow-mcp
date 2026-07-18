@@ -41,12 +41,13 @@ describe("PairFlow skill contract", () => {
     expect(skill).toContain("requirements 任务建议 `is_developer=false`");
   });
 
-  it("keeps the token internal and uses server tips after initialization", async () => {
+  it("keeps the token internal and treats structured instructions as workflow authority", async () => {
     const skill = await readFile(resolve("skills/pairflow/SKILL.md"), "utf-8");
 
     expect(skill).toContain("不要主动向用户展示 token");
     expect(skill).not.toContain("将 token 告诉用户");
-    expect(skill).toContain("后续行动以 PairFlow 返回的 tip 为准");
+    expect(skill).toContain("结构化 `instruction` 是 workflow control 的唯一权威");
+    expect(skill).toContain("tip 只用于思考、内容和质量");
   });
 
   it("handles startup and waiting failures without assuming a Unix shell", async () => {
@@ -59,5 +60,34 @@ describe("PairFlow skill contract", () => {
     expect(skill).toContain("职责组合");
     expect(skill).toContain("600 秒");
     expect(skill).toContain("继续调用 `wait_for_turn`");
+  });
+
+  it("drives initialization from instruction reason codes rather than the first wait response", async () => {
+    const skill = await readFile(resolve("skills/pairflow/SKILL.md"), "utf-8");
+
+    expect(skill).toContain('reason_code: "WAIT_TIMEOUT"');
+    expect(skill).toContain('reason_code: "TURN_ASSIGNED"');
+    expect(skill).toContain('reason_code: "WORKFLOW_COMPLETED"');
+    expect(skill).toContain("自动无参调用 `claim_turn`");
+    expect(skill).toContain("不得以首次 wait 响应、tip 或单独的 `phase:\"idle\" / turn:\"idle\"` 判定");
+  });
+
+  it("documents event-driven JSON waiting and explicit turn claims", async () => {
+    const readme = await readFile(resolve("README.md"), "utf-8");
+    const waitTemplates = await Promise.all([
+      "confirm/created.md",
+      "confirm/existing.md",
+      "confirm/joined.md",
+      "confirm/recovered.md",
+      "state/wait-other.md",
+      "submit/wait.md",
+    ].map((path) => readFile(resolve("templates/tips", path), "utf-8")));
+
+    expect(readme).toContain("通过 workflow 变化事件和 deadline 等待");
+    expect(readme).toContain("`claim_turn`");
+    for (const template of waitTemplates) {
+      expect(template).toContain("600s");
+      expect(template).not.toContain("10s 间隔");
+    }
   });
 });
