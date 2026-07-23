@@ -293,8 +293,17 @@ function completionFieldsForWait(
     if (payload.phase !== undefined) {
       context.addIssue({ code: "custom", path: ["phase"], message: "unsupported workflow state must omit phase" });
     }
+    if (payload.sub_phase !== undefined) {
+      context.addIssue({ code: "custom", path: ["sub_phase"], message: "unsupported workflow state must omit sub_phase" });
+    }
   } else if (payload.phase === undefined) {
     context.addIssue({ code: "custom", path: ["phase"], message: "wait responses require phase unless workflow state is unsupported" });
+  }
+  const implementation = payload.phase === "implementation";
+  if ((payload.sub_phase !== undefined) !== implementation) {
+    context.addIssue({ code: "custom", path: ["sub_phase"], message: "wait sub_phase must be present exactly for implementation" });
+  } else if (implementation && payload.sub_phase === null) {
+    context.addIssue({ code: "custom", path: ["sub_phase"], message: "implementation wait sub_phase must be coding or review" });
   }
   const staleWarning = reason === "PARTICIPANT_CONFIRMATION_STALE" || reason === "TURN_UNCLAIMED_STALE";
   if ((payload.warning !== undefined) !== staleWarning) {
@@ -302,6 +311,7 @@ function completionFieldsForWait(
   }
   validateContextMatches(payload, context, [
     ["phase", "phase"],
+    ["sub_phase", "sub_phase"],
     ["round", "round"],
     ["turn", "turn"],
   ]);
@@ -435,6 +445,7 @@ export const TOOL_OUTPUT_SCHEMAS = {
   wait_for_turn: actionableToolOutputSchema({
     turn: z.string(),
     phase: phaseSchema.optional(),
+    sub_phase: subPhaseSchema.optional(),
     round: z.number().int().positive().optional(),
     warning: z.string().optional(),
     ...completionShape,
